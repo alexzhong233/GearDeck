@@ -29,7 +29,17 @@
   - `Pages/GamesPage.xaml(.cs)`、`DeviceDetailPage.xaml(.cs)`、`MacrosPage.xaml(.cs)`：本机游戏库折叠面板、全屏保持策略、设备板载预设、全局宏中心。
 - 启动入口：`D:\projects\GearDeck\启动 GearDeck.cmd`（或 `src\GearDeck.App\bin\x64\Debug\net8.0-windows10.0.22621.0\GearDeck.App.exe`）。
 
-## 二、约束备忘
+## 二、GitHub 发布与实机自更新验证结论（2026-11-19）
+
+- **GitHub 仓库**：https://github.com/alexzhong233/GearDeck
+  - Release `v1.0.0`：https://github.com/alexzhong233/GearDeck/releases/tag/v1.0.0（含 `GearDeck-v1.0.0-win-x64.zip`、`GearDeck-patch-v1.0.0-win-x64.zip`、`latest.json`）
+  - Release `v1.0.1`：https://github.com/alexzhong233/GearDeck/releases/tag/v1.0.1（含 `GearDeck-v1.0.1-win-x64.zip`、`GearDeck-patch-v1.0.1-win-x64.zip`、`latest.json`）
+- **单元测试**：`76/76` 全部通过（含 `UpdateClientTests` 自定义镜像 URL 重写、多段版本对比、清单与 GitHub API 解析、镜像故障回退及 `XamlSafetyTests`）。
+- **自定义镜像站与实机热更新验证**：
+  - 直连、`https://ghfast.top/` 与 `https://gh-proxy.com/`（强制禁用回退）均实测检测到 `v1.0.1`。
+  - 独立 `v1.0.0`（`FileVersion=1.0.0.0`）实例带 `--mirror=https://ghfast.top/` 在线拉取 `1437 KB` `v1.0.1` 补丁包（耗时 0.64 秒）、完成 SHA-256 校验与解压，通过 `apply-update.ps1` 热替换并自动重启为 `1.0.1.0`（`GearDeck.App` & `GearDeck.Widget` 均 `Responding = True`，`crash.log` 不存在）。
+
+## 三、约束备忘
 
 - 禁止写 `HKCU\...\StuckRects3` 或重启 `explorer.exe`；禁止带 `--preview` 启动 `GearDeck.Widget.exe`。
 - 禁止伪造休眠无线设备或入盒耳机的虚假电量百分比；Razer 按键重映射写入始终使用 `tid = 0x10`。
