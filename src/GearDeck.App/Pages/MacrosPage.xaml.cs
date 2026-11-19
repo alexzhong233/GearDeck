@@ -38,6 +38,7 @@ public sealed partial class MacrosPage : Page
         }));
 
         PopulateManualKeyCombo();
+        RecordFocusTrap.ContextRequested += (_, args) => args.Handled = true;
         SizeChanged += (_, e) => UpdateWorkspaceLayout(e.NewSize.Width);
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -53,6 +54,7 @@ public sealed partial class MacrosPage : Page
     {
         _isCardMode = App.Settings.Current.UseCardLayout;
         MacroLibraryHost.IsCardMode = _isCardMode;
+        AdminPrivilegeBanner.IsOpen = !MacroExecutionService.IsProcessElevated();
         App.Devices.DevicesUpdated += OnDevicesUpdated;
         UpdateWorkspaceLayout(ActualWidth);
         EnsureAtLeastOneMacro();
@@ -60,6 +62,9 @@ public sealed partial class MacrosPage : Page
         BindEditorFields();
         RefreshTargetMice(null);
     }
+
+    private void OnRestartAsAdmin(object sender, RoutedEventArgs e)
+        => MacroExecutionService.RestartAsAdmin();
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
@@ -147,9 +152,10 @@ public sealed partial class MacrosPage : Page
             int totalMs = m.Steps.Sum(s => s.DelayMs);
             string loopText = m.LoopMode switch
             {
-                MacroLoopMode.WhileHeld => "按住循环",
-                MacroLoopMode.ToggleUntilKey => "按一次开关",
-                _ => $"执行 {m.RepeatCount} 次",
+                MacroLoopMode.PlayOnce => "单次触发",
+                MacroLoopMode.WhileHeld => "按住触发",
+                MacroLoopMode.ToggleUntilKey => "切换触发 (+Esc 停)",
+                _ => $"指定 {m.RepeatCount} 次",
             };
 
             string boundSummary = DescribeBindingsForMacro(m.Id);
@@ -265,7 +271,18 @@ public sealed partial class MacrosPage : Page
         {
             EditorTitleText.Text = $"宏动作编辑 · {m.Name}";
             MacroNameBox.Text = m.Name;
-            MacroLoopCombo.SelectedIndex = Math.Clamp((int)m.LoopMode, 0, 2);
+            string wantedTag = m.LoopMode.ToString();
+            int selIdx = 0;
+            for (int i = 0; i < MacroLoopCombo.Items.Count; i++)
+            {
+                if (MacroLoopCombo.Items[i] is ComboBoxItem ci &&
+                    string.Equals(ci.Tag as string, wantedTag, StringComparison.OrdinalIgnoreCase))
+                {
+                    selIdx = i;
+                    break;
+                }
+            }
+            MacroLoopCombo.SelectedIndex = selIdx;
             MacroRepeatBox.Value = Math.Clamp(m.RepeatCount, 1, 99);
             MacroRepeatBox.IsEnabled = m.LoopMode == MacroLoopMode.RepeatCount;
             RenderMacroSteps(m);
@@ -517,7 +534,9 @@ public sealed partial class MacrosPage : Page
     {
         modifiers = 0;
         usage = 0;
-        if (macro.LoopMode != MacroLoopMode.RepeatCount || macro.RepeatCount != 1 || macro.Steps.Count > 6)
+        if (macro.LoopMode is not (MacroLoopMode.PlayOnce or MacroLoopMode.RepeatCount) ||
+            (macro.LoopMode == MacroLoopMode.RepeatCount && macro.RepeatCount != 1) ||
+            macro.Steps.Count > 6)
             return false;
 
         var nonModKeys = new List<byte>();
@@ -554,10 +573,16 @@ public sealed partial class MacrosPage : Page
 
     private void OnNewMacro(object sender, RoutedEventArgs e)
     {
-        var m = new OnboardMacroDefinition { Name = $"自定义宏 {App.Settings.Current.Macros.Count + 1}" };
+        var m = new OnboardMacroDefinition
+        {
+            Name = $"自定义宏 {App.Settings.Current.Macros.Count + 1}",
+            LoopMode = MacroLoopMode.PlayOnce,
+            RepeatCount = 1,
+        };
         App.Settings.Current.Macros.Add(m);
         _selectedMacroId = m.Id;
         App.Settings.Save();
+        App.MacroRunner?.SyncHookState();
         RenderMacroLibrary();
         BindEditorFields();
     }
@@ -579,9 +604,12 @@ public sealed partial class MacrosPage : Page
     private void OnMacroPropertyChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_binding || CurrentMacro == null) return;
-        CurrentMacro.LoopMode = (MacroLoopMode)Math.Clamp(MacroLoopCombo.SelectedIndex, 0, 2);
+        string? tag = (MacroLoopCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        if (Enum.TryParse<MacroLoopMode>(tag, out var parsedMode))
+            CurrentMacro.LoopMode = parsedMode;
         MacroRepeatBox.IsEnabled = CurrentMacro.LoopMode == MacroLoopMode.RepeatCount;
         App.Settings.Save();
+        App.MacroRunner?.SyncHookState();
         RenderMacroLibrary();
     }
 
@@ -590,6 +618,7 @@ public sealed partial class MacrosPage : Page
         if (_binding || CurrentMacro == null || double.IsNaN(args.NewValue)) return;
         CurrentMacro.RepeatCount = Math.Clamp((int)Math.Round(args.NewValue), 1, 99);
         App.Settings.Save();
+        App.MacroRunner?.SyncHookState();
         RenderMacroLibrary();
     }
 
@@ -611,9 +640,10 @@ public sealed partial class MacrosPage : Page
         _recording = false;
         _recWatch.Stop();
         RecordMacroBtn.IsChecked = false;
-        RecordMacroBtn.Content = "开始录制键盘按键与延迟";
+        RecordMacroBtn.Content = "开始录制键盘按键与鼠标点击";
         RecordFocusTrap.Visibility = Visibility.Collapsed;
         App.Settings.Save();
+        App.MacroRunner?.SyncHookState();
         RenderMacroLibrary();
     }
 
@@ -621,6 +651,7 @@ public sealed partial class MacrosPage : Page
     {
         if (!_recording || CurrentMacro == null) return;
         e.Handled = true;
+        if (e.KeyStatus.WasKeyDown) return;
         RecordKeyEvent(e.Key, isPress: true);
     }
 
@@ -631,19 +662,59 @@ public sealed partial class MacrosPage : Page
         RecordKeyEvent(e.Key, isPress: false);
     }
 
+    private void OnRecorderPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_recording || CurrentMacro == null) return;
+        e.Handled = true;
+        RecordFocusTrap.Focus(FocusState.Programmatic);
+        byte? code = e.GetCurrentPoint(RecordFocusTrap).Properties.PointerUpdateKind switch
+        {
+            Microsoft.UI.Input.PointerUpdateKind.LeftButtonPressed => HidKeyCatalog.MouseLeftCode,
+            Microsoft.UI.Input.PointerUpdateKind.RightButtonPressed => HidKeyCatalog.MouseRightCode,
+            Microsoft.UI.Input.PointerUpdateKind.MiddleButtonPressed => HidKeyCatalog.MouseMiddleCode,
+            Microsoft.UI.Input.PointerUpdateKind.XButton1Pressed => HidKeyCatalog.MouseXButton1Code,
+            Microsoft.UI.Input.PointerUpdateKind.XButton2Pressed => HidKeyCatalog.MouseXButton2Code,
+            _ => null,
+        };
+        if (code is { } c)
+            RecordCodeEvent(c, isPress: true);
+    }
+
+    private void OnRecorderPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_recording || CurrentMacro == null) return;
+        e.Handled = true;
+        byte? code = e.GetCurrentPoint(RecordFocusTrap).Properties.PointerUpdateKind switch
+        {
+            Microsoft.UI.Input.PointerUpdateKind.LeftButtonReleased => HidKeyCatalog.MouseLeftCode,
+            Microsoft.UI.Input.PointerUpdateKind.RightButtonReleased => HidKeyCatalog.MouseRightCode,
+            Microsoft.UI.Input.PointerUpdateKind.MiddleButtonReleased => HidKeyCatalog.MouseMiddleCode,
+            Microsoft.UI.Input.PointerUpdateKind.XButton1Released => HidKeyCatalog.MouseXButton1Code,
+            Microsoft.UI.Input.PointerUpdateKind.XButton2Released => HidKeyCatalog.MouseXButton2Code,
+            _ => null,
+        };
+        if (code is { } c)
+            RecordCodeEvent(c, isPress: false);
+    }
+
     private void RecordKeyEvent(VirtualKey key, bool isPress)
+    {
+        byte? usage = HidKeyCatalog.UsageFromVirtualKey((int)key);
+        if (usage is { } u)
+            RecordCodeEvent(u, isPress);
+    }
+
+    private void RecordCodeEvent(byte usage, bool isPress)
     {
         var m = CurrentMacro;
         if (m == null) return;
-        byte? usage = HidKeyCatalog.UsageFromVirtualKey((int)key);
-        if (usage == null) return;
 
         long now = _recWatch.ElapsedMilliseconds;
         int delay = m.Steps.Count > 0 ? Math.Clamp((int)(now - _lastRecMs), 5, 5000) : 15;
         if (m.Steps.Count > 0)
             m.Steps[^1].DelayMs = delay;
 
-        m.Steps.Add(new MacroStep(usage.Value, isPress, 15));
+        m.Steps.Add(new MacroStep(usage, isPress, 15));
         _lastRecMs = now;
         RenderMacroSteps(m);
     }
@@ -685,9 +756,10 @@ public sealed partial class MacrosPage : Page
         if (!string.IsNullOrWhiteSpace(MacroNameBox.Text))
             CurrentMacro.Name = MacroNameBox.Text.Trim();
         App.Settings.Save();
+        App.MacroRunner?.SyncHookState();
         RenderMacroLibrary();
         BindEditorFields();
-        ShowStatus($"宏「{CurrentMacro.Name}」已保存。", InfoBarSeverity.Success);
+        ShowStatus($"宏「{CurrentMacro.Name}」已保存并同步触发配置。", InfoBarSeverity.Success);
     }
 
     private void OnTestPlayMacro(object sender, RoutedEventArgs e)

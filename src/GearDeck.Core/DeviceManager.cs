@@ -1,5 +1,6 @@
 using GearDeck.Core.Models;
 using GearDeck.Core.Providers;
+using GearDeck.Core.Services;
 
 namespace GearDeck.Core;
 
@@ -29,8 +30,21 @@ public sealed class DeviceManager : IDisposable
 
     public void Stop() => _timer?.Dispose();
 
-    public Task RefreshAsync()
+    public Task RefreshAsync(bool bypassCoexistenceGuard = false)
     {
+        if (!bypassCoexistenceGuard && ExternalConfiguratorGuard.IsBackgroundYieldActive(out string? yieldReason))
+        {
+            lock (_gate)
+            {
+                if (_lastKnown.Count > 0)
+                {
+                    Diag.Log($"[Coexistence] 跳过本轮后台 HID 轮询: {yieldReason}");
+                    ScanCompleted?.Invoke();
+                    return Task.CompletedTask;
+                }
+            }
+        }
+
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
             return Task.CompletedTask;
         return Task.Run(async () =>

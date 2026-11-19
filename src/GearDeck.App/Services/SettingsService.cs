@@ -98,6 +98,10 @@ public sealed class AppSettings
 
     public bool NotifyOnProfileSwitch { get; set; } = true;
 
+    public bool AutoYieldToVendorSoftware { get; set; } = true;
+
+    public Dictionary<string, string> KnownReceiverModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public bool UseCardLayout { get; set; } = true;
 
     public Dictionary<string, DeviceLowBatteryPolicy> DeviceLowBatteryPolicies { get; set; } = new(StringComparer.OrdinalIgnoreCase);

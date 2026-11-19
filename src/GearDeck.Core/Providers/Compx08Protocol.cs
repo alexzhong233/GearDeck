@@ -86,6 +86,14 @@ internal static class Compx08Protocol
         return true;
     }
 
+    public static (byte Cid, byte Mid)? QueryCidMid(HidChannel ch, byte reportId = 0x08, int timeoutMs = 350)
+    {
+        var data = SendSimpleCommand(ch, 0x10, default, reportId, timeoutMs);
+        if (data is { Length: >= 2 } && (data[0] != 0 || data[1] != 0))
+            return (data[0], data[1]);
+        return null;
+    }
+
     public static (byte Level, bool Charging)? QueryBattery(HidChannel ch, byte reportId = 0x08, int timeoutMs = 1000)
     {
         var packet = BuildFrame(reportId, 0x04, default);

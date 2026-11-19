@@ -11,18 +11,75 @@ public sealed class RogProvider : IPeripheralProvider
     public const string ProviderName = "ROG";
     public string Name => ProviderName;
 
-    private static readonly (ushort Pid, string Name, int Offset)[] Keyboards =
+    private static readonly (ushort Pid, string Name, int Offset, int Scale)[] Keyboards =
     [
-        (0x1B7A, "ROG Strix Scope II 96 RX", 6),
-        (0x1B78, "ROG Strix Scope II 96 RX", 6),
-        (0x1AB0, "ROG Strix Scope II 96", 6),
-        (0x1AAE, "ROG Strix Scope II 96", 6),
-        (0x1B04, "ROG Falchion RX", 11),
-        (0x193E, "ROG Falchion", 11),
-        (0x193C, "ROG Falchion", 11),
-        (0x1A85, "ROG Azoth", 6),
-        (0x1A83, "ROG Azoth", 6),
+        (0x1C7D, "ROG 魔导士 Ace HFX 75", 6, 1),
+        (0x1B7A, "ROG 游侠 2 RX 98 无线", 6, 1),
+        (0x1B78, "ROG 游侠 2 RX 98 无线", 6, 1),
+        (0x1AB0, "ROG 游侠 2 98 无线", 6, 1),
+        (0x1AAE, "ROG 游侠 2 98", 6, 1),
+        (0x1B06, "ROG 魔导士 RX Low Profile", 11, 1),
+        (0x1B04, "ROG 魔导士 RX Low Profile", 11, 1),
+        (0x193E, "ROG Falchion", 11, 1),
+        (0x193C, "ROG Falchion", 11, 1),
+        (0x1A85, "ROG Azoth", 6, 1),
+        (0x1A83, "ROG Azoth", 6, 1),
+        (0x1B42, "ROG Azoth Extreme", 6, 1),
+        (0x1B3F, "ROG Azoth Extreme", 6, 1),
+        (0x1CF1, "ROG Azoth Extreme SE", 6, 1),
+        (0x1CEF, "ROG Azoth Extreme SE", 6, 1),
+        (0x1C25, "ROG Azoth X", 6, 1),
+        (0x1C24, "ROG Azoth X", 6, 1),
+        (0x1A07, "ROG Strix Scope RX TKL", 6, 1),
     ];
+
+    private static readonly (ushort Pid, string Name, int Offset, int Scale)[] Mice =
+    [
+        (0x18E5, "ROG Chakram", 5, 25),
+        (0x18E3, "ROG Chakram", 5, 25),
+        (0x1A1A, "ROG Chakram X", 5, 1),
+        (0x1A18, "ROG Chakram X", 5, 1),
+        (0x18A0, "ROG Gladius II Wireless", 5, 25),
+        (0x197F, "ROG Gladius III Wireless", 5, 1),
+        (0x197D, "ROG Gladius III Wireless", 5, 1),
+        (0x1A72, "ROG Gladius III Aimpoint", 5, 1),
+        (0x1A70, "ROG Gladius III Aimpoint", 5, 1),
+        (0x1B0C, "ROG Gladius III Aimpoint EVA-02", 5, 1),
+        (0x1B0A, "ROG Gladius III Aimpoint EVA-02", 5, 1),
+        (0x1A94, "ROG Harpe Ace Aim Lab", 5, 1),
+        (0x1A92, "ROG Harpe Ace Aim Lab", 5, 1),
+        (0x1B68, "ROG Harpe Ace Extreme", 5, 1),
+        (0x1B69, "ROG Harpe Ace Extreme", 5, 1),
+        (0x1B67, "ROG Harpe Ace Extreme", 5, 1),
+        (0x1B65, "ROG Harpe Ace Mini", 5, 1),
+        (0x1B63, "ROG Harpe Ace Mini", 5, 1),
+        (0x1AD0, "ROG Harpe II Ace", 5, 1),
+        (0x1C69, "ROG Harpe II Ace", 5, 1),
+        (0x1960, "ROG Keris Wireless", 5, 25),
+        (0x195E, "ROG Keris Wireless", 5, 25),
+        (0x1A59, "ROG Keris Wireless EVA", 5, 25),
+        (0x1A57, "ROG Keris Wireless EVA", 5, 25),
+        (0x1A68, "ROG Keris Wireless Aimpoint", 5, 1),
+        (0x1A6A, "ROG Keris Wireless Aimpoint", 5, 1),
+        (0x1A66, "ROG Keris Wireless Aimpoint", 5, 1),
+        (0x1B1A, "ROG Keris II Ace", 5, 1),
+        (0x1B18, "ROG Keris II Ace", 5, 1),
+        (0x1B16, "ROG Keris II Ace", 5, 1),
+        (0x1C0E, "ROG Keris II Origin", 5, 1),
+        (0x1C0C, "ROG Keris II Origin", 5, 1),
+        (0x1D4E, "ROG Keris II Origin KJP", 5, 1),
+        (0x1D4C, "ROG Keris II Origin KJP", 5, 1),
+        (0x1908, "ROG Pugio II", 5, 25),
+        (0x1906, "ROG Pugio II", 5, 25),
+        (0x1979, "ROG Spatha X", 5, 1),
+        (0x1977, "ROG Spatha X", 5, 1),
+        (0x18B4, "ROG Strix Carry", 7, 25),
+        (0x1949, "ROG Strix Impact II Wireless", 5, 25),
+        (0x1947, "ROG Strix Impact II Wireless", 5, 25),
+        (0x1AD7, "ROG Strix Impact III Wireless", 5, 1),
+    ];
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, (ushort Pid, string Name, DeviceKind Kind)> OmniSlotCache = new();
 
     public IReadOnlyList<PeripheralDevice> Enumerate()
     {
@@ -55,6 +112,8 @@ public sealed class RogProvider : IPeripheralProvider
             results.Add(new PeripheralDevice
             {
                 Id = $"rog:{pid:X4}:hs",
+                VendorId = 0x0B05,
+                ProductId = (ushort)pid,
                 Name = name,
                 Kind = DeviceKind.Headset,
                 Provider = ProviderName,
@@ -76,77 +135,199 @@ public sealed class RogProvider : IPeripheralProvider
             .ToList();
         if (omni.Count == 0) return;
 
+        var paired = new List<ushort>();
         var listIface = omni.FirstOrDefault(d => d.DevicePath.Contains("col01", StringComparison.OrdinalIgnoreCase)) ?? omni[0];
-        using var listCh = HidChannel.TryOpen(listIface);
-        if (listCh == null) return;
-        var listReply = Query(listCh, 0x01, 0xA0, 0x00);
-        if (listReply == null) return;
-
-        var pids = new List<ushort>();
-        for (int at = 5; at + 1 < listReply.Length; at += 4)
+        using (var listCh = HidChannel.TryOpen(listIface))
         {
-            ushort pid = (ushort)(listReply[at] | (listReply[at + 1] << 8));
-            if (pid == 0) break;
-            pids.Add(pid);
-        }
-        Diag.Log($"ROG Omni 配对设备: {string.Join(",", pids.Select(p => p.ToString("X4")))}");
-
-        foreach (var pid in pids)
-        {
-            var model = Keyboards.FirstOrDefault(k => k.Pid == pid);
-            int offset = model.Pid == 0 ? 6 : model.Offset;
-            var iface = omni.FirstOrDefault(d => d.DevicePath.Contains("col02", StringComparison.OrdinalIgnoreCase)) ?? omni[0];
-            using var ch = HidChannel.TryOpen(iface);
-            if (ch == null) continue;
-            var reply = Query(ch, 0x02, 0x01);
-            if (reply == null) continue;
-            int percent = reply.Length > offset ? reply[offset] : 0;
-            if (percent is < 0 or > 100 || percent == 0)
+            if (listCh != null)
             {
-                percent = reply.Length > 11 ? reply[11] : 0;
-                if (percent is < 0 or > 100 || percent == 0) continue;
+                var listReply = Query(listCh, 0x01, 0xA0, 0x00, 380);
+                if (listReply != null && !IsAsleepFrame(listReply))
+                {
+                    for (int at = 5; at + 1 < listReply.Length; at += 4)
+                    {
+                        ushort p = (ushort)(listReply[at] | (listReply[at + 1] << 8));
+                        if (p == 0) break;
+                        paired.Add(p);
+                    }
+                }
             }
+        }
+        if (paired.Count > 0)
+            Diag.Log($"ROG Omni 配对设备: {string.Join(",", paired.Select(p => p.ToString("X4")))}");
+
+        bool addedAny = false;
+        // 尝试键盘接口 col02 (rid=0x02, sub=0x01) 与 鼠标接口 col03 (rid=0x03, sub=0x07)
+        var kbIface = omni.FirstOrDefault(d => d.DevicePath.Contains("col02", StringComparison.OrdinalIgnoreCase)) ?? omni[0];
+        if (kbIface != null)
+        {
+            using var kbCh = HidChannel.TryOpen(kbIface);
+            if (kbCh != null)
+            {
+                var reply = Query(kbCh, 0x02, 0x01, null, 380);
+                ushort matchedKbPid = paired.FirstOrDefault(p => Keyboards.Any(k => k.Pid == p));
+                var kbModel = matchedKbPid != 0 ? Keyboards.FirstOrDefault(k => k.Pid == matchedKbPid) : default;
+                int offset = kbModel.Pid != 0 ? kbModel.Offset : 6;
+
+                if (reply != null && !IsAsleepFrame(reply))
+                {
+                    int pct = reply.Length > offset ? reply[offset] : 0;
+                    if (pct is <= 0 or > 100 && reply.Length > 11) pct = reply[11];
+                    if (pct is > 0 and <= 100)
+                    {
+                        string name = !string.IsNullOrEmpty(kbModel.Name)
+                            ? kbModel.Name
+                            : OmniSlotCache.TryGetValue(1, out var cm) && cm.Kind == DeviceKind.Keyboard
+                                ? cm.Name
+                                : "ROG 游侠 2 RX 98 无线";
+                        ushort idPid = matchedKbPid != 0 ? matchedKbPid : (ushort)0x1B7A;
+                        OmniSlotCache[1] = (idPid, name, DeviceKind.Keyboard);
+                        results.Add(new PeripheralDevice
+                        {
+                            Id = $"rog:{idPid:X4}:kb",
+                            VendorId = 0x0B05,
+                            ProductId = idPid,
+                            Name = name,
+                            Kind = DeviceKind.Keyboard,
+                            Provider = ProviderName,
+                            Connected = true,
+                            Transport = "Omni 2.4G",
+                            BatteryPercent = pct,
+                            State = reply.Length > 9 && reply[9] == 1 ? BatteryState.Charging : BatteryState.Normal,
+                            LastUpdated = DateTimeOffset.Now,
+                        });
+                        addedAny = true;
+                    }
+                }
+            }
+        }
+
+        var msIface = omni.FirstOrDefault(d => d.DevicePath.Contains("col03", StringComparison.OrdinalIgnoreCase));
+        if (msIface != null)
+        {
+            using var msCh = HidChannel.TryOpen(msIface);
+            if (msCh != null)
+            {
+                var reply = Query(msCh, 0x03, 0x07, null, 380);
+                ushort matchedMsPid = paired.FirstOrDefault(p => Mice.Any(m => m.Pid == p));
+                if (reply != null && !IsAsleepFrame(reply) && reply.Length > 5)
+                {
+                    var mModel = matchedMsPid != 0 ? Mice.FirstOrDefault(m => m.Pid == matchedMsPid) : default;
+                    int raw = reply[mModel.Pid != 0 ? mModel.Offset : 5];
+                    int pct = Math.Clamp(raw * (mModel.Pid != 0 ? mModel.Scale : 1), 0, 100);
+                    if (pct is > 0 and <= 100)
+                    {
+                        string mName = !string.IsNullOrEmpty(mModel.Name) ? mModel.Name : $"ROG 无线鼠标 {matchedMsPid:X4}";
+                        ushort idPid = matchedMsPid != 0 ? matchedMsPid : (ushort)0x1ACE;
+                        OmniSlotCache[2] = (idPid, mName, DeviceKind.Mouse);
+                        results.Add(new PeripheralDevice
+                        {
+                            Id = $"rog:{idPid:X4}:ms",
+                            VendorId = 0x0B05,
+                            ProductId = idPid,
+                            Name = mName,
+                            Kind = DeviceKind.Mouse,
+                            Provider = ProviderName,
+                            Connected = true,
+                            Transport = "Omni 2.4G",
+                            BatteryPercent = pct,
+                            State = reply.Length > 10 && reply[10] == 1 ? BatteryState.Charging : BatteryState.Normal,
+                            LastUpdated = DateTimeOffset.Now,
+                        });
+                        addedAny = true;
+                    }
+                }
+            }
+        }
+
+        // 若 Omni 接收器在线但配对键盘休眠 (FF AA)，仍必须展示已配对的键盘而不是消失
+        if (!addedAny)
+        {
+            ushort sleepPid = paired.FirstOrDefault(p => Keyboards.Any(k => k.Pid == p));
+            var sleepModel = sleepPid != 0 ? Keyboards.FirstOrDefault(k => k.Pid == sleepPid) : default;
+            string sleepName = !string.IsNullOrEmpty(sleepModel.Name)
+                ? sleepModel.Name
+                : OmniSlotCache.TryGetValue(1, out var cached) ? cached.Name : "ROG 游侠 2 RX 98 无线";
+            ushort idPid = sleepPid != 0 ? sleepPid : (ushort)0x1B7A;
+
             results.Add(new PeripheralDevice
             {
-                Id = $"rog:{pid:X4}:kb",
-                Name = model.Name ?? $"ROG keyboard {pid:X4}",
+                Id = $"rog:{idPid:X4}:kb",
+                VendorId = 0x0B05,
+                ProductId = idPid,
+                Name = sleepName,
                 Kind = DeviceKind.Keyboard,
                 Provider = ProviderName,
                 Connected = true,
-                Transport = "2.4G",
-                BatteryPercent = percent,
-                State = reply.Length > 9 && reply[9] == 1 ? BatteryState.Charging : BatteryState.Normal,
+                IsSleeping = true,
+                Transport = "Omni 2.4G",
+                BatteryPercent = null,
+                State = BatteryState.Unknown,
+                Note = "Omni 接收器在线（键盘休眠中，任意按键唤醒后可读取电量）",
                 LastUpdated = DateTimeOffset.Now,
             });
         }
     }
 
+    private static bool IsAsleepFrame(byte[] reply)
+        => reply.Length >= 3 && reply[1] == 0xFF && reply[2] == 0xAA;
+
     private static void ReadDirectKeyboards(List<PeripheralDevice> results)
     {
-        foreach (var (pid, name, offset) in Keyboards)
+        foreach (var (pid, name, offset, scale) in Keyboards)
         {
-            if (results.Any(r => r.Id.Contains(pid.ToString("X4")))) continue;
-            var iface = HidSafe.EnumerateDevices(0x0B05, pid)
+            if (results.Any(r => r.ProductId == pid || r.Id.Contains(pid.ToString("X4"), StringComparison.OrdinalIgnoreCase)))
+                continue;
+            var matching = HidSafe.EnumerateDevices(0x0B05, pid);
+            if (matching.Count == 0) continue;
+
+            int? percent = null;
+            bool charging = false;
+            var iface = matching
                 .Where(d => HidSafe.MaxOutputLen(d) >= 12)
                 .OrderByDescending(HidSafe.MaxOutputLen)
                 .FirstOrDefault();
-            if (iface == null) continue;
-            using var ch = HidChannel.TryOpen(iface);
-            if (ch == null) continue;
-            var reply = Query(ch, 0x00, 0x01);
-            if (reply == null) continue;
-            int percent = reply.Length > offset ? reply[offset] : 0;
-            if (percent is < 0 or > 100 || percent == 0) continue;
+            if (iface != null)
+            {
+                using var ch = HidChannel.TryOpen(iface);
+                if (ch != null)
+                {
+                    var reply = Query(ch, 0x00, 0x01, null, 350);
+                    if (reply != null && !IsAsleepFrame(reply) && reply.Length > offset)
+                    {
+                        int candidate = reply[offset] * scale;
+                        if (candidate is > 0 and <= 100)
+                        {
+                            percent = candidate;
+                            charging = reply.Length > 9 && reply[9] == 1;
+                        }
+                    }
+                }
+            }
+
+            // 有线磁轴键盘如 0B05:1C7D 魔导士 Ace HFX 75 无电池，也必须识别显示以提供奥创/Gear Link 入口
+            bool isWiredOnly = pid == 0x1C7D;
+            if (percent == null && !isWiredOnly && matching.All(d => HidSafe.MaxOutputLen(d) < 12))
+                continue;
+
             results.Add(new PeripheralDevice
             {
                 Id = $"rog:{pid:X4}:kb",
+                VendorId = 0x0B05,
+                ProductId = pid,
                 Name = name,
                 Kind = DeviceKind.Keyboard,
                 Provider = ProviderName,
                 Connected = true,
-                Transport = "USB",
+                IsSleeping = !isWiredOnly && percent == null,
+                Transport = isWiredOnly ? "USB 有线磁轴" : "USB / 2.4G",
                 BatteryPercent = percent,
-                State = reply.Length > 9 && reply[9] == 1 ? BatteryState.Charging : BatteryState.Normal,
+                State = charging ? BatteryState.Charging : BatteryState.Unknown,
+                Note = isWiredOnly
+                    ? "有线磁轴键盘（无内置电池）· 可打开奥创中心或 Gear Link 网页驱动调校"
+                    : percent == null
+                        ? "已连接（有线模式或暂未上报电量）"
+                        : null,
                 LastUpdated = DateTimeOffset.Now,
             });
         }
@@ -203,25 +384,29 @@ public sealed class AngryMiaoProvider : ITunablePeripheralProvider
             {
                 var (vid, pid) = g.Key;
                 string? devName = g.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
-                string cleanName = string.IsNullOrWhiteSpace(devName)
-                    ? (pid == 0x0703 ? "AM Infinity .97" : $"Angry Miao {vid:X4}:{pid:X4}")
+                string cleanName = string.IsNullOrWhiteSpace(devName) || devName.Contains("Receiver", StringComparison.OrdinalIgnoreCase)
+                    ? (pid == 0x0703 ? "Angry Miao AM Infinity .97" : $"Angry Miao {vid:X4}:{pid:X4}")
                     : devName.Trim();
 
-                (int Battery, bool Charging, int? DockBattery)? hit = ProbeGroup(g, vid, pid);
+                (int Battery, bool Charging, int? DockBattery)? hit = pid == 0x0703 ? null : ProbeGroup(g, vid, pid);
                 string? note = hit is { DockBattery: { } dock }
                     ? $"底座电池 {dock}%"
-                    : hit == null
-                        ? "已连接（有线供电无电池或无线休眠中）"
-                        : null;
+                    : pid == 0x0703
+                        ? "AM35 定制主控已识别（热插拔电量/参数由 AM Master 专有接口管理，可点击打开怒喵网页驱动）"
+                        : hit == null
+                            ? "已连接（有线供电无电池或无线休眠中）"
+                            : null;
 
                 results.Add(new PeripheralDevice
                 {
                     Id = $"am:{vid:X4}-{pid:X4}",
+                    VendorId = vid,
+                    ProductId = pid,
                     Name = cleanName,
                     Kind = DeviceKind.Mouse,
                     Provider = ProviderName,
                     Connected = true,
-                    IsSleeping = hit == null,
+                    IsSleeping = pid != 0x0703 && hit == null,
                     Transport = "2.4G / USB",
                     BatteryPercent = hit?.Battery,
                     State = hit is { Charging: true } ? BatteryState.Charging : BatteryState.Normal,

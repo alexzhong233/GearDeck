@@ -20,6 +20,15 @@
 
             <InfoBar x:Name="StatusInfoBar" IsOpen="False" IsClosable="True" />
 
+            <InfoBar x:Name="AdminPrivilegeBanner"
+                     IsOpen="False" IsClosable="True" Severity="Warning"
+                     Title="当前以普通用户权限运行（UIPI 限制）"
+                     Message="若需要在管理员权限运行的游戏/全屏程序（如 CS2、Valorant、Apex 等）中触发软件侧键宏，请使用管理员权限重启 GearDeck。">
+                <InfoBar.ActionButton>
+                    <Button Content="以管理员身份重启 GearDeck" Click="OnRestartAsAdmin" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+
             <!-- 自适应双栏 / 窄屏单栏布局 -->
             <Grid x:Name="WorkspaceGrid" ColumnSpacing="16" RowSpacing="16">
                 <!-- 左/上：宏预设库 -->
@@ -50,18 +59,19 @@
                             <TextBlock x:Name="EditorTitleText" Text="宏动作录制与编辑" FontSize="18" FontWeight="SemiBold" />
 
                             <controls:ResponsiveWrapPanel Spacing="10" LineSpacing="10">
-                                <TextBox x:Name="MacroNameBox" Header="宏名称" Width="220" />
-                                <ComboBox x:Name="MacroLoopCombo" Header="循环方式" Width="185" SelectionChanged="OnMacroPropertyChanged">
-                                    <ComboBoxItem Content="执行指定次数" />
-                                    <ComboBoxItem Content="按住持续循环" />
-                                    <ComboBoxItem Content="按下启动 / 再按停止" />
+                                <TextBox x:Name="MacroNameBox" Header="宏名称" Width="210" />
+                                <ComboBox x:Name="MacroLoopCombo" Header="触发方式（雷云模式）" Width="245" SelectionChanged="OnMacroPropertyChanged">
+                                    <ComboBoxItem Tag="PlayOnce" Content="单次触发（按下播放 1 次）" />
+                                    <ComboBoxItem Tag="WhileHeld" Content="按住触发（按住循环，松开即停）" />
+                                    <ComboBoxItem Tag="ToggleUntilKey" Content="切换触发（再按或 Esc 停止）" />
+                                    <ComboBoxItem Tag="RepeatCount" Content="指定次数（按下循环 N 次）" />
                                 </ComboBox>
                                 <NumberBox x:Name="MacroRepeatBox" Header="重复次数" Width="130" Maximum="99" Minimum="1"
                                            Value="1" SpinButtonPlacementMode="Compact" ValueChanged="OnMacroRepeatChanged" />
                             </controls:ResponsiveWrapPanel>
 
                             <controls:ResponsiveWrapPanel Spacing="8" LineSpacing="8">
-                                <ToggleButton x:Name="RecordMacroBtn" Content="开始录制键盘按键与延迟"
+                                <ToggleButton x:Name="RecordMacroBtn" Content="开始录制键盘按键与鼠标点击"
                                               Checked="OnRecordStart" Unchecked="OnRecordStop" />
                                 <Button Content="+ 鼠标左键点击" Click="OnAddLeftClickStep" />
                                 <Button Content="+ 鼠标右键点击" Click="OnAddRightClickStep" />
@@ -69,9 +79,10 @@
                                 <Button Content="清空步骤" Click="OnClearMacroSteps" />
                             </controls:ResponsiveWrapPanel>
 
-                            <TextBox x:Name="RecordFocusTrap" Visibility="Collapsed"
-                                     PlaceholderText="录制中：请在此直接按下/松开键盘按键以记录按键顺序与真实毫秒延迟..."
-                                     PreviewKeyDown="OnRecorderKeyDown" PreviewKeyUp="OnRecorderKeyUp" />
+                            <TextBox x:Name="RecordFocusTrap" Visibility="Collapsed" IsReadOnly="True"
+                                     PlaceholderText="录制中：请在此框内直接按键盘或点击鼠标左右/中键以记录顺序与真实延迟..."
+                                     PreviewKeyDown="OnRecorderKeyDown" PreviewKeyUp="OnRecorderKeyUp"
+                                     PointerPressed="OnRecorderPointerPressed" PointerReleased="OnRecorderPointerReleased" />
 
                             <controls:ResponsiveWrapPanel Spacing="8" LineSpacing="8">
                                 <ComboBox x:Name="ManualKeyCombo" Header="手动选键" Width="180" />

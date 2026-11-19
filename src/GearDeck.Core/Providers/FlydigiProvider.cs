@@ -72,6 +72,8 @@ public sealed class FlydigiProvider : ITunablePeripheralProvider
                 results.Add(new PeripheralDevice
                 {
                     Id = $"flydigi:{vid:X4}-{pid:X4}",
+                    VendorId = vid,
+                    ProductId = pid,
                     Name = cleanName,
                     Kind = DeviceKind.Controller,
                     Provider = ProviderName,
@@ -95,6 +97,8 @@ public sealed class FlydigiProvider : ITunablePeripheralProvider
             results.Add(new PeripheralDevice
             {
                 Id = $"flydigi:{FlydigiVid:X4}-{DockCd2Pid:X4}",
+                VendorId = FlydigiVid,
+                ProductId = DockCd2Pid,
                 Name = "飞智充电底座 CD2",
                 Kind = DeviceKind.Controller,
                 Provider = ProviderName,
@@ -202,8 +206,14 @@ public sealed class FlydigiProvider : ITunablePeripheralProvider
 
             if (update.PerformanceMode is { } triggerMode && info.Variant == GenVariant.Apex5V2)
             {
-                byte[] pkt = BuildApex5TriggerPreset((byte)(ch.OutputLength >= 33 ? 0x00 : 0x03), triggerMode);
-                if (!ch.WriteOutput(pkt))
+                byte outRid = ResolveOutputReportId(ch, devs);
+                var (leftPkt, rightPkt) = BuildApex5TriggerPresetPair(outRid, triggerMode, ch.OutputLength);
+                while (ch.Read(3) != null) { }
+                bool okL = ch.WriteOutput(leftPkt);
+                Thread.Sleep(15);
+                bool okR = ch.WriteOutput(rightPkt);
+                _ = ch.Read(100);
+                if (!okL || !okR)
                     errors.Add("力反馈扳机模式写入失败");
             }
 
@@ -332,23 +342,45 @@ public sealed class FlydigiProvider : ITunablePeripheralProvider
         return req;
     }
 
-    private static byte[] BuildApex5TriggerPreset(byte repId, int preset)
+    private static byte ResolveOutputReportId(HidChannel ch, IEnumerable<HidDevice> devs)
     {
-        byte[] payload = preset switch
+        foreach (var d in devs.Where(x => HidSafe.PrimaryUsage(x).UsagePage == 0xFFA0))
         {
-            1 => [1, 3, 1, 40, 120, 0],        // Race
-            2 => [1, 3, 4, 45, 180, 120, 0, 0], // Sniper Break (Lock=3, Sniper=4)
-            3 => [1, 3, 2, 40, 20, 150, 25, 1], // Recoil
-            4 => [1, 3, 3, 15, 255, 0],         // Micro Lock
-            _ => [1, 3, 0],                     // Normal
+            var ids = HidReportInspector.GetReportIds(d);
+            if (ids.OutputIds.Contains((byte)0x03)) return 0x03;
+            if (ids.OutputIds.Contains((byte)0x06)) return 0x06;
+            if (ids.OutputIds.Contains((byte)0x00)) return 0x00;
+        }
+        return (byte)(ch.OutputLength >= 33 ? 0x00 : 0x03);
+    }
+
+    internal static (byte[] LeftPacket, byte[] RightPacket) BuildApex5TriggerPresetPair(byte repId, int preset, int outputLen = 32)
+    {
+        return (BuildApex5SingleTriggerPacket(repId, 1, preset, outputLen),
+                BuildApex5SingleTriggerPacket(repId, 2, preset, outputLen));
+    }
+
+    private static byte[] BuildApex5SingleTriggerPacket(byte repId, byte side, int preset, int outputLen)
+    {
+        // OpenFlydigi PROTOCOL.md §3a:
+        // side=3 (Both) 被 Apex 5 固件静默忽略，必须为 Left(1) 和 Right(2) 分别下发！
+        // [0]=repId, [1]=0x5A, [2]=0xA5, [3]=81, [4]=10(len), [5]=1(applyFlag), [6]=side, [7]=mode, [8..]=params
+        // 注意 Space Station UI 中 Sniper(狙击)=mode 3, Recoil(机枪)=mode 2
+        byte[] args = preset switch
+        {
+            1 => [1, side, 1, 50, 80, 0],            // Race 赛车线性阻尼
+            2 => [1, side, 3, 50, 30, 120, 0, 1],    // Sniper 狙击段落突破 (MODE_RECOIL=3)
+            3 => [1, side, 2, 45, 25, 140, 22, 1],   // Recoil 机枪后坐震动 (MODE_SNIPER=2)
+            4 => [1, side, 4, 55, 255, 1],           // Lock 微动快速锁死 (MODE_LOCK=4)
+            _ => [1, side, 0],                       // Normal 常规线性
         };
-        var req = new byte[32];
+        var req = new byte[Math.Max(32, outputLen)];
         req[0] = repId;
         req[1] = 0x5A;
         req[2] = 0xA5;
-        req[3] = 81; // ForceTrigger cmd 81
-        req[4] = (byte)payload.Length;
-        Array.Copy(payload, 0, req, 5, payload.Length);
+        req[3] = 81;
+        req[4] = 10;
+        Array.Copy(args, 0, req, 5, args.Length);
         return req;
     }
 

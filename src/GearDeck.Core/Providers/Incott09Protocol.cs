@@ -49,7 +49,9 @@ internal static class Incott09Protocol
             MacroLoopMode.ToggleUntilKey => 1,
             _ => 2,
         };
-        ushort cycles = (ushort)Math.Clamp(macro.RepeatCount, 1, 65535);
+        ushort cycles = macro.LoopMode == MacroLoopMode.PlayOnce
+            ? (ushort)1
+            : (ushort)Math.Clamp(macro.RepeatCount, 1, 65535);
         buf[2] = (byte)(cycles & 0xFF);
         buf[3] = (byte)(cycles >> 8);
 

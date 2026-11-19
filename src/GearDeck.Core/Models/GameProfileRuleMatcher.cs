@@ -28,13 +28,17 @@ public sealed record GameProfileResolution(
 
 public sealed record ParsedMouseTarget(
     int? OnboardSlot,
-    string? PresetId)
+    string? PresetId,
+    bool RestorePrevious = false,
+    bool KeepCurrent = false)
 {
-    public bool IsEmpty => OnboardSlot == null && string.IsNullOrWhiteSpace(PresetId);
+    public bool IsEmpty => OnboardSlot == null && string.IsNullOrWhiteSpace(PresetId) && !RestorePrevious && !KeepCurrent;
 }
 
 public static class GameProfileRuleMatcher
 {
+    public const string RestorePreviousTargetId = "__restore_prev__";
+    public const string KeepCurrentTargetId = "__keep__";
     public static string NormalizeProcessName(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return "";
@@ -88,12 +92,12 @@ public static class GameProfileRuleMatcher
                 fullscreenFallbackTargets);
         }
 
-        if (restoreDesktopOnExit && HasAnyTarget(desktopDefaultTargets))
+        if (restoreDesktopOnExit)
         {
             return new GameProfileResolution(
                 ActiveSwitchReason.DesktopDefault,
                 "__desktop__",
-                "桌面默认配置",
+                HasAnyTarget(desktopDefaultTargets) ? "桌面默认配置" : "回退开启前的模式",
                 desktopDefaultTargets);
         }
 
@@ -132,13 +136,20 @@ public static class GameProfileRuleMatcher
         if (string.IsNullOrWhiteSpace(target))
             return new ParsedMouseTarget(null, null);
 
-        if (target.StartsWith("slot:", StringComparison.OrdinalIgnoreCase) &&
-            int.TryParse(target.AsSpan(5), out int slot) && slot >= 0)
+        string trimmed = target.Trim();
+        if (string.Equals(trimmed, RestorePreviousTargetId, StringComparison.OrdinalIgnoreCase))
+            return new ParsedMouseTarget(null, null, RestorePrevious: true);
+
+        if (string.Equals(trimmed, KeepCurrentTargetId, StringComparison.OrdinalIgnoreCase))
+            return new ParsedMouseTarget(null, null, KeepCurrent: true);
+
+        if (trimmed.StartsWith("slot:", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(trimmed.AsSpan(5), out int slot) && slot >= 0)
             return new ParsedMouseTarget(slot, null);
 
-        if (target.StartsWith("preset:", StringComparison.OrdinalIgnoreCase))
+        if (trimmed.StartsWith("preset:", StringComparison.OrdinalIgnoreCase))
         {
-            string id = target[7..].Trim();
+            string id = trimmed[7..].Trim();
             if (!string.IsNullOrEmpty(id))
                 return new ParsedMouseTarget(null, id);
         }

@@ -11,6 +11,19 @@ public sealed record ButtonBindingSlot(
     IReadOnlyList<string> AvailableActions,
     bool IsReadOnly = false);
 
+public sealed record AnalogButtonConfig(
+    int ButtonIndex,
+    int Actuation,
+    bool RapidTriggerEnabled,
+    int RapidTrigger,
+    bool HapticsEnabled,
+    int Haptics);
+
+public sealed record AnalogSwitchUpdate(
+    bool IndependentButtons,
+    AnalogButtonConfig Left,
+    AnalogButtonConfig Right);
+
 public sealed class DeviceTuningCapabilities
 {
     public required string DeviceId { get; init; }
@@ -119,6 +132,23 @@ public sealed class DeviceTuningCapabilities
     public int OnboardMacroSlotCount { get; set; }
 
     public string? MacroCapabilityNote { get; set; }
+
+    // ── 电磁 / 电感微动触发点与 Rapid Trigger (HITS / AULA SSHS 2.0) ────────────
+    public bool SupportsAnalogSwitchTuning { get; set; }
+
+    public string AnalogSwitchTechName { get; set; } = "HITS / RT 微动调校";
+
+    public int AnalogMaxActuation { get; set; } = 10;
+
+    public int AnalogMaxRapidTrigger { get; set; } = 5;
+
+    public int AnalogMaxHaptics { get; set; } = 5;
+
+    public bool SupportsAnalogHapticsSwitch { get; set; }
+
+    public AnalogButtonConfig? LeftAnalogButton { get; set; }
+
+    public AnalogButtonConfig? RightAnalogButton { get; set; }
 }
 
 public sealed class DeviceTuningUpdate
@@ -160,6 +190,8 @@ public sealed class DeviceTuningUpdate
     public (int SlotIndex, string Action)? ButtonBinding { get; set; }
 
     public (int MacroSlot, int TargetButtonSlot, OnboardMacroDefinition Macro)? UploadMacro { get; set; }
+
+    public AnalogSwitchUpdate? AnalogSwitches { get; set; }
 }
 
 public sealed record DeviceTuningResult(bool Success, string Message, DeviceTuningCapabilities? Capabilities = null);

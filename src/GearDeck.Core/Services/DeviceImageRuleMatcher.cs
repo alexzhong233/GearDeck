@@ -243,19 +243,53 @@ public static class DeviceImageRuleMatcher
 
     public static bool TryExtractVidPid(PeripheralDevice d, out string vidHex, out string pidHex)
     {
+        if (d.VendorId is { } v && v > 0 && d.ProductId is { } p && p > 0)
+        {
+            vidHex = v.ToString("x4", CultureInfo.InvariantCulture);
+            pidHex = p.ToString("x4", CultureInfo.InvariantCulture);
+            return true;
+        }
+
         vidHex = "";
         pidHex = "";
         int colon = d.Id.IndexOf(':');
         if (colon < 0) return false;
+        string prefix = d.Id[..colon].ToLowerInvariant();
         string tail = d.Id[(colon + 1)..];
         var parts = tail.Split('-');
-        if (parts.Length < 2) return false;
-        if (ushort.TryParse(parts[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out _) &&
-            ushort.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out _))
+        if (parts.Length >= 2 &&
+            ushort.TryParse(parts[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort vHex) &&
+            ushort.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort pHex))
         {
-            vidHex = parts[0].ToLowerInvariant();
-            pidHex = parts[1].ToLowerInvariant();
+            vidHex = vHex.ToString("x4", CultureInfo.InvariantCulture);
+            pidHex = pHex.ToString("x4", CultureInfo.InvariantCulture);
             return true;
+        }
+
+        var colonParts = tail.Split(':');
+        if (ushort.TryParse(colonParts[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort singlePid))
+        {
+            string? brandVid = prefix switch
+            {
+                "logi" => "046d",
+                "razer" => "1532",
+                "rog" => "0b05",
+                "sony" => "054c",
+                "flydigi" => "37d7",
+                "atk" => "373b",
+                "aula" => "38a6",
+                "wlmouse" => "36a7",
+                "lamzu" => "373e",
+                "am" => "0e8d",
+                "mchose" => "24ae",
+                _ => null,
+            };
+            if (brandVid != null)
+            {
+                vidHex = brandVid;
+                pidHex = singlePid.ToString("x4", CultureInfo.InvariantCulture);
+                return true;
+            }
         }
         return false;
     }

@@ -438,12 +438,18 @@ public sealed partial class GamesPage : Page
         ShowStatus("已完成前台窗口检测并按策略向已唤醒外设执行对应配置。", InfoBarSeverity.Informational);
     }
 
-    private List<TargetOption> BuildTargetOptionsForDevice(string deviceId, PeripheralDevice? dev)
+    private List<TargetOption> BuildTargetOptionsForDevice(string deviceId, PeripheralDevice? dev, bool isExitRestore = false)
     {
-        var list = new List<TargetOption>
-        {
-            new("", "保持当前不变"),
-        };
+        var list = isExitRestore
+            ? new List<TargetOption>
+            {
+                new("", "回退开启前的模式（默认）"),
+                new(GameProfileRuleMatcher.KeepCurrentTargetId, "保持切换后不变（不回退）"),
+            }
+            : new List<TargetOption>
+            {
+                new("", "保持当前不变"),
+            };
 
         // 1. 该设备真实厂家板载预设槽位（已读取的带 DPI/Hz 详情）
         var onboardSlots = App.Settings.GetDeviceOnboardSlots(dev, deviceId);
@@ -498,7 +504,7 @@ public sealed partial class GamesPage : Page
             .OrderBy(x => x.Sleeping).ThenBy(x => x.Label).ToList();
     }
 
-    private StackPanel BuildPerMouseTargetPanel(Dictionary<string, string> targetMap, bool isEnabled = true)
+    private StackPanel BuildPerMouseTargetPanel(Dictionary<string, string> targetMap, bool isEnabled = true, bool isExitRestore = false)
     {
         var panel = new StackPanel { Spacing = 8 };
         var devs = CollectTunableEntries(targetMap);
@@ -516,7 +522,7 @@ public sealed partial class GamesPage : Page
 
         foreach (var (deviceId, dev, displayName, _) in devs)
         {
-            var options = BuildTargetOptionsForDevice(deviceId, dev);
+            var options = BuildTargetOptionsForDevice(deviceId, dev, isExitRestore);
             panel.Children.Add(CreateDeviceTargetRow(deviceId, displayName, options, targetMap, isEnabled));
         }
         return panel;
@@ -573,7 +579,7 @@ public sealed partial class GamesPage : Page
 
     /// <summary>
     /// 统一构建“全屏独占策略”与“退出恢复策略”两张合并策略卡片：
-    /// 卡片 1 受上方「全盘独占策略总开关」控制，仅在开启后可编辑并生效。
+    /// 两张卡片均受上方「全局独占策略总开关」控制，总开关关闭时均灰显禁用且不生效。
     /// </summary>
     private void RebuildStrategyCards()
     {
@@ -609,16 +615,21 @@ public sealed partial class GamesPage : Page
                 "1. 全屏独占自动切换策略" + (fsEnabled ? "（已启用）" : "（未开启）"),
                 fsEnabled
                     ? "当未命中自定义进程规则的游戏或应用进入全屏独占时触发；支持选择检测方式与各外设目标预设。"
-                    : "请先开启上方「全盘独占策略总开关」，开启后才可编辑下方规则并在进入全屏时自动切换。",
+                    : "请先开启上方「全局独占策略总开关」，开启后才可编辑下方规则并在进入全屏时自动切换。",
                 fsCombo,
-                BuildPerMouseTargetPanel(s.FullscreenFallbackTargets, isEnabled: fsEnabled));
-            card1.Opacity = fsEnabled ? 1.0 : 0.55;
+                BuildPerMouseTargetPanel(s.FullscreenFallbackTargets, isEnabled: fsEnabled, isExitRestore: false));
+            card1.Opacity = fsEnabled ? 1.0 : 0.48;
+            card1.IsHitTestVisible = fsEnabled;
 
-            // 卡片 2：退出恢复策略
-            var exitCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            exitCombo.Items.Add(new ComboBoxItem { Content = "等待全屏窗口 / 游戏进程完全退出后再恢复桌面默认（Alt+Tab 不切回）", Tag = ExitRestoreMode.WhenWindowExits });
-            exitCombo.Items.Add(new ComboBoxItem { Content = "离开游戏 / 全屏窗口焦点 1.5 秒后立即恢复桌面默认", Tag = ExitRestoreMode.WhenFocusLeaves });
-            exitCombo.Items.Add(new ComboBoxItem { Content = "退出后不自动恢复（始终保留上一次的配置）", Tag = ExitRestoreMode.NeverRestore });
+            // 卡片 2：退出恢复策略（同样受总开关控制；默认回退开启前的模式）
+            var exitCombo = new ComboBox
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                IsEnabled = fsEnabled,
+            };
+            exitCombo.Items.Add(new ComboBoxItem { Content = "等待全屏窗口 / 游戏进程完全退出后再恢复默认（Alt+Tab 不切回）", Tag = ExitRestoreMode.WhenWindowExits });
+            exitCombo.Items.Add(new ComboBoxItem { Content = "离开游戏 / 全屏窗口焦点 1.5 秒后立即恢复默认", Tag = ExitRestoreMode.WhenFocusLeaves });
+            exitCombo.Items.Add(new ComboBoxItem { Content = "退出后不自动恢复（始终保留切换后的配置）", Tag = ExitRestoreMode.NeverRestore });
             exitCombo.SelectedIndex = (int)s.GetExitRestoreMode();
             exitCombo.SelectionChanged += (_, _) =>
             {
@@ -633,10 +644,14 @@ public sealed partial class GamesPage : Page
             };
 
             var card2 = BuildStrategyCard(
-                "2. 退出全屏 / 游戏默认恢复策略",
-                "只要检测到全屏独占中的窗口或游戏尚未退出（如 Alt+Tab 切出），推荐保持不切回默认；窗口退出后再恢复以下默认配置。",
+                "2. 退出全屏 / 游戏恢复策略" + (fsEnabled ? "" : "（未开启总开关）"),
+                fsEnabled
+                    ? "默认将在退出全屏或游戏窗口后自动「回退开启前的模式」，也可按设备单独指定固定的桌面槽位或预设。"
+                    : "需先开启上方「全局独占策略总开关」方可编辑并在退出全屏后生效。",
                 exitCombo,
-                BuildPerMouseTargetPanel(s.DesktopDefaultTargets, isEnabled: true));
+                BuildPerMouseTargetPanel(s.DesktopDefaultTargets, isEnabled: fsEnabled, isExitRestore: true));
+            card2.Opacity = fsEnabled ? 1.0 : 0.48;
+            card2.IsHitTestVisible = fsEnabled;
 
             StrategyCardsHost.SetItems([card1, card2]);
         }

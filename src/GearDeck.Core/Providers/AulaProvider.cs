@@ -30,13 +30,21 @@ public sealed class AulaProvider : ITunablePeripheralProvider
             {
                 var (vid, pid) = g.Key;
                 string? rawName = g.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
-                string cleanName = CleanName(rawName) ?? (vid == 0x258A && pid is 0x0138 or 0x0136 ? "AULA SC380 Pro" : $"AULA {vid:X4}:{pid:X4}");
+                var ffa8Dev = AulaFfa8Protocol.FindEndpoint(g);
+                var ffa8Hit = ffa8Dev != null ? AulaFfa8Protocol.QueryBatteryAndIdentity(ffa8Dev, vid, pid) : null;
+                var hit = ffa8Hit is { } fh ? (fh.Battery, fh.Charging) : ProbeBattery(g, vid, pid);
+
+                string cleanName = ffa8Hit?.ModelName
+                    ?? AulaFfa8Protocol.ResolveModelName(vid, pid)
+                    ?? CleanName(rawName)
+                    ?? (vid == 0x258A && pid is 0x0138 or 0x0136 ? "AULA SC380 Pro" : $"AULA {vid:X4}:{pid:X4}");
                 var kind = InferKind(cleanName);
 
-                var hit = ProbeBattery(g, vid, pid);
                 results.Add(new PeripheralDevice
                 {
                     Id = $"aula:{vid:X4}-{pid:X4}",
+                    VendorId = vid,
+                    ProductId = pid,
                     Name = cleanName,
                     Kind = kind,
                     Provider = ProviderName,
@@ -75,6 +83,15 @@ public sealed class AulaProvider : ITunablePeripheralProvider
 
         string? rawName = list.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
         bool wireless = !(vid == 0x258A && pid == 0x0136) && rawName?.Contains("Wired", StringComparison.OrdinalIgnoreCase) != true;
+
+        // 0. 狼蛛 0xFFA8 协议（昆仑 L5 Ultra 等电磁微动 + RT 全系）
+        var ffa8Dev = AulaFfa8Protocol.FindEndpoint(list);
+        if (ffa8Dev != null)
+        {
+            var ffa8Caps = AulaFfa8Protocol.QueryCapabilities(deviceId, ffa8Dev, vid, pid, wireless);
+            if (ffa8Caps.IsOnline)
+                return ffa8Caps;
+        }
 
         // 1. AULA SC380 Pro 520B Feature Report 0x09
         var scCaps = QuerySc380Capabilities(deviceId, list);
@@ -120,6 +137,10 @@ public sealed class AulaProvider : ITunablePeripheralProvider
         var list = HidSafe.EnumerateDevices(vid, pid);
         string? rawName = list.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
         bool wireless = !(vid == 0x258A && pid == 0x0136) && rawName?.Contains("Wired", StringComparison.OrdinalIgnoreCase) != true;
+
+        var ffa8Dev = AulaFfa8Protocol.FindEndpoint(list);
+        if (ffa8Dev != null)
+            return AulaFfa8Protocol.ApplySettings(deviceId, ffa8Dev, vid, pid, wireless, update);
 
         if (ApplySc380Settings(deviceId, list, update) is { } scRes)
             return scRes;

@@ -67,7 +67,10 @@ public sealed partial class DevicesPage : Page
                 items.Add(_isCardMode ? BuildDeviceCard(d) : BuildDeviceRow(d));
         }
         DeviceHost.SetItems(items);
-        StatusText.Text = $"共检测到 {devices.Count} 台设备 · 最近更新 {DateTime.Now:HH:mm:ss}";
+        if (GearDeck.Core.Services.ExternalConfiguratorGuard.IsBackgroundYieldActive(out string? yieldReason))
+            StatusText.Text = $"共 {devices.Count} 台 · {yieldReason}（点击左侧按钮可立即刷新收回控制）";
+        else
+            StatusText.Text = $"共检测到 {devices.Count} 台设备 · 最近更新 {DateTime.Now:HH:mm:ss}";
     }
 
     private static UIElement BuildEmptyCard()
@@ -147,10 +150,11 @@ public sealed partial class DevicesPage : Page
         topArea.Children.Add(meta);
 
         var batPanel = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
+        string? dualSummary = d.FormatDualEarSummary(compact: true);
         batPanel.Children.Add(new TextBlock
         {
-            Text = d.BatteryPercent is { } p ? $"{p}%" : "--",
-            FontSize = 24,
+            Text = dualSummary ?? (d.BatteryPercent is { } p ? $"{p}%" : "--"),
+            FontSize = dualSummary != null ? 17 : 24,
             FontWeight = FontWeights.Bold,
             HorizontalAlignment = HorizontalAlignment.Right,
             Foreground = isLow
@@ -170,7 +174,7 @@ public sealed partial class DevicesPage : Page
         topArea.Tapped += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
         root.Children.Add(topArea);
 
-        // 下半区：内嵌按钮
+        // 下半区：内嵌按钮（含官方软件与官方网页驱动直达）
         var actions = new ResponsiveWrapPanel { Spacing = 8, LineSpacing = 6 };
         var tuneBtn = new Button
         {
@@ -180,6 +184,22 @@ public sealed partial class DevicesPage : Page
         };
         tuneBtn.Click += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
         actions.Children.Add(tuneBtn);
+
+        var driverLinks = GearDeck.Core.Services.VendorDriverCatalog.Resolve(d);
+        if (driverLinks.Local is { } localDrv)
+        {
+            var localBtn = new Button { Content = localDrv.DisplayName.Replace("打开 ", ""), Padding = new Thickness(10, 5, 10, 5) };
+            ToolTipService.SetToolTip(localBtn, $"{localDrv.DisplayName}（启动后自动暂停 GearDeck 后台轮询 180s）");
+            localBtn.Click += (_, _) => _ = Services.VendorDriverLauncher.LaunchLocal(localDrv);
+            actions.Children.Add(localBtn);
+        }
+        if (driverLinks.Web is { } webDrv)
+        {
+            var webBtn = new Button { Content = "网页驱动", Padding = new Thickness(10, 5, 10, 5) };
+            ToolTipService.SetToolTip(webBtn, $"{webDrv.DisplayName}: {webDrv.Url}（启动后自动暂停后台轮询避免 WebHID 抢占）");
+            webBtn.Click += (_, _) => _ = Services.VendorDriverLauncher.LaunchWeb(webDrv);
+            actions.Children.Add(webBtn);
+        }
 
         var imgBtn = new Button { Content = "换图", Padding = new Thickness(10, 5, 10, 5) };
         imgBtn.Click += async (_, _) =>
@@ -235,8 +255,8 @@ public sealed partial class DevicesPage : Page
 
         var bat = new TextBlock
         {
-            Text = d.BatteryPercent is { } p ? $"{p}%" : "--",
-            FontSize = 20,
+            Text = d.FormatDualEarSummary(compact: true) ?? (d.BatteryPercent is { } p ? $"{p}%" : "--"),
+            FontSize = d.LeftEarPercent.HasValue || d.RightEarPercent.HasValue ? 15 : 20,
             FontWeight = FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = isLow
@@ -254,13 +274,28 @@ public sealed partial class DevicesPage : Page
             Padding = new Thickness(10, 4, 10, 4),
         };
         tuneBtn.Click += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
+        var driverLinks = GearDeck.Core.Services.VendorDriverCatalog.Resolve(d);
+        btnBar.Children.Add(tuneBtn);
+        if (driverLinks.Local is { } localDrv)
+        {
+            var localBtn = new Button { Content = "官方软件", Padding = new Thickness(8, 4, 8, 4) };
+            ToolTipService.SetToolTip(localBtn, localDrv.DisplayName);
+            localBtn.Click += (_, _) => _ = Services.VendorDriverLauncher.LaunchLocal(localDrv);
+            btnBar.Children.Add(localBtn);
+        }
+        if (driverLinks.Web is { } webDrv)
+        {
+            var webBtn = new Button { Content = "网页驱动", Padding = new Thickness(8, 4, 8, 4) };
+            ToolTipService.SetToolTip(webBtn, $"{webDrv.DisplayName}: {webDrv.Url}");
+            webBtn.Click += (_, _) => _ = Services.VendorDriverLauncher.LaunchWeb(webDrv);
+            btnBar.Children.Add(webBtn);
+        }
         var imgBtn = new Button { Content = "换图", Padding = new Thickness(8, 4, 8, 4) };
         imgBtn.Click += async (_, _) =>
         {
             if (await DeviceImagePickerDialog.ShowAsync(this.XamlRoot, d))
                 Apply(App.Devices.LastSnapshot());
         };
-        btnBar.Children.Add(tuneBtn);
         btnBar.Children.Add(imgBtn);
         Grid.SetColumn(btnBar, 3);
         row.Children.Add(btnBar);
@@ -297,8 +332,9 @@ public sealed partial class DevicesPage : Page
 
     private void OnRefreshClick(object sender, RoutedEventArgs e)
     {
+        GearDeck.Core.Services.ExternalConfiguratorGuard.ResumeNow();
         RefreshButton.IsEnabled = false;
-        _ = App.Devices.RefreshAsync().ContinueWith(_ =>
+        _ = App.Devices.RefreshAsync(bypassCoexistenceGuard: true).ContinueWith(_ =>
             App.UiQueue?.TryEnqueue(() => RefreshButton.IsEnabled = true));
     }
 }

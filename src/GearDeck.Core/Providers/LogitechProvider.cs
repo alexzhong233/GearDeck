@@ -58,12 +58,42 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                 {
                     var battery = ReadBattery(h, idx, out byte chargeStatus);
                     Diag.Log($"Logitech {pid:X4}: idx={idx:X2} battery={battery}");
-                    if (battery == null) continue;
+                    if (battery == null)
+                    {
+                        if (passthrough && idx == 1)
+                        {
+                            var sleepMeta = MetaCache.TryGetValue((pid, idx), out var cachedMeta)
+                                ? cachedMeta
+                                : (product.Contains("SUPERSTRIKE", StringComparison.OrdinalIgnoreCase)
+                                    ? product.Trim()
+                                    : "Logitech PRO X3 SUPERSTRIKE", DeviceKind.Mouse);
+                            results.Add(new PeripheralDevice
+                            {
+                                Id = $"logi:{pid:X4}:{idx:X2}",
+                                VendorId = 0x046D,
+                                ProductId = pid,
+                                Name = sleepMeta.Item1,
+                                Kind = sleepMeta.Item2,
+                                Provider = ProviderName,
+                                Connected = true,
+                                IsSleeping = true,
+                                Transport = "2.4G",
+                                BatteryPercent = null,
+                                State = BatteryState.Unknown,
+                                Note = "罗技接收器在线（鼠标休眠中，晃动唤醒后读取电量与 HITS 参数）",
+                                LastUpdated = DateTimeOffset.Now,
+                            });
+                            break;
+                        }
+                        continue;
+                    }
 
                     var meta = ResolveMeta(h, pid, idx, product);
                     results.Add(new PeripheralDevice
                     {
                         Id = $"logi:{pid:X4}:{idx:X2}",
+                        VendorId = 0x046D,
+                        ProductId = pid,
                         Name = meta.Name,
                         Kind = meta.Kind,
                         Provider = ProviderName,
@@ -128,8 +158,9 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
             byte f8061 = h.FeatureIndex(idx, 0x8061);
             byte f8060 = h.FeatureIndex(idx, 0x8060);
             byte f8100 = h.FeatureIndex(idx, 0x8100);
+            byte f1B0C = h.FeatureIndex(idx, 0x1B0C);
 
-            if (battery == null && f2202 == 0 && f2201 == 0 && f8061 == 0 && f8060 == 0)
+            if (battery == null && f2202 == 0 && f2201 == 0 && f8061 == 0 && f8060 == 0 && f1B0C == 0)
             {
                 caps.IsOnline = false;
                 caps.StatusMessage = "无线鼠标当前休眠或未唤醒，请晃动鼠标后点击「读取当前硬件参数」。";
@@ -137,7 +168,7 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
             }
 
             caps.IsOnline = true;
-            ReadCapabilities(h, idx, f8100, f2202, f2201, f8061, f8060, caps);
+            ReadCapabilities(h, idx, f8100, f2202, f2201, f8061, f8060, f1B0C, caps);
             caps.StatusMessage = caps.SupportsDpi || caps.SupportedPollingRates.Count > 0
                 ? (caps.SupportsHostModeSwitch && !caps.IsHostMode
                     ? "当前鼠标处于板载内存模式；直接调节参数时将自动切换为主机软件模式以实时生效。"
@@ -171,6 +202,7 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
             byte f2201 = h.FeatureIndex(idx, 0x2201);
             byte f8061 = h.FeatureIndex(idx, 0x8061);
             byte f8060 = h.FeatureIndex(idx, 0x8060);
+            byte f1B0C = h.FeatureIndex(idx, 0x1B0C);
 
             var notes = new List<string>();
             var errors = new List<string>();
@@ -294,9 +326,34 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                     errors.Add($"回报率 {hz} Hz 写入未生效");
             }
 
+            // 4. 写入 HITS 电磁微动触发点 / Rapid Trigger / 触感 (0x1B0C)
+            if (update.AnalogSwitches is { } analog)
+            {
+                if (f1B0C == 0)
+                {
+                    errors.Add("当前罗技设备未开放 0x1B0C 电磁微动特性");
+                }
+                else
+                {
+                    var info0 = h.Call(idx, f1B0C, 0, null, out _);
+                    var (_, maxAct, maxRt, maxHap) = ParseAnalogCapabilitiesReply(info0);
+
+                    bool okLeft = WriteAnalogButton(h, idx, f1B0C, 0, analog.Left, maxAct, maxRt, maxHap, out byte errL);
+                    var rightTarget = analog.IndependentButtons
+                        ? analog.Right with { ButtonIndex = 1 }
+                        : analog.Left with { ButtonIndex = 1 };
+                    bool okRight = WriteAnalogButton(h, idx, f1B0C, 1, rightTarget, maxAct, maxRt, maxHap, out byte errR);
+
+                    if (!okLeft || !okRight)
+                        errors.Add($"HITS 电磁微动写入失败 (L=0x{errL:X2}, R=0x{errR:X2})");
+                    else
+                        notes.Add(analog.IndependentButtons ? "已写入左右独立 HITS 参数" : "已同步写入双键 HITS 参数");
+                }
+            }
+
             Thread.Sleep(45);
             var refreshed = new DeviceTuningCapabilities { DeviceId = deviceId, IsOnline = true };
-            ReadCapabilities(h, idx, f8100, f2202, f2201, f8061, f8060, refreshed);
+            ReadCapabilities(h, idx, f8100, f2202, f2201, f8061, f8060, f1B0C, refreshed);
             refreshed.StatusMessage = errors.Count == 0
                 ? (notes.Count > 0 ? $"{string.Join("，", notes)}，并已写入硬件。" : "已写入罗技硬件并完成回读校验。")
                 : string.Join("；", errors);
@@ -311,7 +368,7 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
 
     private static void ReadCapabilities(
         Hidpp h, byte idx,
-        byte f8100, byte f2202, byte f2201, byte f8061, byte f8060,
+        byte f8100, byte f2202, byte f2201, byte f8061, byte f8060, byte f1B0C,
         DeviceTuningCapabilities caps)
     {
         if (f8100 != 0)
@@ -447,6 +504,69 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
             if (curReply is { Length: >= 1 } && curReply[0] is >= 1 and <= 8)
                 caps.CurrentPollingRate = 1000 / curReply[0];
         }
+
+        if (f1B0C != 0)
+        {
+            var info0 = h.Call(idx, f1B0C, 0, null, out _);
+            var (btnMask, maxAct, maxRt, maxHap) = ParseAnalogCapabilitiesReply(info0);
+            if ((btnMask & 0x03) != 0)
+            {
+                var rLeft = h.Call(idx, f1B0C, 2, [0x00], out _);
+                var rRight = h.Call(idx, f1B0C, 2, [0x01], out _);
+                var leftCfg = ParseAnalogButtonReply(0, rLeft, maxAct, maxRt, maxHap);
+                var rightCfg = ParseAnalogButtonReply(1, rRight, maxAct, maxRt, maxHap);
+                if (leftCfg != null || rightCfg != null)
+                {
+                    caps.SupportsAnalogSwitchTuning = true;
+                    caps.AnalogSwitchTechName = "HITS Tuning (电磁微动 · HID++ 0x1B0C)";
+                    caps.AnalogMaxActuation = maxAct;
+                    caps.AnalogMaxRapidTrigger = maxRt;
+                    caps.AnalogMaxHaptics = maxHap;
+                    caps.SupportsAnalogHapticsSwitch = false;
+                    caps.LeftAnalogButton = leftCfg ?? rightCfg! with { ButtonIndex = 0 };
+                    caps.RightAnalogButton = rightCfg ?? leftCfg! with { ButtonIndex = 1 };
+                }
+            }
+        }
+    }
+
+    internal static (int ButtonMask, int MaxActuation, int MaxRapidTrigger, int MaxHaptics) ParseAnalogCapabilitiesReply(byte[]? p)
+    {
+        if (p == null || p.Length < 5)
+            return (0x03, 10, 5, 5);
+        int mask = (p[0] << 8) | p[1];
+        int maxAct = Math.Clamp(p[2] >> 2, 1, 20);
+        int maxRt = Math.Clamp(p[3] >> 2, 1, 10);
+        int maxHap = Math.Clamp(p[4] >> 2, 1, 10);
+        return (mask == 0 ? 0x03 : mask, maxAct, maxRt, maxHap);
+    }
+
+    internal static AnalogButtonConfig? ParseAnalogButtonReply(int btnIdx, byte[]? p, int maxAct, int maxRt, int maxHap)
+    {
+        if (p == null || p.Length < 4)
+            return null;
+        int act = Math.Clamp(p[1] >> 2, 1, maxAct);
+        bool rtEnabled = (p[2] & 0x01) != 0;
+        int rt = Math.Clamp(p[2] >> 2, 1, maxRt);
+        int hap = Math.Clamp(p[3] >> 2, 0, maxHap);
+        return new AnalogButtonConfig(btnIdx, act, rtEnabled, rt, hap > 0, hap);
+    }
+
+    internal static byte[] BuildAnalogWritePayload(int btnIdx, AnalogButtonConfig cfg, int maxAct, int maxRt, int maxHap)
+    {
+        byte wireAct = (byte)((Math.Clamp(cfg.Actuation, 1, maxAct) & 0x3F) << 2);
+        byte wireRt = (byte)(((Math.Clamp(cfg.RapidTrigger, 1, maxRt) & 0x3F) << 2) | (cfg.RapidTriggerEnabled ? 0x01 : 0x00));
+        byte wireHap = (byte)((Math.Clamp(cfg.Haptics, 0, maxHap) & 0x3F) << 2);
+        return [(byte)btnIdx, wireAct, wireRt, wireHap];
+    }
+
+    private static bool WriteAnalogButton(
+        Hidpp h, byte idx, byte f1B0C, int btnIdx,
+        AnalogButtonConfig cfg, int maxAct, int maxRt, int maxHap, out byte err)
+    {
+        byte[] payload = BuildAnalogWritePayload(btnIdx, cfg, maxAct, maxRt, maxHap);
+        h.Call(idx, f1B0C, 1, payload, out err);
+        return err == 0;
     }
 
     private static (int X, int Y, int Lod)? ReadExtendedDpi(Hidpp h, byte idx, byte f2202)

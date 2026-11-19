@@ -38,9 +38,10 @@ public static class DeviceImagePickerDialog
         };
 
         string autoMatchedId = DeviceImageService.MatchDefaultPresetId(device);
+        var builtInPresets = DeviceImageService.EnsureBuiltInPresets();
         var statusTb = new TextBlock
         {
-            Text = $"当前识别 ID: {device.Id} · 默认自动匹配剪影 [{autoMatchedId}]，支持本地上传或免费云端替换。",
+            Text = $"当前识别 ID: {device.Id} · 自动匹配线上型号规则 [{autoMatchedId}]，支持本地上传或在线图库一键拉取。",
             FontSize = 12,
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
@@ -97,45 +98,47 @@ public static class DeviceImagePickerDialog
         topBar.Children.Add(topRight);
         root.Children.Add(topBar);
 
-        // 2. 内置产品级精准矢量造型库
-        root.Children.Add(new TextBlock { Text = "内置高清硬件造型预设（按具体外设定制）", FontWeight = FontWeights.SemiBold });
-        var presetGrid = new ResponsiveWrapPanel { Spacing = 8, LineSpacing = 8 };
-        foreach (var preset in DeviceImageService.EnsureBuiltInPresets())
+        if (builtInPresets.Count > 0)
         {
-            var stack = new StackPanel { Spacing = 4, Width = 92 };
-            stack.Children.Add(new Image
+            root.Children.Add(new TextBlock { Text = "本地预设造型", FontWeight = FontWeights.SemiBold });
+            var presetGrid = new ResponsiveWrapPanel { Spacing = 8, LineSpacing = 8 };
+            foreach (var preset in builtInPresets)
             {
-                Source = DeviceImageService.CreateSourceFromFile(preset.LocalSvgPath, 44),
-                Width = 44,
-                Height = 44,
-                Stretch = Stretch.Uniform,
-                HorizontalAlignment = HorizontalAlignment.Center,
+                var stack = new StackPanel { Spacing = 4, Width = 92 };
+                stack.Children.Add(new Image
+                {
+                    Source = DeviceImageService.CreateSourceFromFile(preset.LocalSvgPath, 44),
+                    Width = 44,
+                    Height = 44,
+                    Stretch = Stretch.Uniform,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                });
+                stack.Children.Add(new TextBlock
+                {
+                    Text = preset.Name.Split('(')[0].Trim(),
+                    FontSize = 11,
+                    TextAlignment = TextAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                });
+                var btn = new Button { Content = stack, Padding = new Thickness(6) };
+                if (string.Equals(preset.Id, autoMatchedId, StringComparison.OrdinalIgnoreCase))
+                    btn.BorderBrush = (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"];
+                ToolTipService.SetToolTip(btn, preset.Name);
+                btn.Click += (_, _) =>
+                {
+                    DeviceImageService.SetPresetOverride(device.Id, preset.Id);
+                    previewImg.Source = DeviceImageService.CreateSourceFromFile(preset.LocalSvgPath, 72);
+                    changed = true;
+                    statusTb.Text = $"已切换为造型预设：{preset.Name}";
+                };
+                presetGrid.Children.Add(btn);
+            }
+            root.Children.Add(new ScrollViewer
+            {
+                MaxHeight = 165,
+                Content = presetGrid,
             });
-            stack.Children.Add(new TextBlock
-            {
-                Text = preset.Name.Split('(')[0].Trim(),
-                FontSize = 11,
-                TextAlignment = TextAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-            var btn = new Button { Content = stack, Padding = new Thickness(6) };
-            if (string.Equals(preset.Id, autoMatchedId, StringComparison.OrdinalIgnoreCase))
-                btn.BorderBrush = (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"];
-            ToolTipService.SetToolTip(btn, preset.Name);
-            btn.Click += (_, _) =>
-            {
-                DeviceImageService.SetPresetOverride(device.Id, preset.Id);
-                previewImg.Source = DeviceImageService.CreateSourceFromFile(preset.LocalSvgPath, 72);
-                changed = true;
-                statusTb.Text = $"已切换为造型预设：{preset.Name}";
-            };
-            presetGrid.Children.Add(btn);
         }
-        root.Children.Add(new ScrollViewer
-        {
-            MaxHeight = 165,
-            Content = presetGrid,
-        });
 
         // 3. 免费云端预设图库（自动按 VID:PID + 品牌推荐置顶）
         var cloudHeader = new Grid { ColumnSpacing = 8 };

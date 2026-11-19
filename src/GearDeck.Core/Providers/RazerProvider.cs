@@ -17,6 +17,8 @@ public sealed class RazerProvider : ITunablePeripheralProvider
     public string Name => ProviderName;
 
     private static readonly byte[] Tids = [0x1F, 0x3F, 0xFF, 0x08, 0x9F];
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ExplicitSymLodCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public bool CanHandleDevice(string deviceId)
         => deviceId.StartsWith("razer:", StringComparison.OrdinalIgnoreCase);
@@ -85,6 +87,8 @@ public sealed class RazerProvider : ITunablePeripheralProvider
                 results.Add(new PeripheralDevice
                 {
                     Id = $"razer:{(ushort)g.Key.ProductID:X4}",
+                    VendorId = 0x1532,
+                    ProductId = (ushort)g.Key.ProductID,
                     Name = cleanName,
                     Kind = kind,
                     Provider = ProviderName,
@@ -240,6 +244,7 @@ public sealed class RazerProvider : ITunablePeripheralProvider
             else
             {
                 byte symLevel = (byte)Math.Clamp(update.LodCode ?? 1, 0, 2);
+                ExplicitSymLodCache[deviceId] = symLevel;
                 var (s1, _) = Command(raw, tid, 0x0B, 0x0B, 0x04, [0x00, 0x04, 0x01, symLevel]);
                 if (s1 != 0x02)
                     errors.Add("关闭非对称 LOD 失败");
@@ -248,6 +253,7 @@ public sealed class RazerProvider : ITunablePeripheralProvider
         else if (update.LodCode is { } lodCode)
         {
             byte symLevel = (byte)Math.Clamp(lodCode, 0, 2);
+            ExplicitSymLodCache[deviceId] = symLevel;
             var (st, _) = Command(raw, tid, 0x0B, 0x0B, 0x04, [0x00, 0x04, 0x01, symLevel]);
             if (st != 0x02)
                 errors.Add("静默高度 LOD 写入失败");
@@ -424,38 +430,56 @@ public sealed class RazerProvider : ITunablePeripheralProvider
 
     private static void ReadLodCapabilities(RawHidFeature raw, byte tid, DeviceTuningCapabilities caps)
     {
-        var (st85, args85) = Command(raw, tid, 0x0B, 0x85, 0x0A, [0x00, 0x04]);
+        var (st85, args85) = Command(raw, tid, 0x0B, 0x85, 0x05, []);
+        if (st85 != 0x02)
+            (st85, args85) = Command(raw, tid, 0x0B, 0x85, 0x0A, [0x00, 0x04]);
         var (st8B, args8B) = Command(raw, tid, 0x0B, 0x8B, 0x04, [0x00, 0x04]);
         if (st85 != 0x02 && st8B != 0x02) return;
 
         caps.SupportedLodOptions =
         [
-            new(0, "低 (1 mm)"),
-            new(1, "中 (2 mm)"),
-            new(2, "高 (3 mm)"),
+            new(0, "低 (Low)"),
+            new(1, "中 (Medium)"),
+            new(2, "高 (High)"),
         ];
 
-        int symLod = 1;
-        bool asymOn = false;
-        if (st8B == 0x02 && args8B.Length >= 4)
+        int? explicitCached = ExplicitSymLodCache.TryGetValue(caps.DeviceId, out int cl) ? cl : null;
+        var decoded = DecodeLodState(st8B == 0x02 ? args8B : null, st85 == 0x02 ? args85 : null, explicitCached);
+        caps.CurrentLod = decoded.SymLod;
+        if (decoded.SupportsAsymmetric)
         {
-            asymOn = args8B[2] == 0x04;
-            if (!asymOn) symLod = Math.Clamp((int)args8B[3], 0, 2);
+            caps.SupportsAsymmetricLod = true;
+            caps.AsymmetricLodEnabled = decoded.AsymEnabled;
+            caps.AsymmetricLiftOff = decoded.LiftOff;
+            caps.AsymmetricLanding = decoded.Landing;
         }
-        if (st85 == 0x02 && args85.Length >= 5)
+    }
+
+    internal static (int SymLod, bool SupportsAsymmetric, bool AsymEnabled, int LiftOff, int Landing) DecodeLodState(
+        byte[]? args8B, byte[]? args85, int? explicitSymLod = null)
+    {
+        bool asymOn = args8B is { Length: >= 3 } && args8B[2] == 0x04;
+        int symLod = explicitSymLod ?? 1;
+        bool supportsAsym = args85 != null || args8B != null;
+        int lift = 10;
+        int land = 5;
+
+        if (args85 is { Length: >= 5 })
         {
-            if (st8B != 0x02) symLod = Math.Clamp((int)args85[2], 0, 2);
-            int lift = args85[3] + 1;
-            int land = args85[4] + 1;
-            if (lift is >= 2 and <= 26 && land is >= 1 and <= 25)
+            int rawSym = Math.Clamp((int)args85[2], 0, 2);
+            bool allZeroStore = args85[2] == 0 && args85[3] == 0 && args85[4] == 0;
+            if (!allZeroStore)
+                symLod = rawSym;
+            else if (explicitSymLod is { } exp)
+                symLod = Math.Clamp(exp, 0, 2);
+
+            if (args85[3] >= 1)
             {
-                caps.SupportsAsymmetricLod = true;
-                caps.AsymmetricLodEnabled = asymOn;
-                caps.AsymmetricLiftOff = lift;
-                caps.AsymmetricLanding = Math.Min(land, lift - 1);
+                lift = Math.Clamp(args85[3] + 1, 2, 26);
+                land = Math.Clamp(args85[4] + 1, 1, lift - 1);
             }
         }
-        caps.CurrentLod = symLod;
+        return (symLod, supportsAsym, asymOn, lift, land);
     }
 
     private static void ReadButtonBindings(RawHidFeature raw, byte tid, DeviceTuningCapabilities caps)

@@ -6,8 +6,10 @@ public enum MacroLoopMode
     RepeatCount = 0,
     /// <summary>Repeat while button is held down.</summary>
     WhileHeld = 1,
-    /// <summary>Toggle continuous playback until button/any key pressed.</summary>
+    /// <summary>Toggle continuous playback until button/Esc key pressed.</summary>
     ToggleUntilKey = 2,
+    /// <summary>Play macro sequence once per trigger press (Razer Synapse Play Once).</summary>
+    PlayOnce = 3,
 }
 
 public sealed class MacroStep
@@ -49,6 +51,8 @@ public static class HidKeyCatalog
     public const byte MouseLeftCode = 0xF0;
     public const byte MouseRightCode = 0xF1;
     public const byte MouseMiddleCode = 0xF2;
+    public const byte MouseXButton1Code = 0xF3;
+    public const byte MouseXButton2Code = 0xF4;
 
     public const byte ModLeftCtrl = 0x01;
     public const byte ModLeftShift = 0x02;
@@ -66,6 +70,8 @@ public static class HidKeyCatalog
             new(MouseLeftCode, "鼠标左键", 0x01),
             new(MouseRightCode, "鼠标右键", 0x02),
             new(MouseMiddleCode, "鼠标中键", 0x04),
+            new(MouseXButton1Code, "鼠标侧键4 (后退)", 0x05),
+            new(MouseXButton2Code, "鼠标侧键5 (前进)", 0x06),
         };
         for (int i = 0; i < 26; i++)
             list.Add(new((byte)(0x04 + i), ((char)('A' + i)).ToString(), 'A' + i));

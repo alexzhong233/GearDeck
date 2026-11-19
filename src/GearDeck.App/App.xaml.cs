@@ -6,6 +6,7 @@ using GearDeck.App.Services;
 using GearDeck.Core;
 using GearDeck.Core.Models;
 using GearDeck.Core.Providers;
+using GearDeck.Core.Services;
 using Windows.Graphics;
 
 namespace GearDeck.App;
@@ -103,12 +104,15 @@ public partial class App : Application
             Settings.Current.GitHubMirrorUrl = mirrorArg[9..];
         Settings.Save();
         Updater = new AppUpdateService();
+        ExternalConfiguratorGuard.AutoYieldEnabled = Settings.Current.AutoYieldToVendorSoftware;
         NativeNotificationService.Initialize();
         Devices = new DeviceManager(new IPeripheralProvider[]
         {
             new RazerProvider(), new LogitechProvider(), new AtkProvider(), new CompXProvider(),
             new MchoseProvider(), new AngryMiaoProvider(), new AulaProvider(), new RogProvider(),
             new SonyInzoneProvider(), new FlydigiProvider(),
+            new CorsairProvider(), new SteelSeriesProvider(), new HyperXProvider(),
+            new GamepadBatteryProvider(), new BluetoothBatteryProvider(),
         });
         Devices.DevicesUpdated += OnDevicesUpdated;
         Devices.ScanCompleted += FlushDiag;

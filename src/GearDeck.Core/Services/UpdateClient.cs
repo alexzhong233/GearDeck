@@ -76,7 +76,11 @@ public sealed record ReleaseUpdateInfo(
     string RawPatchUrl,
     string PatchUrl,
     string PatchSha256,
-    long PatchSize);
+    long PatchSize,
+    string RawInstallerUrl = "",
+    string InstallerUrl = "",
+    string InstallerSha256 = "",
+    long InstallerSize = 0);
 
 public sealed record UpdateCheckOutcome(
     bool Success,
@@ -152,7 +156,10 @@ public static class UpdateClient
 
         string rawDownload = GetStringCI(root, "downloadUrl");
         string rawPatch = GetStringCI(root, "patchUrl");
-        if (string.IsNullOrWhiteSpace(rawDownload) && string.IsNullOrWhiteSpace(rawPatch))
+        string rawInstaller = GetStringCI(root, "installerUrl");
+        if (string.IsNullOrWhiteSpace(rawDownload) &&
+            string.IsNullOrWhiteSpace(rawPatch) &&
+            string.IsNullOrWhiteSpace(rawInstaller))
             return null;
 
         return new ReleaseUpdateInfo(
@@ -168,7 +175,11 @@ public static class UpdateClient
             RawPatchUrl: rawPatch,
             PatchUrl: GitHubMirrorHelper.RewriteUrl(rawPatch, customMirror),
             PatchSha256: GetStringCI(root, "patchSha256").ToUpperInvariant(),
-            PatchSize: GetInt64CI(root, "patchSize"));
+            PatchSize: GetInt64CI(root, "patchSize"),
+            RawInstallerUrl: rawInstaller,
+            InstallerUrl: GitHubMirrorHelper.RewriteUrl(rawInstaller, customMirror),
+            InstallerSha256: GetStringCI(root, "installerSha256").ToUpperInvariant(),
+            InstallerSize: GetInt64CI(root, "installerSize"));
     }
 
     public static ReleaseUpdateInfo? ParseGitHubReleaseApiJson(string json, string? customMirror)
@@ -196,6 +207,9 @@ public static class UpdateClient
         string rawPatch = "";
         long patchSize = 0;
         string patchSha = "";
+        string rawInstaller = "";
+        long installerSize = 0;
+        string installerSha = "";
 
         if (TryGetPropertyCI(root, "assets", out var assetsEl) && assetsEl.ValueKind == JsonValueKind.Array)
         {
@@ -209,8 +223,14 @@ public static class UpdateClient
                 if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url))
                     continue;
 
-                if (name.Contains("patch", StringComparison.OrdinalIgnoreCase) &&
-                    name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    rawInstaller = url;
+                    installerSize = size;
+                    installerSha = sha;
+                }
+                else if (name.Contains("patch", StringComparison.OrdinalIgnoreCase) &&
+                         name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
                     rawPatch = url;
                     patchSize = size;
@@ -226,7 +246,9 @@ public static class UpdateClient
             }
         }
 
-        if (string.IsNullOrWhiteSpace(rawDownload) && string.IsNullOrWhiteSpace(rawPatch))
+        if (string.IsNullOrWhiteSpace(rawDownload) &&
+            string.IsNullOrWhiteSpace(rawPatch) &&
+            string.IsNullOrWhiteSpace(rawInstaller))
             return null;
 
         return new ReleaseUpdateInfo(
@@ -242,7 +264,11 @@ public static class UpdateClient
             RawPatchUrl: rawPatch,
             PatchUrl: GitHubMirrorHelper.RewriteUrl(rawPatch, customMirror),
             PatchSha256: patchSha,
-            PatchSize: patchSize);
+            PatchSize: patchSize,
+            RawInstallerUrl: rawInstaller,
+            InstallerUrl: GitHubMirrorHelper.RewriteUrl(rawInstaller, customMirror),
+            InstallerSha256: installerSha,
+            InstallerSize: installerSize);
     }
 
     public static async Task<UpdateCheckOutcome> CheckForUpdateAsync(

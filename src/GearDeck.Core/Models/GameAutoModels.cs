@@ -29,6 +29,7 @@ public sealed class MouseHardwarePreset
     public int? AngleTuningDeg { get; set; }
     public int? DebounceMs { get; set; }
     public int? SleepSeconds { get; set; }
+    public AnalogSwitchUpdate? AnalogSwitches { get; set; }
 
     public DeviceTuningUpdate ToUpdate()
     {
@@ -56,6 +57,7 @@ public sealed class MouseHardwarePreset
             AngleTuningDeg = AngleTuningDeg,
             DebounceMs = DebounceMs,
             SleepSeconds = SleepSeconds,
+            AnalogSwitches = AnalogSwitches,
         };
     }
 
@@ -81,6 +83,12 @@ public sealed class MouseHardwarePreset
         AngleTuningDeg = caps.SupportsAngleTuning ? caps.AngleTuningDeg : null,
         DebounceMs = caps.SupportsDebounce ? caps.CurrentDebounceMs : null,
         SleepSeconds = caps.SupportsSleepTimeout ? caps.CurrentSleepSeconds : null,
+        AnalogSwitches = caps.SupportsAnalogSwitchTuning && caps.LeftAnalogButton != null && caps.RightAnalogButton != null
+            ? new AnalogSwitchUpdate(
+                (caps.LeftAnalogButton with { ButtonIndex = 0 }) != (caps.RightAnalogButton with { ButtonIndex = 0 }),
+                caps.LeftAnalogButton,
+                caps.RightAnalogButton)
+            : null,
     };
 }
 

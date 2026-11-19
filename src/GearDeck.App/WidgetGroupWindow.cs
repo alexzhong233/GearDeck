@@ -115,8 +115,8 @@ public sealed class WidgetGroupWindow : Window
 
             var battery = new TextBlock
             {
-                Text = d.BatteryPercent is { } p ? $"{p}%" : "--",
-                FontSize = 15,
+                Text = d.FormatDualEarSummary(compact: true) ?? (d.BatteryPercent is { } p ? $"{p}%" : "--"),
+                FontSize = d.LeftEarPercent.HasValue || d.RightEarPercent.HasValue ? 12.5 : 15,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center,
             };

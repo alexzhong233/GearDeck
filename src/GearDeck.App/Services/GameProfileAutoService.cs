@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using GearDeck.Core;
 using GearDeck.Core.Models;
+using GearDeck.Core.Services;
 
 namespace GearDeck.App.Services;
 
@@ -45,6 +46,7 @@ public sealed class GameProfileAutoService : IDisposable
     private readonly SemaphoreSlim _applyLock = new(1, 1);
     private readonly Dictionary<string, string> _lastAppliedByDevice = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _lastOutcomeByDevice = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (int? OnboardSlot, MouseHardwarePreset? Preset)> _preEntrySnapshots = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _lastAwakeMouseIds = new(StringComparer.OrdinalIgnoreCase);
     private Timer? _timer;
     private int _ticking;
@@ -155,6 +157,13 @@ public sealed class GameProfileAutoService : IDisposable
 
             if (isSelf && !force)
                 return;
+
+            if (!force && ExternalConfiguratorGuard.IsBackgroundYieldActive(out var yieldReason))
+            {
+                ActiveRuleLabel = yieldReason ?? "已自动让位给官方驱动";
+                StatusChanged?.Invoke();
+                return;
+            }
 
             var candidate = GameProfileRuleMatcher.Resolve(
                 new GameProfileMatchContext(LastForegroundProcess, LastForegroundTitle, LastIsFullscreen),
@@ -278,7 +287,8 @@ public sealed class GameProfileAutoService : IDisposable
                 _latchedRuleProcs = [];
             }
 
-            if (resolution.Reason == ActiveSwitchReason.None || resolution.PerMouseTargets.Count == 0)
+            bool hasDesktopRollbackWork = resolution.Reason == ActiveSwitchReason.DesktopDefault && _preEntrySnapshots.Count > 0;
+            if (resolution.Reason == ActiveSwitchReason.None || (resolution.PerMouseTargets.Count == 0 && !hasDesktopRollbackWork))
             {
                 StatusChanged?.Invoke();
                 return;
@@ -294,53 +304,155 @@ public sealed class GameProfileAutoService : IDisposable
 
             var switchedNotifications = new List<(string DeviceName, string TargetLabel)>();
 
-            foreach (var (deviceId, rawTarget) in resolution.PerMouseTargets)
+            if (resolution.Reason == ActiveSwitchReason.DesktopDefault)
             {
-                if (!mouseMap.TryGetValue(deviceId, out var dev)) continue;
-                var parsed = GameProfileRuleMatcher.ParseTarget(rawTarget);
-                if (parsed.IsEmpty) continue;
-
-                if (dev.IsSleeping)
+                if (!App.Settings.Current.EnableExclusiveFullscreenFallback && _preEntrySnapshots.Count == 0)
                 {
-                    _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 休眠中已跳过（唤醒后自动切换）";
-                    continue;
+                    StatusChanged?.Invoke();
+                    return;
                 }
 
-                if (!forceAll &&
-                    _lastAppliedByDevice.TryGetValue(deviceId, out var prevTarget) &&
-                    string.Equals(prevTarget, rawTarget, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
+                var targetDeviceIds = resolution.PerMouseTargets.Keys
+                    .Union(_preEntrySnapshots.Keys, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
-                DeviceTuningUpdate? update = null;
-                string desc = rawTarget;
-                if (parsed.OnboardSlot is { } slot)
+                foreach (string deviceId in targetDeviceIds)
                 {
-                    update = new DeviceTuningUpdate { ActiveOnboardProfile = slot };
-                    desc = $"板载配置 {slot + 1}";
-                }
-                else if (parsed.PresetId is { } pidKey && presetMap.TryGetValue(pidKey, out var preset))
-                {
-                    update = preset.ToUpdate();
-                    desc = $"预设「{preset.Name}」";
-                }
+                    if (!mouseMap.TryGetValue(deviceId, out var dev)) continue;
+                    resolution.PerMouseTargets.TryGetValue(deviceId, out var rawTarget);
+                    var parsed = GameProfileRuleMatcher.ParseTarget(rawTarget);
 
-                if (update == null) continue;
+                    if (parsed.KeepCurrent)
+                    {
+                        _preEntrySnapshots.Remove(deviceId);
+                        continue;
+                    }
 
-                var result = await App.Devices.ApplySettingsAsync(deviceId, update);
-                if (result.Success && (result.Capabilities == null || result.Capabilities.IsOnline))
-                {
-                    _lastAppliedByDevice[deviceId] = rawTarget;
-                    _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 已切换 → {desc}";
-                    switchedNotifications.Add((dev.Name, desc));
-                }
-                else
-                {
-                    _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 未响应/休眠，已跳过 ({result.Message})";
-                }
+                    if (dev.IsSleeping)
+                    {
+                        _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 休眠中已跳过（唤醒后恢复）";
+                        continue;
+                    }
 
-                Diag.Log($"[GameSwitch] rule={resolution.RuleLabel} dev={deviceId} target={rawTarget} ok={result.Success} msg={result.Message}");
+                    DeviceTuningUpdate? update = null;
+                    string desc = "";
+
+                    if (string.IsNullOrWhiteSpace(rawTarget) || parsed.RestorePrevious)
+                    {
+                        if (!_preEntrySnapshots.TryGetValue(deviceId, out var snap))
+                            continue;
+
+                        update = snap.Preset?.ToUpdate();
+                        if (update == null && snap.OnboardSlot is { } prevSlot)
+                        {
+                            update = new DeviceTuningUpdate { ActiveOnboardProfile = prevSlot };
+                            desc = $"开启前板载槽位 {prevSlot + 1}";
+                        }
+                        else if (update != null)
+                        {
+                            if (snap.OnboardSlot is { } s && !update.ActiveOnboardProfile.HasValue)
+                                update.ActiveOnboardProfile = s;
+                            desc = "开启前配置";
+                        }
+                    }
+                    else if (parsed.OnboardSlot is { } slot)
+                    {
+                        update = new DeviceTuningUpdate { ActiveOnboardProfile = slot };
+                        desc = $"板载配置 {slot + 1}";
+                    }
+                    else if (parsed.PresetId is { } pidKey && presetMap.TryGetValue(pidKey, out var preset))
+                    {
+                        update = preset.ToUpdate();
+                        desc = $"预设「{preset.Name}」";
+                    }
+
+                    if (update == null)
+                    {
+                        _preEntrySnapshots.Remove(deviceId);
+                        continue;
+                    }
+
+                    var result = await App.Devices.ApplySettingsAsync(deviceId, update);
+                    if (result.Success && (result.Capabilities == null || result.Capabilities.IsOnline))
+                    {
+                        _preEntrySnapshots.Remove(deviceId);
+                        _lastAppliedByDevice.Remove(deviceId);
+                        _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 已恢复 → {desc}";
+                        switchedNotifications.Add((dev.Name, desc));
+                    }
+                    else
+                    {
+                        _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 未响应/休眠，已跳过 ({result.Message})";
+                    }
+
+                    Diag.Log($"[GameSwitchRollback] rule={resolution.RuleLabel} dev={deviceId} ok={result.Success} msg={result.Message}");
+                }
+            }
+            else
+            {
+                foreach (var (deviceId, rawTarget) in resolution.PerMouseTargets)
+                {
+                    if (!mouseMap.TryGetValue(deviceId, out var dev)) continue;
+                    var parsed = GameProfileRuleMatcher.ParseTarget(rawTarget);
+                    if (parsed.IsEmpty) continue;
+
+                    if (dev.IsSleeping)
+                    {
+                        _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 休眠中已跳过（唤醒后自动切换）";
+                        continue;
+                    }
+
+                    if (!forceAll &&
+                        _lastAppliedByDevice.TryGetValue(deviceId, out var prevTarget) &&
+                        string.Equals(prevTarget, rawTarget, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    DeviceTuningUpdate? update = null;
+                    string desc = rawTarget;
+                    if (parsed.OnboardSlot is { } slot)
+                    {
+                        update = new DeviceTuningUpdate { ActiveOnboardProfile = slot };
+                        desc = $"板载配置 {slot + 1}";
+                    }
+                    else if (parsed.PresetId is { } pidKey && presetMap.TryGetValue(pidKey, out var preset))
+                    {
+                        update = preset.ToUpdate();
+                        desc = $"预设「{preset.Name}」";
+                    }
+
+                    if (update == null) continue;
+
+                    if (!_preEntrySnapshots.ContainsKey(deviceId))
+                    {
+                        try
+                        {
+                            var curCaps = await App.Devices.QueryCapabilitiesAsync(deviceId);
+                            if (curCaps.IsOnline)
+                            {
+                                int? onboardSlot = curCaps.OnboardProfileCount > 0 ? curCaps.ActiveOnboardProfile : null;
+                                var snapPreset = MouseHardwarePreset.CaptureFrom("开启前快照", deviceId, dev.Name, curCaps);
+                                _preEntrySnapshots[deviceId] = (onboardSlot, snapPreset);
+                            }
+                        }
+                        catch { }
+                    }
+
+                    var result = await App.Devices.ApplySettingsAsync(deviceId, update);
+                    if (result.Success && (result.Capabilities == null || result.Capabilities.IsOnline))
+                    {
+                        _lastAppliedByDevice[deviceId] = rawTarget;
+                        _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 已切换 → {desc}";
+                        switchedNotifications.Add((dev.Name, desc));
+                    }
+                    else
+                    {
+                        _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 未响应/休眠，已跳过 ({result.Message})";
+                    }
+
+                    Diag.Log($"[GameSwitch] rule={resolution.RuleLabel} dev={deviceId} target={rawTarget} ok={result.Success} msg={result.Message}");
+                }
             }
 
             if (switchedNotifications.Count > 0)

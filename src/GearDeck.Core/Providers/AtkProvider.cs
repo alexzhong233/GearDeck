@@ -31,18 +31,28 @@ public sealed class AtkProvider : ITunablePeripheralProvider
             {
                 var (vid, pid) = g.Key;
                 string? rawName = g.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
-                string cleanName = CleanName(rawName) ?? $"ATK {vid:X4}:{pid:X4}";
-                var kind = InferKind(cleanName, g);
-                bool wireless = !cleanName.Contains("Wired", StringComparison.OrdinalIgnoreCase);
+                bool wireless = string.IsNullOrEmpty(rawName) || !rawName.Contains("Wired", StringComparison.OrdinalIgnoreCase);
 
                 (byte Level, bool Charging)? hit = null;
-                foreach (var iface in g.Where(d => HidSafe.MaxOutputLen(d) >= 17 || HidSafe.MaxFeatureLen(d) >= 17)
-                                       .OrderBy(HidSafe.MaxOutputLen))
+                (byte Cid, byte Mid)? cidMid = null;
+                var batteryIfaces = g
+                    .Where(d => HidSafe.PrimaryUsage(d).UsagePage != 0xFF60)
+                    .Where(d => HidSafe.MaxOutputLen(d) >= 17 || HidSafe.MaxFeatureLen(d) >= 17)
+                    .OrderByDescending(d => HidSafe.PrimaryUsage(d).UsagePage == 0xFF02 && HidSafe.MaxOutputLen(d) == 17 && HidSafe.MaxInputLen(d) == 17 ? 3 : 0)
+                    .ThenByDescending(d => HidSafe.PrimaryUsage(d).UsagePage is 0xFF02 or 0xFF04 ? 2 : 0)
+                    .ThenBy(HidSafe.MaxOutputLen)
+                    .ToList();
+
+                foreach (var iface in batteryIfaces)
                 {
                     using var ch = HidChannel.TryOpen(iface);
                     if (ch == null) continue;
-                    hit = Compx08Protocol.QueryBattery(ch, 0x08, 700);
-                    if (hit != null) break;
+                    hit = Compx08Protocol.QueryBattery(ch, 0x08, 650);
+                    if (hit != null)
+                    {
+                        cidMid ??= Compx08Protocol.QueryCidMid(ch, 0x08, 250);
+                        break;
+                    }
                 }
 
                 if (hit == null)
@@ -59,9 +69,16 @@ public sealed class AtkProvider : ITunablePeripheralProvider
 
                 hit ??= QueryViaKeyboard(g);
 
+                string cleanName = AtkModelCatalog.ResolveModelName(vid, pid, cidMid, rawName)
+                    ?? CleanName(rawName)
+                    ?? $"ATK {vid:X4}:{pid:X4}";
+                var kind = InferKind(cleanName, g);
+
                 results.Add(new PeripheralDevice
                 {
                     Id = $"atk:{vid:X4}-{pid:X4}",
+                    VendorId = vid,
+                    ProductId = pid,
                     Name = cleanName,
                     Kind = kind,
                     Provider = ProviderName,
@@ -101,8 +118,13 @@ public sealed class AtkProvider : ITunablePeripheralProvider
         string? rawName = list.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
         bool wireless = rawName?.Contains("Wired", StringComparison.OrdinalIgnoreCase) != true;
 
-        foreach (var iface in list.Where(d => HidSafe.MaxOutputLen(d) >= 17 || HidSafe.MaxFeatureLen(d) >= 17)
-                                  .OrderBy(HidSafe.MaxOutputLen))
+        var batteryIfaces = list
+            .Where(d => HidSafe.PrimaryUsage(d).UsagePage != 0xFF60)
+            .Where(d => HidSafe.MaxOutputLen(d) >= 17 || HidSafe.MaxFeatureLen(d) >= 17)
+            .OrderByDescending(d => HidSafe.PrimaryUsage(d).UsagePage == 0xFF02 ? 2 : 0)
+            .ThenBy(HidSafe.MaxOutputLen);
+
+        foreach (var iface in batteryIfaces)
         {
             using var ch = HidChannel.TryOpen(iface);
             if (ch == null) continue;

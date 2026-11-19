@@ -129,11 +129,11 @@
                     <controls:ResponsiveWrapPanel Spacing="24" LineSpacing="8">
                         <StackPanel Spacing="2" MinWidth="280">
                             <TextBlock Text="全屏独占与退出恢复策略" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock Text="打开全盘独占策略总开关后可更改并生效下方独占规则，关闭时默认不生效。"
+                            <TextBlock Text="打开全局独占策略总开关后可更改并生效下方独占与退出恢复规则，关闭时均不生效。"
                                        FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </StackPanel>
                         <ToggleSwitch x:Name="FullscreenMasterToggle"
-                                      Header="全盘独占策略总开关"
+                                      Header="全局独占策略总开关"
                                       OnContent="已开启（允许更改并生效下方全屏独占策略）"
                                       OffContent="已关闭（默认不生效，下方全屏独占策略已锁定）"
                                       Toggled="OnFullscreenMasterToggled" />

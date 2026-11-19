@@ -19,12 +19,19 @@ public sealed class CompXProvider : ITunablePeripheralProvider
         0x1532, // Razer
         0x046D, // Logitech
         0x0B05, // ROG
+        0x054C, // Sony
+        0x37D7, // Flydigi
         0x3837, // MCHOSE
         0x5253, // MCHOSE RealTek
         0x373B, // ATK / VGN / VXE
         0x34D7, // ATK
         0x38A6, // AULA
+        0x384C, // AULA
         0x3151, // Angry Miao / GearHub
+        0x1B1C, // Corsair
+        0x1038, // SteelSeries
+        0x03F0, // HyperX (HP)
+        0x0951, // HyperX (Kingston)
     ];
 
     public bool CanHandleDevice(string deviceId)
@@ -84,6 +91,8 @@ public sealed class CompXProvider : ITunablePeripheralProvider
                 results.Add(new PeripheralDevice
                 {
                     Id = $"{idPrefix}:{vid:X4}-{pid:X4}",
+                    VendorId = vid,
+                    ProductId = pid,
                     Name = cleanName,
                     Kind = DeviceKind.Mouse,
                     Provider = brand,
@@ -249,13 +258,41 @@ public sealed class CompXProvider : ITunablePeripheralProvider
     private static (string Brand, string IdPrefix) ClassifyBrand(ushort vid, string? productName)
     {
         string upper = (productName ?? "").ToUpperInvariant();
-        if (vid is 0x373E or 0x37B0 or 0x3367 || upper.Contains("LAMZU") || upper.Contains("INCA") ||
+        if (vid == 0x373E || vid == 0x37B0 || upper.Contains("LAMZU") || upper.Contains("INCA") ||
             upper.Contains("MAYA") || upper.Contains("ATLANTIS") || upper.Contains("THORN") ||
             upper.Contains("PARO") || upper.Contains("TACHI"))
             return ("Lamzu", "lamzu");
         if (vid == 0x36A7 || upper.Contains("WLMOUSE") || upper.Contains("BEAST") ||
             upper.Contains("SWORD") || upper.Contains("YING"))
             return ("WLmouse", "wlmouse");
+        if (vid == 0x3367 || upper.Contains("ENDGAME"))
+            return ("Endgame Gear", "compx");
+        if (vid == 0x3710 || upper.Contains("PULSAR"))
+            return ("Pulsar", "compx");
+        if (vid == 0x361D || upper.Contains("FINALMOUSE") || upper.Contains("ULTRALIGHTX"))
+            return ("Finalmouse", "compx");
+        if (vid == 0x260D || upper.Contains("DAREU"))
+            return ("Dareu", "compx");
+        if (vid == 0x3434 || upper.Contains("KEYCHRON"))
+            return ("Keychron", "compx");
+        if (vid == 0x24AE || upper.Contains("RAPOO"))
+            return ("Rapoo", "compx");
+        if (upper.Contains("DARMOSHARK"))
+            return ("Darmoshark", "compx");
+        if (upper.Contains("GLORIOUS"))
+            return ("Glorious", "compx");
+        if (upper.Contains("NINJUTSO") || upper.Contains("SORA"))
+            return ("Ninjutso", "compx");
+        if (upper.Contains("SCYROX"))
+            return ("Scyrox", "compx");
+        if (upper.Contains("INCOTT"))
+            return ("Incott", "compx");
+        if (upper.Contains("AJAZZ"))
+            return ("Ajazz", "compx");
+        if (upper.Contains("ATTACK SHARK"))
+            return ("Attack Shark", "compx");
+        if (upper.Contains("ZAOPIN"))
+            return ("Zaopin", "compx");
         return (ProviderName, "compx");
     }
 
@@ -266,6 +303,12 @@ public sealed class CompXProvider : ITunablePeripheralProvider
         (0x37B0, 0x0001) => "Lamzu Aurora 8K",
         (0x36A7, 0xA856) => "WLmouse Beast X V2 8K",
         (0x36A7, 0xA860) => "WLmouse Beast G 8K",
+        (0x3367, 0x1972) => "Endgame Gear OP1w 4k",
+        (0x3367, 0x1984) => "Endgame Gear OP1w 4k v2",
+        (0x3367, 0x1968) => "Endgame Gear XM2w 4k",
+        (0x3367, 0x1982) => "Endgame Gear XM2w 4k v2",
+        (0x361D, 0x0100) => "Finalmouse UltralightX",
+        (0x361D, 0x0300 or 0x0301) => "Finalmouse Starlight X",
         _ => null,
     };
 

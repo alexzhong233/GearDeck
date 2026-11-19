@@ -9,7 +9,9 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
 
-    [string]$Platform = "x64"
+    [string]$Platform = "x64",
+
+    [switch]$RequireInstaller
 )
 
 Set-StrictMode -Version Latest
@@ -42,7 +44,7 @@ if (Test-Path $releaseDir) {
 New-Item -ItemType Directory -Path $fullStage -Force | Out-Null
 New-Item -ItemType Directory -Path $patchStage -Force | Out-Null
 
-Write-Host "[package-release] Staging full release from $appOutDir ..."
+Write-Host "[package-release] Staging full portable release from $appOutDir ..."
 
 # 1. Full standalone release staging (exclude PDBs and dev runtimeconfig)
 Get-ChildItem -Path $appOutDir -Recurse -File | ForEach-Object {
@@ -62,9 +64,43 @@ $fullZipName = "GearDeck-$tag-win-$Platform.zip"
 $fullZipPath = Join-Path $releaseDir $fullZipName
 [System.IO.Compression.ZipFile]::CreateFromDirectory($fullStage, $fullZipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
 
+# 2. Optional / Required Windows Setup Installer (.exe via Inno Setup 6)
+$iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+if (-not $iscc) {
+    foreach ($cand in @(
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe"
+    )) {
+        if (Test-Path $cand) {
+            $iscc = $cand
+            break
+        }
+    }
+}
+
+$installerExeName = "GearDeck-Setup-$tag-win-$Platform.exe"
+$installerExePath = Join-Path $releaseDir $installerExeName
+$installerBuilt = $false
+
+if ($iscc) {
+    Write-Host "[package-release] Compiling installer with Inno Setup ($iscc) ..."
+    $issPath = Join-Path $PSScriptRoot "installer.iss"
+    & $iscc "/Q" "/DMyAppVersion=$cleanVersion" "/DMyAppTag=$tag" "/DPlatform=$Platform" "/DSourceDir=$fullStage" "/DOutputDir=$releaseDir" $issPath
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $installerExePath)) {
+        throw "Inno Setup compilation failed with exit code $LASTEXITCODE"
+    }
+    $installerBuilt = $true
+}
+elseif ($RequireInstaller) {
+    throw "ISCC.exe (Inno Setup 6) not found, cannot produce installer executable."
+}
+else {
+    Write-Host "[package-release] Inno Setup (ISCC.exe) not installed locally; skipping .exe installer."
+}
+
 Write-Host "[package-release] Staging fast patch release ..."
 
-# 2. Fast binary & UI patch zip for in-app self-update (reuses existing WinAppSDK runtime DLLs in target install)
+# 3. Fast binary & UI patch zip for in-app self-update (reuses existing WinAppSDK runtime DLLs)
 $rootPatchNames = @(
     "GearDeck.App.exe",
     "GearDeck.App.dll",
@@ -82,7 +118,6 @@ foreach ($name in $rootPatchNames) {
     }
 }
 
-# Copy all compiled XAML binary files (*.xbf) preserving relative directory structure (e.g. App.xbf, MainWindow.xbf, Pages\*.xbf)
 Get-ChildItem -Path $appOutDir -Filter "*.xbf" -Recurse -File | ForEach-Object {
     $rel = $_.FullName.Substring($appOutDir.Length).TrimStart('\', '/')
     $dest = Join-Path $patchStage $rel
@@ -93,7 +128,6 @@ Get-ChildItem -Path $appOutDir -Filter "*.xbf" -Recurse -File | ForEach-Object {
     Copy-Item -Path $_.FullName -Destination $dest -Force
 }
 
-# Copy Assets\ and widget\ folders
 foreach ($sub in @("Assets", "widget")) {
     $srcSub = Join-Path $appOutDir $sub
     if (Test-Path $srcSub) {
@@ -124,18 +158,25 @@ $fullSize = (Get-Item $fullZipPath).Length
 $patchHash = (Get-FileHash -Path $patchZipPath -Algorithm SHA256).Hash.ToUpperInvariant()
 $patchSize = (Get-Item $patchZipPath).Length
 
+$installerUrl = if ($installerBuilt) { "https://github.com/$RepoSlug/releases/download/$tag/$installerExeName" } else { "" }
+$installerHash = if ($installerBuilt) { (Get-FileHash -Path $installerExePath -Algorithm SHA256).Hash.ToUpperInvariant() } else { "" }
+$installerSize = if ($installerBuilt) { (Get-Item $installerExePath).Length } else { 0 }
+
 $manifest = [ordered]@{
-    version     = $cleanVersion
-    tag         = $tag
-    publishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    htmlUrl     = "https://github.com/$RepoSlug/releases/tag/$tag"
-    downloadUrl = "https://github.com/$RepoSlug/releases/download/$tag/$fullZipName"
-    fullSha256  = $fullHash
-    fullSize    = $fullSize
-    patchUrl    = "https://github.com/$RepoSlug/releases/download/$tag/$patchZipName"
-    patchSha256 = $patchHash
-    patchSize   = $patchSize
-    notes       = $Notes
+    version         = $cleanVersion
+    tag             = $tag
+    publishedAt     = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    htmlUrl         = "https://github.com/$RepoSlug/releases/tag/$tag"
+    downloadUrl     = "https://github.com/$RepoSlug/releases/download/$tag/$fullZipName"
+    fullSha256      = $fullHash
+    fullSize        = $fullSize
+    patchUrl        = "https://github.com/$RepoSlug/releases/download/$tag/$patchZipName"
+    patchSha256     = $patchHash
+    patchSize       = $patchSize
+    installerUrl    = $installerUrl
+    installerSha256 = $installerHash
+    installerSize   = $installerSize
+    notes           = $Notes
 }
 
 $jsonText = $manifest | ConvertTo-Json -Depth 4
@@ -147,6 +188,9 @@ $rootLatestPath = Join-Path $repoRoot "latest.json"
 [System.IO.File]::WriteAllText($rootLatestPath, $jsonText, $utf8NoBom)
 
 Write-Host "[package-release] Done:"
-Write-Host "  Full : $fullZipPath ($fullSize bytes, SHA256=$fullHash)"
-Write-Host "  Patch: $patchZipPath ($patchSize bytes, SHA256=$patchHash)"
-Write-Host "  JSON : $releaseLatestPath & $rootLatestPath"
+Write-Host "  Full     : $fullZipPath ($fullSize bytes, SHA256=$fullHash)"
+Write-Host "  Patch    : $patchZipPath ($patchSize bytes, SHA256=$patchHash)"
+if ($installerBuilt) {
+    Write-Host "  Installer: $installerExePath ($installerSize bytes, SHA256=$installerHash)"
+}
+Write-Host "  JSON     : $releaseLatestPath & $rootLatestPath"

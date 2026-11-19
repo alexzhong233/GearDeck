@@ -91,6 +91,8 @@ public sealed class MchoseProvider : ITunablePeripheralProvider
             results.Add(new PeripheralDevice
             {
                 Id = $"mchose:{vid:X4}-{pid:X4}",
+                VendorId = vid,
+                ProductId = pid,
                 Name = cleanName,
                 Kind = kind,
                 Provider = ProviderName,

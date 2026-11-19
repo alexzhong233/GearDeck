@@ -81,6 +81,8 @@ public sealed class SonyInzoneProvider : IPeripheralProvider
         results.Add(new PeripheralDevice
         {
             Id = $"sony:{SonyVid:X4}-{InzoneBudsPid:X4}",
+            VendorId = SonyVid,
+            ProductId = InzoneBudsPid,
             Name = "Sony INZONE Buds",
             Kind = DeviceKind.Headset,
             Provider = ProviderName,
@@ -88,6 +90,11 @@ public sealed class SonyInzoneProvider : IPeripheralProvider
             IsSleeping = sleeping,
             Transport = "2.4G USB-C",
             BatteryPercent = mainPct,
+            LeftEarPercent = hit?.Left,
+            LeftEarCharging = hit?.LeftChg == true,
+            RightEarPercent = hit?.Right,
+            RightEarCharging = hit?.RightChg == true,
+            CaseBatteryPercent = hit?.Case,
             State = batState,
             Note = note,
             LastUpdated = DateTimeOffset.Now,

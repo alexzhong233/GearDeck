@@ -101,11 +101,24 @@ public static class WidgetProcess
             };
             string glyph = GroupIconCatalog.ResolveEffectiveGlyph(cfg, members);
             string iconPath = GroupIconCatalog.ResolveValidIconPath(cfg) ?? "";
-            string text = def?.BatteryPercent is { } p ? $"{p}%" : "--";
-            if (def?.State == BatteryState.Charging) text += " \u26A1";
+            string text;
+            if (def?.FormatDualEarSummary(compact: true) is { } dualText)
+            {
+                text = dualText;
+            }
+            else
+            {
+                text = def?.BatteryPercent is { } p ? $"{p}%" : "--";
+                if (def?.State == BatteryState.Charging) text += " \u26A1";
+            }
             string tip = label + "\n" + (members.Count == 0
                 ? "（无设备）"
-                : string.Join("\n", members.Select(m => $"{m.Name}: {(m.BatteryPercent is { } mp ? mp + "%" : "未读到")}")));
+                : string.Join("\n", members.Select(m =>
+                {
+                    if (m.FormatDualEarSummary(compact: false) is { } dualTip)
+                        return $"{m.Name}: {dualTip}";
+                    return $"{m.Name}: {(m.BatteryPercent is { } mp ? mp + "%" : "未读到")}";
+                })));
             groups.Add(new WidgetChipOut
             {
                 Glyph = glyph,
