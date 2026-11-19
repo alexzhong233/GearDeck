@@ -1,0 +1,11 @@
+<Window
+    x:Class="GearDeck.Monitor.MonitorWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Background="#DD202020" CornerRadius="8" Padding="14,8">
+        <StackPanel Orientation="Horizontal" Spacing="16">
+            <TextBlock x:Name="CpuText" Text="CPU --%" Foreground="White" FontSize="14" VerticalAlignment="Center" />
+            <TextBlock x:Name="RamText" Text="RAM --%" Foreground="White" FontSize="14" VerticalAlignment="Center" />
+        </StackPanel>
+    </Border>
+</Window>

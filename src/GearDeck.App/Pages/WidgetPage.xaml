@@ -1,0 +1,90 @@
+<Page
+    x:Class="GearDeck.App.Pages.WidgetPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:GearDeck.App.Controls">
+    <ScrollViewer Padding="24,20">
+        <StackPanel Spacing="16" HorizontalAlignment="Stretch">
+            <StackPanel Spacing="4">
+                <TextBlock Text="任务栏贴片" FontSize="28" FontWeight="SemiBold" />
+                <TextBlock Text="分组显示：每组显示默认设备电量，鼠标悬停查看组内其他设备，点击弹出设备列表（监控指标配置已统一收敛到「系统监控」页面）"
+                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="16">
+                <StackPanel Spacing="14">
+                    <controls:ResponsiveWrapPanel Spacing="24" LineSpacing="10">
+                        <ToggleSwitch x:Name="VisibleSwitch" Header="显示任务栏贴片" Toggled="OnChanged" />
+                        <ToggleSwitch x:Name="EmbedSwitch" Header="固定到任务栏（取消则自由悬浮）" Toggled="OnChanged" />
+                    </controls:ResponsiveWrapPanel>
+
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="快捷位置预设" FontWeight="SemiBold" />
+                        <controls:ResponsiveWrapPanel Spacing="8" LineSpacing="8">
+                            <Button Content="左侧（天气旁）" Click="OnPresetLeftWeather" />
+                            <Button Content="中左区域" Click="OnPresetMidLeft" />
+                            <Button Content="中右区域" Click="OnPresetMidRight" />
+                            <Button Content="右侧（托盘旁）" Click="OnPresetRightTray" />
+                        </controls:ResponsiveWrapPanel>
+                    </StackPanel>
+
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="锚点基准" FontWeight="SemiBold" />
+                        <RadioButtons x:Name="AlignRadios" MaxColumns="2" SelectionChanged="OnAlignChanged">
+                            <x:String>靠左锚点（从左侧开始计算偏移）</x:String>
+                            <x:String>靠右锚点（从系统托盘左侧开始计算偏移）</x:String>
+                        </RadioButtons>
+                    </StackPanel>
+
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="水平位置微调（拖动滑块实时移动）" FontWeight="SemiBold" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Slider x:Name="OffsetSlider" Grid.Column="0" Maximum="1200" Minimum="-1200" StepFrequency="4"
+                                    VerticalAlignment="Center" ValueChanged="OnOffsetSliderChanged" />
+                            <NumberBox x:Name="OffsetBox" Grid.Column="1" Width="170" Maximum="2000" Minimum="-2000"
+                                       SmallChange="20" LargeChange="100" SpinButtonPlacementMode="Inline"
+                                       VerticalAlignment="Center" ValueChanged="OnOffsetChanged" />
+                            <Button Grid.Column="2" Content="偏移归零" VerticalAlignment="Center" Click="OnResetOffset" />
+                        </Grid>
+                        <TextBlock Text="方向统一为：负数向左移动，正数向右移动；也可在任务栏上按住贴片直接左右拖动。"
+                                   FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+
+                    <controls:ResponsiveWrapPanel Spacing="12" LineSpacing="8">
+                        <NumberBox x:Name="HeightBox" Header="贴片高度" Minimum="24" Maximum="60" SpinButtonPlacementMode="Compact" ValueChanged="OnSizeChanged" />
+                        <NumberBox x:Name="FontBox" Header="字号" Minimum="9" Maximum="20" SpinButtonPlacementMode="Compact" ValueChanged="OnSizeChanged" />
+                        <NumberBox x:Name="BlockBox" Header="每组最小宽度" Minimum="48" Maximum="220" SpinButtonPlacementMode="Compact" ValueChanged="OnSizeChanged" />
+                        <Button Content="前往「系统监控」配置上下行指标 →" VerticalAlignment="Bottom" Click="OnGoToMonitor" />
+                    </controls:ResponsiveWrapPanel>
+                </StackPanel>
+            </Border>
+
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="分组与图标" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <StackPanel x:Name="GroupViewSwitchSlot" Grid.Column="1" VerticalAlignment="Center" />
+            </Grid>
+            <controls:ResponsiveItemsHost x:Name="GroupHost" MinCardWidth="340" Gap="10" />
+
+            <TextBlock Text="新建自定义组" FontSize="18" FontWeight="SemiBold" />
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="16">
+                <StackPanel Spacing="10">
+                    <TextBox x:Name="GroupNameBox" Header="组名" PlaceholderText="例如：FPS 鼠标" />
+                    <TextBlock Text="选择设备" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <controls:ResponsiveWrapPanel x:Name="CustomDeviceList" Spacing="12" LineSpacing="4" />
+                    <Button Content="创建组" Style="{ThemeResource AccentButtonStyle}" Click="OnCreateGroup" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

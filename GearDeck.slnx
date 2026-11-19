@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GearDeck.Core/GearDeck.Core.csproj" />
+    <Project Path="src/GearDeck.Monitor/GearDeck.Monitor.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GearDeck.Tests/GearDeck.Tests.csproj" />
+  </Folder>
+</Solution>

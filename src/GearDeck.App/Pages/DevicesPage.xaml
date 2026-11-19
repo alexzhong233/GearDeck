@@ -1,0 +1,40 @@
+<Page
+    x:Class="GearDeck.App.Pages.DevicesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:GearDeck.App.Controls">
+    <Grid Padding="24,20" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="4">
+                <TextBlock Text="设备总览" FontSize="28" FontWeight="SemiBold" />
+                <TextBlock Text="实时电量、休眠状态、低电量阈值、自定义图片与快速调参入口"
+                           TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+            <StackPanel x:Name="ViewSwitchSlot" Grid.Column="1" VerticalAlignment="Center" />
+        </Grid>
+
+        <controls:ResponsiveWrapPanel Grid.Row="1" Spacing="12" LineSpacing="8">
+            <Button x:Name="RefreshButton" Style="{ThemeResource AccentButtonStyle}" Click="OnRefreshClick">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE72C;" />
+                    <TextBlock Text="立即刷新所有外设" />
+                </StackPanel>
+            </Button>
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </controls:ResponsiveWrapPanel>
+
+        <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled">
+            <controls:ResponsiveItemsHost x:Name="DeviceHost" MinCardWidth="310" Gap="12" />
+        </ScrollViewer>
+    </Grid>
+</Page>

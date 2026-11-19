@@ -1,0 +1,14 @@
+<Application
+    x:Class="GearDeck.App.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <Thickness x:Key="AppContentPadding">20,16,20,20</Thickness>
+            <CornerRadius x:Key="AppCardRadius">8</CornerRadius>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

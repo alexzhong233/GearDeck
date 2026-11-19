@@ -1,0 +1,30 @@
+# Build artifacts
+[Bb]in/
+[Oo]bj/
+out/
+publish/
+releases/
+TestResults/
+[Bb]uild/
+*.[Cc]ache
+!*.[Cc]ache/
+
+# Visual Studio / IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+
+# Local scratch & diagnostics
+work/
+logs/
+*.tmp
+*.bak
+*.bak*
+*.log
+thumbs.db
+.DS_Store

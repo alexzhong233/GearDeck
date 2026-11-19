@@ -1,0 +1,503 @@
+using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Win32;
+using GearDeck.Core;
+using GearDeck.Core.Models;
+
+namespace GearDeck.App.Services;
+
+/// <summary>设备组：内置组（按类型）或自定义组。</summary>
+public sealed class DeviceGroup
+{
+    public required string Id { get; set; }
+
+    public required string DisplayName { get; set; }
+
+    /// <summary>内置组按 DeviceKind 自动聚合；自定义组用成员 id。</summary>
+    public string? BuiltinKind { get; set; }
+
+    public List<string> MemberIds { get; set; } = [];
+}
+
+public sealed class TaskbarGroupConfig
+{
+    public required string GroupId { get; set; }
+    public bool Visible { get; set; } = true;
+    public string? DefaultDeviceId { get; set; }
+    public string? CustomGlyph { get; set; }
+    public string? CustomIconPath { get; set; }
+}
+
+public sealed class DeviceLowBatteryPolicy
+{
+    public bool Enabled { get; set; } = true;
+    public int? CustomThresholdPercent { get; set; }
+    public bool WindowsNotification { get; set; } = true;
+}
+
+public sealed class CachedOnboardSlotInfo
+{
+    public int SlotIndex { get; set; }
+    public string Name { get; set; } = "";
+    public string Summary { get; set; } = "";
+}
+
+public sealed class CachedDeviceOnboardManifest
+{
+    public int SlotCount { get; set; }
+    public int ActiveSlot { get; set; }
+    public DateTimeOffset LastProbedAt { get; set; }
+    public List<CachedOnboardSlotInfo> Slots { get; set; } = [];
+}
+
+public sealed class AppSettings
+{
+    public bool WidgetVisible { get; set; } = true;
+
+    public bool WidgetEmbedded { get; set; } = true;
+
+    /// <summary>水平偏移（DIP，正数向右，负数向左）。</summary>
+    public int WidgetOffsetX { get; set; }
+
+    public bool PositionMigratedV2 { get; set; }
+
+    public int WidgetFloatX { get; set; } = -1;
+
+    public int WidgetFloatY { get; set; } = -1;
+
+    public int WidgetHeight { get; set; } = 40;
+
+    public int WidgetFontSize { get; set; } = 13;
+
+    public int WidgetBlockWidth { get; set; } = 92;
+
+    public string MonitorTopMetric { get; set; } = "CPU";
+
+    public string MonitorBottomMetric { get; set; } = "RAM";
+
+    public List<TaskbarGroupConfig> TaskbarGroups { get; set; } = [];
+
+    /// <summary>left / right。</summary>
+    public string WidgetAlignment { get; set; } = "right";
+
+    /// <summary>贴片上显示的组 id。</summary>
+    public string WidgetGroupId { get; set; } = "builtin:mouse";
+
+    public List<DeviceGroup> CustomGroups { get; set; } = [];
+
+    public bool MonitorEnabled { get; set; }
+
+    public List<string> MonitorFlyoutMetrics { get; set; } = [];
+
+    public int PollIntervalSeconds { get; set; } = 30;
+
+    public int LowBatteryThreshold { get; set; } = 20;
+
+    public bool DebugModeEnabled { get; set; }
+
+    public bool NotifyOnProfileSwitch { get; set; } = true;
+
+    public bool UseCardLayout { get; set; } = true;
+
+    public Dictionary<string, DeviceLowBatteryPolicy> DeviceLowBatteryPolicies { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, string> DeviceImageOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, string> AutoCloudDeviceImages { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public string CustomCloudGalleryManifestUrl { get; set; } = "";
+
+    // ── 在线检查更新与自定义 GitHub 镜像站 ────────────────────────────────────
+    public string GitHubMirrorUrl { get; set; } = "";
+
+    public bool CheckUpdateOnStartup { get; set; } = true;
+
+    public string UpdateRepoSlug { get; set; } = "alexzhong233/GearDeck";
+
+    // ── 托盘常驻与开机自启 ─────────────────────────────────────────────────
+    public bool CloseToTray { get; set; } = true;
+
+    public bool LaunchMinimizedToTray { get; set; }
+
+    public bool LaunchOnStartup { get; set; }
+
+    // ── 按游戏 / 进程 / 独占全屏自动切换配置与硬件宏库 ─────────────────────────
+    public bool AutoSwitchEnabled { get; set; } = true;
+
+    public bool EnableExclusiveFullscreenFallback { get; set; }
+
+    /// <summary>开启全屏独占切换后：false=包含无边框全屏，true=仅原生 Direct3D 独占全屏 (QUNS_BUSY)。</summary>
+    public bool OnlyTrueExclusiveFullscreen { get; set; }
+
+    public bool RestoreDesktopTargetsOnExit { get; set; } = true;
+
+    /// <summary>只要检测到全屏独占中的窗口/对应游戏进程尚未退出，切出焦点 (Alt+Tab) 时不切回桌面默认配置。</summary>
+    public bool KeepProfileUntilWindowExits { get; set; } = true;
+
+    public List<MouseHardwarePreset> Presets { get; set; } = [];
+
+    public List<GameAutoRule> GameRules { get; set; } = [];
+
+    public Dictionary<string, string> FullscreenFallbackTargets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, string> DesktopDefaultTargets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, CachedDeviceOnboardManifest> DeviceOnboardManifests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public List<OnboardMacroDefinition> Macros { get; set; } = [];
+
+    /// <summary>Key = "{deviceId}|{slotIndex}", Value = macroId（仅用于无板载多步宏闪存的鼠标做本地软件宏绑定）。</summary>
+    public Dictionary<string, string> LocalButtonMacroBindings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public ExitRestoreMode GetExitRestoreMode()
+    {
+        if (!RestoreDesktopTargetsOnExit)
+            return ExitRestoreMode.NeverRestore;
+        return KeepProfileUntilWindowExits ? ExitRestoreMode.WhenWindowExits : ExitRestoreMode.WhenFocusLeaves;
+    }
+
+    public void SetExitRestoreMode(ExitRestoreMode mode)
+    {
+        switch (mode)
+        {
+            case ExitRestoreMode.WhenWindowExits:
+                RestoreDesktopTargetsOnExit = true;
+                KeepProfileUntilWindowExits = true;
+                break;
+            case ExitRestoreMode.WhenFocusLeaves:
+                RestoreDesktopTargetsOnExit = true;
+                KeepProfileUntilWindowExits = false;
+                break;
+            default:
+                RestoreDesktopTargetsOnExit = false;
+                break;
+        }
+    }
+
+    [JsonIgnore]
+    public static AppSettings Default { get; } = new();
+}
+
+public sealed class SettingsService
+{
+    private static readonly string Dir =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GearDeck");
+
+    private static readonly string FilePath = Path.Combine(Dir, "settings.json");
+
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+    };
+
+    public AppSettings Current { get; private set; } = new();
+
+    public SettingsService()
+    {
+        MigrateLegacyAppDataIfNeeded();
+        try
+        {
+            if (File.Exists(FilePath))
+            {
+                Current = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), JsonOpts) ?? new AppSettings();
+            }
+        }
+        catch
+        {
+            Current = new AppSettings();
+        }
+        EnsureDefaults();
+        if (Current.LaunchOnStartup)
+            ApplyStartupRegistry(true);
+    }
+
+    private static void MigrateLegacyAppDataIfNeeded()
+    {
+        try
+        {
+            string legacyDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PeripheralHub");
+            if (File.Exists(FilePath) || !Directory.Exists(legacyDir))
+                return;
+
+            Directory.CreateDirectory(Dir);
+
+            foreach (string fileName in new[] { "settings.json", "device-images.json", "widget-position.json", "openmouse-games.json" })
+            {
+                string src = Path.Combine(legacyDir, fileName);
+                string dst = Path.Combine(Dir, fileName);
+                if (!File.Exists(src) || File.Exists(dst)) continue;
+
+                if (fileName == "settings.json")
+                {
+                    string raw = File.ReadAllText(src)
+                        .Replace(@"\\PeripheralHub\\", @"\\GearDeck\\", StringComparison.OrdinalIgnoreCase)
+                        .Replace(@"\PeripheralHub\", @"\GearDeck\", StringComparison.OrdinalIgnoreCase);
+                    File.WriteAllText(dst, raw);
+                }
+                else
+                {
+                    File.Copy(src, dst, overwrite: false);
+                }
+            }
+
+            foreach (string subDir in new[] { "device-images", "image-cache", "game-icons" })
+            {
+                string srcSub = Path.Combine(legacyDir, subDir);
+                string dstSub = Path.Combine(Dir, subDir);
+                if (Directory.Exists(srcSub))
+                    CopyDirectoryRecursive(srcSub, dstSub);
+            }
+        }
+        catch { }
+    }
+
+    private static void CopyDirectoryRecursive(string sourceDir, string targetDir)
+    {
+        Directory.CreateDirectory(targetDir);
+        foreach (string file in Directory.GetFiles(sourceDir))
+        {
+            string destFile = Path.Combine(targetDir, Path.GetFileName(file));
+            if (!File.Exists(destFile))
+                File.Copy(file, destFile, overwrite: false);
+        }
+        foreach (string dir in Directory.GetDirectories(sourceDir))
+        {
+            CopyDirectoryRecursive(dir, Path.Combine(targetDir, Path.GetFileName(dir)));
+        }
+    }
+
+    public void EnsureDefaults()
+    {
+        foreach (var id in new[] { "builtin:mouse", "builtin:keyboard", "builtin:headset", "builtin:controller" })
+        {
+            if (Current.TaskbarGroups.All(g => g.GroupId != id))
+                Current.TaskbarGroups.Add(new TaskbarGroupConfig { GroupId = id, Visible = id != "builtin:controller" });
+        }
+        foreach (var g in Current.CustomGroups)
+        {
+            if (Current.TaskbarGroups.All(t => t.GroupId != g.Id))
+                Current.TaskbarGroups.Add(new TaskbarGroupConfig { GroupId = g.Id, Visible = true });
+        }
+        if (!Current.PositionMigratedV2)
+        {
+            Current.WidgetOffsetX = 0;
+            Current.PositionMigratedV2 = true;
+        }
+        if (Current.MonitorFlyoutMetrics == null || Current.MonitorFlyoutMetrics.Count == 0)
+        {
+            Current.MonitorFlyoutMetrics = [.. GearDeck.Metrics.SystemMetricsEngine.DefaultFlyoutMetricIds];
+        }
+        Current.Presets ??= [];
+        Current.GameRules ??= [];
+        Current.FullscreenFallbackTargets ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Current.DesktopDefaultTargets ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Current.DeviceOnboardManifests ??= new Dictionary<string, CachedDeviceOnboardManifest>(StringComparer.OrdinalIgnoreCase);
+        Current.Macros ??= [];
+        Current.LocalButtonMacroBindings ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Current.DeviceLowBatteryPolicies ??= new Dictionary<string, DeviceLowBatteryPolicy>(StringComparer.OrdinalIgnoreCase);
+        Current.DeviceImageOverrides ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Current.AutoCloudDeviceImages ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Current.CustomCloudGalleryManifestUrl ??= "";
+        Current.GitHubMirrorUrl ??= "";
+        if (string.IsNullOrWhiteSpace(Current.UpdateRepoSlug))
+            Current.UpdateRepoSlug = "alexzhong233/GearDeck";
+        foreach (var rule in Current.GameRules)
+        {
+            rule.ProcessNames ??= [];
+            rule.PerMouseTargets ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+        foreach (var m in Current.DeviceOnboardManifests.Values)
+            m.Slots ??= [];
+    }
+
+    public DeviceLowBatteryPolicy GetLowBatteryPolicy(string deviceId)
+    {
+        if (!string.IsNullOrWhiteSpace(deviceId) &&
+            Current.DeviceLowBatteryPolicies.TryGetValue(deviceId, out var policy))
+            return policy;
+        return new DeviceLowBatteryPolicy();
+    }
+
+    public int GetEffectiveLowBatteryThreshold(string deviceId)
+    {
+        var policy = GetLowBatteryPolicy(deviceId);
+        return policy.CustomThresholdPercent is { } c
+            ? Math.Clamp(c, 5, 80)
+            : Math.Clamp(Current.LowBatteryThreshold, 5, 80);
+    }
+
+    public bool IsDeviceLowBattery(string deviceId, int batteryPercent)
+    {
+        var policy = GetLowBatteryPolicy(deviceId);
+        return policy.Enabled && batteryPercent <= GetEffectiveLowBatteryThreshold(deviceId);
+    }
+
+    public bool ShouldNotifyLowBattery(string deviceId, int batteryPercent)
+    {
+        var policy = GetLowBatteryPolicy(deviceId);
+        return policy.Enabled && policy.WindowsNotification && batteryPercent <= GetEffectiveLowBatteryThreshold(deviceId);
+    }
+
+    public static string BuildCapsSummary(DeviceTuningCapabilities caps)
+    {
+        var parts = new List<string>();
+        if (caps.SupportsDpi && caps.CurrentDpiX > 0)
+        {
+            parts.Add(caps.SupportsIndependentXY && caps.CurrentDpiY != caps.CurrentDpiX
+                ? $"X:{caps.CurrentDpiX}/Y:{caps.CurrentDpiY} DPI"
+                : $"{caps.CurrentDpiX} DPI");
+        }
+        if (caps.CurrentPollingRate > 0)
+            parts.Add($"{caps.CurrentPollingRate}Hz");
+        if (caps.SupportedPerformanceModes.Count > 0)
+        {
+            var pm = caps.SupportedPerformanceModes.FirstOrDefault(m => m.Code == caps.CurrentPerformanceMode);
+            if (pm != null) parts.Add(pm.Label);
+        }
+        return string.Join(" · ", parts);
+    }
+
+    public void RecordCapabilitiesManifest(string deviceId, DeviceTuningCapabilities caps)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId) || !caps.IsOnline || caps.OnboardProfileCount <= 0)
+            return;
+
+        if (!Current.DeviceOnboardManifests.TryGetValue(deviceId, out var manifest))
+        {
+            manifest = new CachedDeviceOnboardManifest();
+            Current.DeviceOnboardManifests[deviceId] = manifest;
+        }
+
+        manifest.SlotCount = caps.OnboardProfileCount;
+        manifest.ActiveSlot = Math.Clamp(caps.ActiveOnboardProfile, 0, Math.Max(0, caps.OnboardProfileCount - 1));
+        manifest.LastProbedAt = DateTimeOffset.Now;
+
+        string activeSummary = BuildCapsSummary(caps);
+        for (int i = 0; i < caps.OnboardProfileCount; i++)
+        {
+            string name = i < caps.OnboardProfileNames.Count && !string.IsNullOrWhiteSpace(caps.OnboardProfileNames[i])
+                ? caps.OnboardProfileNames[i]
+                : $"板载配置 {i + 1}";
+
+            var existing = manifest.Slots.FirstOrDefault(s => s.SlotIndex == i);
+            if (existing == null)
+            {
+                existing = new CachedOnboardSlotInfo { SlotIndex = i, Name = name };
+                manifest.Slots.Add(existing);
+            }
+            else
+            {
+                existing.Name = name;
+            }
+
+            if (i == manifest.ActiveSlot && !string.IsNullOrEmpty(activeSummary))
+                existing.Summary = activeSummary;
+        }
+
+        manifest.Slots = manifest.Slots
+            .Where(s => s.SlotIndex >= 0 && s.SlotIndex < caps.OnboardProfileCount)
+            .OrderBy(s => s.SlotIndex)
+            .ToList();
+        Save();
+    }
+
+    public List<CachedOnboardSlotInfo> GetDeviceOnboardSlots(PeripheralDevice? dev, string deviceId)
+    {
+        if (Current.DeviceOnboardManifests.TryGetValue(deviceId, out var manifest) && manifest.Slots.Count > 0)
+            return manifest.Slots.OrderBy(s => s.SlotIndex).ToList();
+
+        int defaultCount = EstimateDefaultOnboardSlotCount(dev, deviceId);
+        if (defaultCount <= 0) return [];
+        return Enumerable.Range(0, defaultCount)
+            .Select(i => new CachedOnboardSlotInfo { SlotIndex = i, Name = $"板载配置 {i + 1}" })
+            .ToList();
+    }
+
+    public static int EstimateDefaultOnboardSlotCount(PeripheralDevice? dev, string deviceId)
+    {
+        string id = deviceId.ToLowerInvariant();
+        string prov = dev?.Provider?.ToLowerInvariant() ?? "";
+        if (id.StartsWith("logi:") || prov.Contains("logitech")) return 5;
+        if (id.StartsWith("wlmouse:") || id.StartsWith("lamzu:") || id.StartsWith("atk:") ||
+            id.StartsWith("mchose:") || id.StartsWith("aula:") || id.StartsWith("flydigi:") ||
+            prov is "wlmouse" or "lamzu" or "atk" or "mchose" or "aula" or "flydigi")
+            return 4;
+        return 0;
+    }
+
+    public async Task<CachedDeviceOnboardManifest?> ProbeAllOnboardSlotsAsync(DeviceManager manager, string deviceId)
+    {
+        var initial = await manager.QueryCapabilitiesAsync(deviceId);
+        if (!initial.IsOnline)
+            return null;
+
+        RecordCapabilitiesManifest(deviceId, initial);
+        if (initial.OnboardProfileCount <= 1)
+            return Current.DeviceOnboardManifests.GetValueOrDefault(deviceId);
+
+        int originalSlot = Math.Clamp(initial.ActiveOnboardProfile, 0, initial.OnboardProfileCount - 1);
+        try
+        {
+            for (int i = 0; i < initial.OnboardProfileCount; i++)
+            {
+                if (i == originalSlot) continue;
+                var res = await manager.ApplySettingsAsync(deviceId, new DeviceTuningUpdate { ActiveOnboardProfile = i });
+                if (res.Capabilities != null && res.Capabilities.IsOnline)
+                {
+                    RecordCapabilitiesManifest(deviceId, res.Capabilities);
+                }
+                else
+                {
+                    var caps = await manager.QueryCapabilitiesAsync(deviceId);
+                    if (caps.IsOnline) RecordCapabilitiesManifest(deviceId, caps);
+                }
+            }
+        }
+        finally
+        {
+            var restored = await manager.ApplySettingsAsync(deviceId, new DeviceTuningUpdate { ActiveOnboardProfile = originalSlot });
+            if (restored.Capabilities != null && restored.Capabilities.IsOnline)
+                RecordCapabilitiesManifest(deviceId, restored.Capabilities);
+        }
+
+        return Current.DeviceOnboardManifests.GetValueOrDefault(deviceId);
+    }
+
+    public static void ApplyStartupRegistry(bool enable)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            if (key == null) return;
+            key.DeleteValue("PeripheralHub", throwOnMissingValue: false);
+            const string valueName = "GearDeck";
+            if (enable)
+            {
+                string? exePath = Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrWhiteSpace(exePath))
+                    exePath = Path.Combine(AppContext.BaseDirectory, "GearDeck.App.exe");
+                key.SetValue(valueName, $"\"{exePath}\" --minimized");
+            }
+            else
+            {
+                key.DeleteValue(valueName, throwOnMissingValue: false);
+            }
+        }
+        catch { }
+    }
+
+    public void Save()
+    {
+        try
+        {
+            Directory.CreateDirectory(Dir);
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(Current, JsonOpts));
+        }
+        catch
+        {
+            // 设置写失败不致命
+        }
+    }
+}

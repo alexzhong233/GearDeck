@@ -1,0 +1,114 @@
+<Window
+    x:Class="GearDeck.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="GearDeck">
+    <Grid x:Name="RootGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="48" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- WinUI 3 Gallery 风格自定义 Mica 标题栏 -->
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Height="48" Padding="6,0,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="RightCaptionColumn" Width="138" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                <Button x:Name="TitleBarBackBtn"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        CornerRadius="4"
+                        Width="36" Height="32" Padding="0"
+                        ToolTipService.ToolTip="返回上一页"
+                        IsEnabled="False"
+                        Click="OnTitleBarBackClick">
+                    <FontIcon Glyph="&#xE72B;" FontSize="12" />
+                </Button>
+                <Button x:Name="TitleBarPaneBtn"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        CornerRadius="4"
+                        Width="36" Height="32" Padding="0"
+                        ToolTipService.ToolTip="展开或收起导航栏"
+                        Click="OnTitleBarPaneClick">
+                    <FontIcon Glyph="&#xE700;" FontSize="13" />
+                </Button>
+                <Image Source="ms-appx:///Assets/app.png" Width="18" Height="18" Margin="8,0,8,0" VerticalAlignment="Center" />
+                <TextBlock x:Name="TitleBarText" Text="GearDeck" FontSize="12" VerticalAlignment="Center" Margin="0,0,12,0" />
+            </StackPanel>
+
+            <AutoSuggestBox x:Name="TitleBarSearchBox"
+                            Grid.Column="1"
+                            PlaceholderText="搜索外设、游戏配置、鼠标宏或设置..."
+                            QueryIcon="Find"
+                            MaxWidth="380"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Center"
+                            Margin="12,0,12,0"
+                            TextChanged="OnSearchTextChanged"
+                            SuggestionChosen="OnSearchSuggestionChosen"
+                            QuerySubmitted="OnSearchQuerySubmitted" />
+        </Grid>
+
+        <NavigationView x:Name="Nav"
+                        Grid.Row="1"
+                        IsBackButtonVisible="Collapsed"
+                        IsPaneToggleButtonVisible="False"
+                        IsTitleBarAutoPaddingEnabled="False"
+                        IsSettingsVisible="False"
+                        PaneDisplayMode="Auto"
+                        CompactModeThresholdWidth="700"
+                        ExpandedModeThresholdWidth="1000"
+                        OpenPaneLength="230"
+                        CompactPaneLength="48"
+                        IsPaneOpen="True"
+                        SelectionChanged="OnNavSelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem x:Name="DevicesNav" Content="设备总览" Tag="devices">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7F4;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="MouseNav" Content="鼠标" Tag="mouse">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE962;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="KeyboardNav" Content="键盘" Tag="keyboard">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE765;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="HeadsetNav" Content="耳机" Tag="headset">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7F5;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="ControllerNav" Content="手柄" Tag="controller">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7FC;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItemSeparator />
+                <NavigationViewItem x:Name="GamesNav" Content="游戏与配置切换" Tag="games">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7FC;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="MacrosNav" Content="鼠标宏中心" Tag="macros">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE945;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="WidgetNav" Content="任务栏贴片" Tag="widget">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE7F8;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="MonitorNav" Content="系统监控" Tag="monitor">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE9D9;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="DiagnosticsNav" Content="诊断 (Debug)" Tag="diagnostics" Visibility="Collapsed">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE9D5;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="SettingsNav" Content="设置" Tag="settings">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE713;" /></NavigationViewItem.Icon>
+                    <NavigationViewItem.InfoBadge>
+                        <InfoBadge x:Name="SettingsUpdateBadge" Value="1" Visibility="Collapsed" />
+                    </NavigationViewItem.InfoBadge>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
+            <Frame x:Name="ContentFrame" Navigated="OnContentFrameNavigated" />
+        </NavigationView>
+    </Grid>
+</Window>
