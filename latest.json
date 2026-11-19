@@ -1,13 +1,13 @@
 {
-    "version":  "1.0.0",
-    "tag":  "v1.0.0",
-    "publishedAt":  "2026-11-19T07:52:25Z",
-    "htmlUrl":  "https://github.com/alexzhong233/GearDeck/releases/tag/v1.0.0",
-    "downloadUrl":  "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.0/GearDeck-v1.0.0-win-x64.zip",
-    "fullSha256":  "65938B2F9828C51E6017AC439A0382B20A98B7F66A22FF7B3CCC90B172BE37AF",
-    "fullSize":  32169176,
-    "patchUrl":  "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.0/GearDeck-patch-v1.0.0-win-x64.zip",
-    "patchSha256":  "698232E1B2CCEC9E51EE6C8BEA110AD6D50C3AAA9879843F89F0447CF2A5F296",
-    "patchSize":  1471061,
-    "notes":  "GearDeck v1.0.0 首个正式版：多品牌外设电量与硬件参数接管、任务栏电量与系统监控贴片、本机游戏库与全屏配置自动切换、全局鼠标宏中心、外置设备图片规则库及支持自定义 GitHub 镜像站的在线自动更新。"
+    "version":  "1.0.1",
+    "tag":  "v1.0.1",
+    "publishedAt":  "2026-11-19T08:39:02Z",
+    "htmlUrl":  "https://github.com/alexzhong233/GearDeck/releases/tag/v1.0.1",
+    "downloadUrl":  "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.1/GearDeck-v1.0.1-win-x64.zip",
+    "fullSha256":  "4B0A5927F00D9234D21872F928EDC5F9904791FE901D3010CF16773142F94323",
+    "fullSize":  32169581,
+    "patchUrl":  "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.1/GearDeck-patch-v1.0.1-win-x64.zip",
+    "patchSha256":  "FBA185B05CA41051126A0E821D0D34052130A217958B6AE5C1ECFBABB1E2A6A5",
+    "patchSize":  1471466,
+    "notes":  "GearDeck v1.0.1 在线更新验证版：优化自定义 GitHub 镜像加速与自动回退体验，实测支持从 v1.0.0 在线检查并一键热替换重启升级至 v1.0.1。"
 }
