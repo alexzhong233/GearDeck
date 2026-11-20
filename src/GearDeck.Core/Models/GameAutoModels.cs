@@ -100,6 +100,8 @@ public sealed class GameAutoRule
     public string Id { get; set; } = Guid.NewGuid().ToString("N")[..10];
     public string Name { get; set; } = "新游戏规则";
     public bool Enabled { get; set; } = true;
+    public string Platform { get; set; } = "";
+    public string? IconPath { get; set; }
 
     /// <summary>匹配的进程名列表（如 cs2.exe, valorant-win64-shipping.exe）。</summary>
     public List<string> ProcessNames { get; set; } = [];

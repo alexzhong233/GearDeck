@@ -44,6 +44,20 @@ public static class InstalledGameScanner
         return await Task.Run(() => ScanInternal(catalog));
     }
 
+    public static string? ExtractExeIcon(string? exePath)
+    {
+        if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath)) return null;
+        try
+        {
+            Directory.CreateDirectory(IconCacheDir);
+            return TryExtractExeIconBmp(exePath);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static async Task<IReadOnlyList<OpenMouseGameCatalogEntry>> LoadMergedCatalogAsync()
     {
         try

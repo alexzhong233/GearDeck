@@ -132,6 +132,42 @@
                     </StackPanel>
                 </Border>
 
+                <!-- 单设备低电量提醒设置（位于硬件状态概览下方） -->
+                <Border x:Name="DeviceLowBatCard"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="12" Padding="14">
+                    <StackPanel Spacing="8">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="低电量提醒设置" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" x:Name="DeviceLowBatStateText" Text="默认 20%"
+                                       FontSize="11" VerticalAlignment="Center"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" Spacing="14">
+                            <CheckBox x:Name="DeviceLowBatEnableChk" Content="启用提醒" MinWidth="0" />
+                            <CheckBox x:Name="DeviceLowBatNotifyChk" Content="弹窗通知" MinWidth="0" />
+                        </StackPanel>
+
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <NumberBox Grid.Column="0" x:Name="DeviceLowBatThresholdBox" Header="独立阈值 (%)"
+                                       Maximum="80" Minimum="0" SpinButtonPlacementMode="Compact" />
+                            <Button Grid.Column="1" x:Name="DeviceLowBatResetBtn" Content="默认 20%"
+                                    VerticalAlignment="Bottom" Padding="10,5" FontSize="12"
+                                    ToolTipService.ToolTip="恢复为默认 20% 低电量阈值" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
                 <!-- 与原生驱动共存退让提示 -->
                 <InfoBar x:Name="CoexistenceBanner"
                          IsOpen="False" IsClosable="False" Severity="Informational"

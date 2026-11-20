@@ -18,13 +18,11 @@ public sealed partial class DevicesPage : Page
         InitializeComponent();
         _isCardMode = App.Settings.Current.UseCardLayout;
         DeviceHost.IsCardMode = _isCardMode;
-        DevicePoliciesHost.IsCardMode = _isCardMode;
 
         ViewSwitchSlot.Children.Add(UiBuilders.CreateViewModeSwitcher(_isCardMode, isCard =>
         {
             _isCardMode = isCard;
             DeviceHost.IsCardMode = isCard;
-            DevicePoliciesHost.IsCardMode = isCard;
             Apply(App.Devices.LastSnapshot());
         }));
 
@@ -36,7 +34,6 @@ public sealed partial class DevicesPage : Page
     {
         _isCardMode = App.Settings.Current.UseCardLayout;
         DeviceHost.IsCardMode = _isCardMode;
-        DevicePoliciesHost.IsCardMode = _isCardMode;
         App.Devices.DevicesUpdated += OnDevicesUpdated;
         DeviceImageService.ImagesUpdated += OnImagesUpdated;
         Apply(App.Devices.LastSnapshot());
@@ -70,7 +67,6 @@ public sealed partial class DevicesPage : Page
                 items.Add(_isCardMode ? BuildDeviceCard(d) : BuildDeviceRow(d));
         }
         DeviceHost.SetItems(items);
-        RebuildDevicePolicies(devices);
         if (GearDeck.Core.Services.ExternalConfiguratorGuard.IsBackgroundYieldActive(out string? yieldReason))
             StatusText.Text = $"共 {devices.Count} 台 · {yieldReason}（点击左侧按钮可立即刷新收回控制）";
         else
@@ -178,8 +174,9 @@ public sealed partial class DevicesPage : Page
         topArea.Tapped += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
         root.Children.Add(topArea);
 
-        // 下半区：内嵌按钮（含官方软件与官方网页驱动直达）
-        var actions = new ResponsiveWrapPanel { Spacing = 8, LineSpacing = 6 };
+        // 下半区：第一行调参/官方驱动，第二行固定放换图与固定贴片
+        var actionRows = new StackPanel { Spacing = 8 };
+        var primaryRow = new ResponsiveWrapPanel { Spacing = 8, LineSpacing = 6 };
         var tuneBtn = new Button
         {
             Content = "参数调节",
@@ -187,7 +184,7 @@ public sealed partial class DevicesPage : Page
             Padding = new Thickness(12, 5, 12, 5),
         };
         tuneBtn.Click += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
-        actions.Children.Add(tuneBtn);
+        primaryRow.Children.Add(tuneBtn);
 
         var driverLinks = GearDeck.Core.Services.VendorDriverCatalog.Resolve(d);
         if (driverLinks.Local is { } localDrv)
@@ -195,29 +192,32 @@ public sealed partial class DevicesPage : Page
             var localBtn = new Button { Content = localDrv.DisplayName.Replace("打开 ", ""), Padding = new Thickness(10, 5, 10, 5) };
             ToolTipService.SetToolTip(localBtn, $"{localDrv.DisplayName}（启动后自动暂停 GearDeck 后台轮询 180s）");
             localBtn.Click += (_, _) => _ = Services.VendorDriverLauncher.LaunchLocal(localDrv);
-            actions.Children.Add(localBtn);
+            primaryRow.Children.Add(localBtn);
         }
         if (driverLinks.Web is { } webDrv)
         {
             var webBtn = new Button { Content = "网页驱动", Padding = new Thickness(10, 5, 10, 5) };
             ToolTipService.SetToolTip(webBtn, $"{webDrv.DisplayName}: {webDrv.Url}（启动后自动暂停后台轮询避免 WebHID 抢占）");
             webBtn.Click += (_, _) => _ = Services.VendorDriverLauncher.LaunchWeb(webDrv);
-            actions.Children.Add(webBtn);
+            primaryRow.Children.Add(webBtn);
         }
 
+        var secondaryRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var imgBtn = new Button { Content = "换图", Padding = new Thickness(10, 5, 10, 5) };
         imgBtn.Click += async (_, _) =>
         {
             if (await DeviceImagePickerDialog.ShowAsync(this.XamlRoot, d))
                 Apply(App.Devices.LastSnapshot());
         };
-        actions.Children.Add(imgBtn);
+        secondaryRow.Children.Add(imgBtn);
 
         var pinBtn = new Button { Content = "固定贴片", Padding = new Thickness(10, 5, 10, 5) };
         pinBtn.Click += (_, _) => PinToTaskbar(d);
-        actions.Children.Add(pinBtn);
+        secondaryRow.Children.Add(pinBtn);
 
-        root.Children.Add(actions);
+        actionRows.Children.Add(primaryRow);
+        actionRows.Children.Add(secondaryRow);
+        root.Children.Add(actionRows);
         card.Child = root;
         return card;
     }
@@ -270,7 +270,13 @@ public sealed partial class DevicesPage : Page
         Grid.SetColumn(bat, 2);
         row.Children.Add(bat);
 
-        var btnBar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        var btnStack = new StackPanel
+        {
+            Spacing = 6,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var rowPrimary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
         var tuneBtn = new Button
         {
             Content = "调节",
@@ -279,30 +285,39 @@ public sealed partial class DevicesPage : Page
         };
         tuneBtn.Click += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
         var driverLinks = GearDeck.Core.Services.VendorDriverCatalog.Resolve(d);
-        btnBar.Children.Add(tuneBtn);
+        rowPrimary.Children.Add(tuneBtn);
         if (driverLinks.Local is { } localDrv)
         {
             var localBtn = new Button { Content = "官方软件", Padding = new Thickness(8, 4, 8, 4) };
             ToolTipService.SetToolTip(localBtn, localDrv.DisplayName);
             localBtn.Click += (_, _) => _ = Services.VendorDriverLauncher.LaunchLocal(localDrv);
-            btnBar.Children.Add(localBtn);
+            rowPrimary.Children.Add(localBtn);
         }
         if (driverLinks.Web is { } webDrv)
         {
             var webBtn = new Button { Content = "网页驱动", Padding = new Thickness(8, 4, 8, 4) };
             ToolTipService.SetToolTip(webBtn, $"{webDrv.DisplayName}: {webDrv.Url}");
             webBtn.Click += (_, _) => _ = Services.VendorDriverLauncher.LaunchWeb(webDrv);
-            btnBar.Children.Add(webBtn);
+            rowPrimary.Children.Add(webBtn);
         }
+
+        var rowSecondary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
         var imgBtn = new Button { Content = "换图", Padding = new Thickness(8, 4, 8, 4) };
         imgBtn.Click += async (_, _) =>
         {
             if (await DeviceImagePickerDialog.ShowAsync(this.XamlRoot, d))
                 Apply(App.Devices.LastSnapshot());
         };
-        btnBar.Children.Add(imgBtn);
-        Grid.SetColumn(btnBar, 3);
-        row.Children.Add(btnBar);
+        rowSecondary.Children.Add(imgBtn);
+
+        var pinBtn = new Button { Content = "固定贴片", Padding = new Thickness(8, 4, 8, 4) };
+        pinBtn.Click += (_, _) => PinToTaskbar(d);
+        rowSecondary.Children.Add(pinBtn);
+
+        btnStack.Children.Add(rowPrimary);
+        btnStack.Children.Add(rowSecondary);
+        Grid.SetColumn(btnStack, 3);
+        row.Children.Add(btnStack);
 
         card.Child = row;
         return card;
@@ -332,136 +347,6 @@ public sealed partial class DevicesPage : Page
         App.Settings.Save();
         App.RefreshWidget();
         StatusText.Text = $"已将「{d.Name}」固定到任务栏对应分组";
-    }
-
-    private void RebuildDevicePolicies(IReadOnlyList<PeripheralDevice> snapshot)
-    {
-        var devices = snapshot.ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
-        var ids = devices.Keys
-            .Concat(App.Settings.Current.DeviceLowBatteryPolicies.Keys)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(id => devices.TryGetValue(id, out var d) ? d.Name : id)
-            .ToList();
-
-        var elements = new List<UIElement>(ids.Count);
-        if (ids.Count == 0)
-        {
-            elements.Add(new TextBlock
-            {
-                Text = "尚无已扫描到的外设；等待设备接入后可在此按设备配置独立提醒。",
-                FontSize = 12,
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            });
-            DevicePoliciesHost.SetItems(elements);
-            return;
-        }
-
-        foreach (string id in ids)
-        {
-            devices.TryGetValue(id, out var dev);
-            string devName = dev?.Name ?? id;
-            var policy = App.Settings.GetLowBatteryPolicy(id);
-            int eff = App.Settings.GetEffectiveLowBatteryThreshold(id);
-
-            var card = new Border
-            {
-                Background = (Brush)Application.Current.Resources["SubtleFillColorSecondaryBrush"],
-                BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12),
-            };
-
-            var stack = new StackPanel { Spacing = 8 };
-            var head = new Grid { ColumnSpacing = 10 };
-            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            if (dev != null)
-                head.Children.Add(UiBuilders.CreateDeviceAvatar(dev, 36));
-            else
-                head.Children.Add(new FontIcon { Glyph = "\uE962", FontSize = 18 });
-
-            var title = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
-            title.Children.Add(new TextBlock { Text = devName, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-            var thresholdSubText = new TextBlock
-            {
-                Text = policy.CustomThresholdPercent.HasValue ? $"独立阈值：{eff}%" : $"默认阈值：{SettingsService.DefaultLowBatteryThreshold}%",
-                FontSize = 11,
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            };
-            title.Children.Add(thresholdSubText);
-            Grid.SetColumn(title, 1);
-            head.Children.Add(title);
-            stack.Children.Add(head);
-
-            var controls = new ResponsiveWrapPanel { Spacing = 10, LineSpacing = 6 };
-            var enableChk = new CheckBox { Content = "提醒", IsChecked = policy.Enabled };
-            var notifyChk = new CheckBox { Content = "弹窗通知", IsChecked = policy.WindowsNotification };
-            var numBox = new NumberBox
-            {
-                Header = "独立阈值 (%)",
-                Maximum = 80,
-                Minimum = 5,
-                Width = 130,
-                Value = eff,
-                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-            };
-
-            bool bindingRow = true;
-
-            void CommitPolicy(int? customVal)
-            {
-                App.Settings.Current.DeviceLowBatteryPolicies[id] = new DeviceLowBatteryPolicy
-                {
-                    Enabled = enableChk.IsChecked == true,
-                    CustomThresholdPercent = customVal,
-                    WindowsNotification = notifyChk.IsChecked == true,
-                };
-                App.Settings.Save();
-                App.RefreshWidget();
-                int nextEff = App.Settings.GetEffectiveLowBatteryThreshold(id);
-                thresholdSubText.Text = customVal.HasValue
-                    ? $"独立阈值：{nextEff}%"
-                    : $"默认阈值：{SettingsService.DefaultLowBatteryThreshold}%";
-            }
-
-            enableChk.Checked += (_, _) => CommitPolicy(App.Settings.GetLowBatteryPolicy(id).CustomThresholdPercent);
-            enableChk.Unchecked += (_, _) => CommitPolicy(App.Settings.GetLowBatteryPolicy(id).CustomThresholdPercent);
-            notifyChk.Checked += (_, _) => CommitPolicy(App.Settings.GetLowBatteryPolicy(id).CustomThresholdPercent);
-            notifyChk.Unchecked += (_, _) => CommitPolicy(App.Settings.GetLowBatteryPolicy(id).CustomThresholdPercent);
-            numBox.ValueChanged += (_, args) =>
-            {
-                if (bindingRow || double.IsNaN(args.NewValue)) return;
-                CommitPolicy(Math.Clamp((int)Math.Round(args.NewValue), 5, 80));
-            };
-
-            var resetBtn = new Button
-            {
-                Content = $"恢复默认 ({SettingsService.DefaultLowBatteryThreshold}%)",
-                Padding = new Thickness(10, 4, 10, 4),
-                VerticalAlignment = VerticalAlignment.Bottom,
-            };
-            resetBtn.Click += (_, _) =>
-            {
-                App.Settings.Current.DeviceLowBatteryPolicies.Remove(id);
-                App.Settings.Save();
-                App.RefreshWidget();
-                RebuildDevicePolicies(App.LastDevices);
-            };
-
-            bindingRow = false;
-
-            controls.Children.Add(enableChk);
-            controls.Children.Add(notifyChk);
-            controls.Children.Add(numBox);
-            controls.Children.Add(resetBtn);
-            stack.Children.Add(controls);
-
-            card.Child = stack;
-            elements.Add(card);
-        }
-
-        DevicePoliciesHost.SetItems(elements);
     }
 
     private void OnRefreshClick(object sender, RoutedEventArgs e)

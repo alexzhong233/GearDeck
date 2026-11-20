@@ -364,13 +364,36 @@ public sealed partial class MainWindow : Window
         Instance.Activate();
     }
 
+    public void OpenDevicesPage()
+    {
+        ShowOrActivate();
+        _activeDeviceId = null;
+        _suppressNavHandler = true;
+        Nav.SelectedItem = DevicesNav;
+        _suppressNavHandler = false;
+        if (ContentFrame.CurrentSourcePageType != typeof(DevicesPage))
+            ContentFrame.Navigate(typeof(DevicesPage));
+    }
+
     public void OpenDevice(string deviceId)
     {
         ShowOrActivate();
         _activeDeviceId = deviceId;
         RebuildDeviceMenus(App.LastDevices);
         SelectDeviceInNav(deviceId);
+        NavigateToDeviceDetail(deviceId);
+    }
+
+    private void NavigateToDeviceDetail(string deviceId)
+    {
+        bool wasOnDetail = ContentFrame.CurrentSourcePageType == typeof(DeviceDetailPage);
         ContentFrame.Navigate(typeof(DeviceDetailPage), deviceId);
+        if (wasOnDetail && ContentFrame.BackStack.Count > 0 &&
+            ContentFrame.BackStack[^1].SourcePageType == typeof(DeviceDetailPage))
+        {
+            ContentFrame.BackStack.RemoveAt(ContentFrame.BackStack.Count - 1);
+        }
+        TitleBarBackBtn.IsEnabled = ContentFrame.CanGoBack;
     }
 
     public void OpenGamesPage()
@@ -556,7 +579,7 @@ public sealed partial class MainWindow : Window
         {
             string devId = tag[7..];
             _activeDeviceId = devId;
-            ContentFrame.Navigate(typeof(DeviceDetailPage), devId);
+            NavigateToDeviceDetail(devId);
             return;
         }
 

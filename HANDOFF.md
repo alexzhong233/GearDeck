@@ -23,8 +23,10 @@
   - 其他兼容提供器：`CorsairProvider`（Bragi/Legacy）、`SteelSeriesProvider`、`HyperXProvider`、`GamepadBatteryProvider`（Xbox GIP / DualSense / Switch Pro）、`BluetoothBatteryProvider`（PnP/HID Bluetooth 通用电量）。
 - **核心 UI 与系统服务 (`src/GearDeck.App` & `src/GearDeck.Widget`)**：
   - `VendorDriverCatalog` & `VendorDriverLauncher` + `ExternalConfiguratorGuard`：ROG 奥创中心通过 UWP `shell:AppsFolder\B9ECED6F.ArmouryCrate_qmba6cd70vzyy!App` 启动并过滤后台服务进程；飞智补充网页空间站 `https://space_station.flydigi.com/`；启动外部软件/网页时自动暂停后台轮询 180 秒并在前台焦点位于官方软件时自动退让。
-  - `DeviceDetailPage`：左侧常驻 Hero 卡片 + `硬件状态概览`，右侧顶部独立 `TopProfileBarCard`（板载槽位快切 + Host/Onboard 开关 + 本地快速预设），下方三标签（`性能` 默认 / `按键 & RT` / `高级`）；移除无用的「应用 DPI 到设备」按钮；所有 LOD 与非对称高度滑块均采用 `0.1 mm` 精度与 `"{0:0.0} mm"` 浮窗提示；`AnalogSwitchCard` 增加 `25ms` 实时按压力度与 RT 动态重置可视化条及屏蔽右键菜单的测试垫。
-  - 低电量提醒策略重组：删除详情页单设备提醒卡片与设置页全局阈值输入框（固定全局默认阈值 `20%`），设置页保留 `全局设备低电量通知提醒` 开关，单设备独立阈值与提醒卡片移至 `设备总览` 页。
+  - `DeviceDetailPage`：左侧常驻 Hero 卡片 + `硬件状态概览` + 位于其下方的单设备 `低电量提醒设置`（独立开关/通知/独立阈值与 `默认 20%` 重置）；右侧顶部独立 `TopProfileBarCard`（板载槽位快切 + Host/Onboard 开关 + 本地快速预设），下方三标签（`性能` 默认 / `按键 & RT` / `高级`）；左上角「设备总览」与跨设备切换不串栈；移除「应用 DPI 到设备」按钮；全系 `0.1 mm` 精调与 `AnalogSwitchCard` `25ms` 实时按压力度/RT 动态 bar。
+  - 低电量提醒与总览页排布：删掉设置页全局阈值输入框（固定默认阈值 `20%`），设置页保留 `全局设备低电量通知提醒` 开关；`DevicesPage` 将「换图」与「固定贴片」固定放第二行保证多设备排版整齐，单设备低电量提醒设置在对应设备的 `DeviceDetailPage` 硬件状态概览下方独立调节。
+  - `GamesPage`：改为左右分栏 + 顶部三标签设计（左侧常驻「启动自动切换」与「配置切换 Windows 原生通知」及实时前台监测；右侧分设 `游戏` / `全屏策略` / `预设管理` 三标签，手动新增直接纳入「本机游戏库」，点击游戏卡片「游戏配置」再下钻进入该游戏的专属外设设置）。
+  - **CI (`ci-release.yml`)**：对 WinUI 3 `GearDeck.App` 拆分独立的 `/t:Restore` 与 `/t:Build`，保证新 runner 上先生成 `.nuget.g.props`/`.targets` 再触发 `MarkupCompilePass1` / XAML 编译。
   - 任务栏贴片与分组弹窗 (`WidgetProcess`, `BatteryHistoryHelper`, `WidgetGroupWindow`, `GearDeck.Widget`)：分体双耳耳机（如 `Sony INZONE Buds`）在任务栏上下两行显示 `L xx%` / `R yy%⚡`；已观测过真实电量的设备在休眠时回退显示 `LastKnownBatteries` 历史值（从未读到电量的设备仍显示 `--`）；分组菜单右上角带设置齿轮按钮一键跳转贴片设置；移除 `EVENT_OBJECT_REORDER` 风暴钩子、采用无激活 `AppWindow.Show(false)`、状态去重写盘与节流 Z 序检测，消除任务栏闪烁、点击秒退与卡死。
 
 ## 二、验证基线（2026-11-20）

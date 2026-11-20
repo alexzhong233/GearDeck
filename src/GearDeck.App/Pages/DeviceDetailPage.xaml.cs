@@ -77,12 +77,19 @@ public sealed partial class DeviceDetailPage : Page
     {
         BackBtn.Click += (_, _) =>
         {
-            if (Frame.CanGoBack) Frame.GoBack();
+            if (MainWindow.Instance != null) MainWindow.Instance.OpenDevicesPage();
             else Frame.Navigate(typeof(DevicesPage));
         };
         ReadCapsBtn.Click += OnRetryProbe;
         PickImageBtn.Click += OnPickDeviceImage;
         PinTaskbarBtn.Click += OnPinToTaskbar;
+
+        DeviceLowBatEnableChk.Checked += OnDeviceLowBatCheckChanged;
+        DeviceLowBatEnableChk.Unchecked += OnDeviceLowBatCheckChanged;
+        DeviceLowBatNotifyChk.Checked += OnDeviceLowBatCheckChanged;
+        DeviceLowBatNotifyChk.Unchecked += OnDeviceLowBatCheckChanged;
+        DeviceLowBatThresholdBox.ValueChanged += OnDeviceLowBatThresholdChanged;
+        DeviceLowBatResetBtn.Click += OnDeviceLowBatReset;
 
         LocalDriverBtn.Click += (_, _) =>
         {
@@ -221,6 +228,7 @@ public sealed partial class DeviceDetailPage : Page
             _leftTriggered = _rightTriggered = false;
             SelectTab(_activeTab);
             ShowOverview();
+            BindDeviceLowBatteryPolicy();
             RefreshDeviceSavedPresets();
             BindQuickMacroControls();
             _ = LoadCapabilitiesAsync();
@@ -387,6 +395,65 @@ public sealed partial class DeviceDetailPage : Page
         if (d == null) return;
         if (await DeviceImagePickerDialog.ShowAsync(this.XamlRoot, d))
             ShowOverview();
+    }
+
+    private void BindDeviceLowBatteryPolicy()
+    {
+        if (string.IsNullOrWhiteSpace(_deviceId)) return;
+        _binding = true;
+        try
+        {
+            var policy = App.Settings.GetLowBatteryPolicy(_deviceId);
+            int eff = App.Settings.GetEffectiveLowBatteryThreshold(_deviceId);
+            DeviceLowBatEnableChk.IsChecked = policy.Enabled;
+            DeviceLowBatNotifyChk.IsChecked = policy.WindowsNotification;
+            SafeSetNumberBox(DeviceLowBatThresholdBox, 5, 80, 1, eff);
+            DeviceLowBatStateText.Text = policy.CustomThresholdPercent.HasValue
+                ? $"独立 {eff}%"
+                : $"默认 {SettingsService.DefaultLowBatteryThreshold}%";
+        }
+        finally
+        {
+            _binding = false;
+        }
+    }
+
+    private void SaveDeviceLowBatteryPolicy(int? customThreshold)
+    {
+        if (string.IsNullOrWhiteSpace(_deviceId)) return;
+        App.Settings.Current.DeviceLowBatteryPolicies[_deviceId] = new DeviceLowBatteryPolicy
+        {
+            Enabled = DeviceLowBatEnableChk.IsChecked == true,
+            CustomThresholdPercent = customThreshold,
+            WindowsNotification = DeviceLowBatNotifyChk.IsChecked == true,
+        };
+        App.Settings.Save();
+        App.RefreshWidget();
+        int eff = App.Settings.GetEffectiveLowBatteryThreshold(_deviceId);
+        DeviceLowBatStateText.Text = customThreshold.HasValue
+            ? $"独立 {eff}%"
+            : $"默认 {SettingsService.DefaultLowBatteryThreshold}%";
+    }
+
+    private void OnDeviceLowBatCheckChanged(object sender, RoutedEventArgs e)
+    {
+        if (_binding || string.IsNullOrWhiteSpace(_deviceId)) return;
+        SaveDeviceLowBatteryPolicy(App.Settings.GetLowBatteryPolicy(_deviceId).CustomThresholdPercent);
+    }
+
+    private void OnDeviceLowBatThresholdChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        if (_binding || string.IsNullOrWhiteSpace(_deviceId) || double.IsNaN(args.NewValue)) return;
+        SaveDeviceLowBatteryPolicy(Math.Clamp((int)Math.Round(args.NewValue), 5, 80));
+    }
+
+    private void OnDeviceLowBatReset(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_deviceId)) return;
+        App.Settings.Current.DeviceLowBatteryPolicies.Remove(_deviceId);
+        App.Settings.Save();
+        App.RefreshWidget();
+        BindDeviceLowBatteryPolicy();
     }
 
     private void SetBusy(bool busy)
