@@ -72,7 +72,7 @@ public static class GameProfileRuleMatcher
     {
         foreach (var rule in rules)
         {
-            if (!rule.Enabled || rule.PerMouseTargets.Count == 0) continue;
+            if (!rule.Enabled || !HasAnyTarget(rule.PerMouseTargets)) continue;
             if (!ProcessMatches(rule, ctx.ProcessName)) continue;
             if (rule.RequireFullscreen && !ctx.IsExclusiveFullscreen) continue;
 

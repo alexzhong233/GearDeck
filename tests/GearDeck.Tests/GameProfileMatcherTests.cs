@@ -103,4 +103,59 @@ public class GameProfileMatcherTests
             rules, new Dictionary<string, string>(), false, desktop, true);
         Assert.Equal(ActiveSwitchReason.ProcessRule, full.Reason);
     }
+
+    [Fact]
+    public void GameAutoRule_DefaultsToDisabled_AndOverridesFullscreenOnlyWhenEnabled()
+    {
+        var defaultRule = new GameAutoRule
+        {
+            Id = "r_apex",
+            Name = "Apex Legends",
+            ProcessNames = ["r5apex.exe"],
+            PerMouseTargets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["razer:00C1"] = "preset:apex_1600",
+            },
+        };
+
+        Assert.False(defaultRule.Enabled);
+
+        var fsFallback = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["razer:00C1"] = "preset:fs_generic",
+        };
+        var desktop = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["razer:00C1"] = "preset:desk",
+        };
+
+        // 1. Default-disabled per-game rule does NOT override ExclusiveFullscreen
+        var fsWins = GameProfileRuleMatcher.Resolve(
+            new GameProfileMatchContext("r5apex.exe", "Apex Legends", IsExclusiveFullscreen: true),
+            [defaultRule], fsFallback, enableFullscreenFallback: true, desktop, restoreDesktopOnExit: true);
+        Assert.Equal(ActiveSwitchReason.ExclusiveFullscreen, fsWins.Reason);
+        Assert.Equal("preset:fs_generic", fsWins.PerMouseTargets["razer:00C1"]);
+
+        // 2. Enabling the per-game rule overrides ExclusiveFullscreen in both fullscreen and windowed modes
+        defaultRule.Enabled = true;
+        var gameWinsFs = GameProfileRuleMatcher.Resolve(
+            new GameProfileMatchContext("r5apex.exe", "Apex Legends", IsExclusiveFullscreen: true),
+            [defaultRule], fsFallback, enableFullscreenFallback: true, desktop, restoreDesktopOnExit: true);
+        Assert.Equal(ActiveSwitchReason.ProcessRule, gameWinsFs.Reason);
+        Assert.Equal("preset:apex_1600", gameWinsFs.PerMouseTargets["razer:00C1"]);
+
+        var gameWinsWindowed = GameProfileRuleMatcher.Resolve(
+            new GameProfileMatchContext("r5apex.exe", "Apex Legends", IsExclusiveFullscreen: false),
+            [defaultRule], fsFallback, enableFullscreenFallback: true, desktop, restoreDesktopOnExit: true);
+        Assert.Equal(ActiveSwitchReason.ProcessRule, gameWinsWindowed.Reason);
+        Assert.Equal("preset:apex_1600", gameWinsWindowed.PerMouseTargets["razer:00C1"]);
+
+        // 3. Explicit KeepCurrent target in an enabled per-game rule also overrides ExclusiveFullscreen
+        defaultRule.PerMouseTargets["razer:00C1"] = GameProfileRuleMatcher.KeepCurrentTargetId;
+        var keepWinsFs = GameProfileRuleMatcher.Resolve(
+            new GameProfileMatchContext("r5apex.exe", "Apex Legends", IsExclusiveFullscreen: true),
+            [defaultRule], fsFallback, enableFullscreenFallback: true, desktop, restoreDesktopOnExit: true);
+        Assert.Equal(ActiveSwitchReason.ProcessRule, keepWinsFs.Reason);
+        Assert.Equal(GameProfileRuleMatcher.KeepCurrentTargetId, keepWinsFs.PerMouseTargets["razer:00C1"]);
+    }
 }

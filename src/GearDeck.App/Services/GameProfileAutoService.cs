@@ -43,6 +43,7 @@ public sealed class GameProfileAutoService : IDisposable
         "explorer.exe", "ApplicationFrameHost.exe",
     };
 
+    private static readonly IReadOnlyDictionary<string, string> EmptyTargets = new Dictionary<string, string>();
     private readonly SemaphoreSlim _applyLock = new(1, 1);
     private readonly Dictionary<string, string> _lastAppliedByDevice = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _lastOutcomeByDevice = new(StringComparer.OrdinalIgnoreCase);
@@ -170,8 +171,8 @@ public sealed class GameProfileAutoService : IDisposable
                 settings.GameRules,
                 settings.FullscreenFallbackTargets,
                 settings.EnableExclusiveFullscreenFallback,
-                settings.DesktopDefaultTargets,
-                settings.RestoreDesktopTargetsOnExit);
+                settings.EnableExclusiveFullscreenFallback ? settings.DesktopDefaultTargets : EmptyTargets,
+                settings.EnableExclusiveFullscreenFallback ? settings.RestoreDesktopTargetsOnExit : true);
 
             bool latchedAlive = IsLatchedSessionStillAlive();
             var resolution = GameProfileRuleMatcher.ApplyExitRetention(

@@ -25,13 +25,13 @@
   - `VendorDriverCatalog` & `VendorDriverLauncher` + `ExternalConfiguratorGuard`：ROG 奥创中心通过 UWP `shell:AppsFolder\B9ECED6F.ArmouryCrate_qmba6cd70vzyy!App` 启动并过滤后台服务进程；飞智补充网页空间站 `https://space_station.flydigi.com/`；启动外部软件/网页时自动暂停后台轮询 180 秒并在前台焦点位于官方软件时自动退让。
   - `DeviceDetailPage`：左侧常驻 Hero 卡片 + `硬件状态概览` + 位于其下方的单设备 `低电量提醒设置`（独立开关/通知/独立阈值与 `默认 20%` 重置）；右侧顶部独立 `TopProfileBarCard`（板载槽位快切 + Host/Onboard 开关 + 本地快速预设），下方三标签（`性能` 默认 / `按键 & RT` / `高级`）；左上角「设备总览」与跨设备切换不串栈；移除「应用 DPI 到设备」按钮；全系 `0.1 mm` 精调与 `AnalogSwitchCard` `25ms` 实时按压力度/RT 动态 bar。
   - 低电量提醒与总览页排布：删掉设置页全局阈值输入框（固定默认阈值 `20%`），设置页保留 `全局设备低电量通知提醒` 开关；`DevicesPage` 将「换图」与「固定贴片」固定放第二行保证多设备排版整齐，单设备低电量提醒设置在对应设备的 `DeviceDetailPage` 硬件状态概览下方独立调节。
-  - `GamesPage`：改为左右分栏 + 顶部三标签设计（左侧常驻「启动自动切换」与「配置切换 Windows 原生通知」及实时前台监测；右侧分设 `游戏` / `全屏策略` / `预设管理` 三标签，手动新增直接纳入「本机游戏库」，点击游戏卡片「游戏配置」再下钻进入该游戏的专属外设设置）。
+  - `GamesPage`：改为左右分栏 + 顶部三标签设计（左侧常驻「启动自动切换」与「配置切换 Windows 原生通知」及实时前台监测；右侧分设 `游戏` / `全屏策略` / `预设管理` 三标签，手动新增直接纳入「本机游戏库」，单款游戏配置默认关闭且在总览卡片直接显示开启/关闭开关，点击「游戏配置」下钻进入专属设置；已开启的单游戏配置严格优先并覆盖「全屏策略」，且在 `游戏` 与 `全屏策略` 两处页面均显著提示该优先级）。
   - **CI (`ci-release.yml`)**：对 WinUI 3 `GearDeck.App` 拆分独立的 `/t:Restore` 与 `/t:Build`，保证新 runner 上先生成 `.nuget.g.props`/`.targets` 再触发 `MarkupCompilePass1` / XAML 编译。
   - 任务栏贴片与分组弹窗 (`WidgetProcess`, `BatteryHistoryHelper`, `WidgetGroupWindow`, `GearDeck.Widget`)：分体双耳耳机（如 `Sony INZONE Buds`）在任务栏上下两行显示 `L xx%` / `R yy%⚡`；已观测过真实电量的设备在休眠时回退显示 `LastKnownBatteries` 历史值（从未读到电量的设备仍显示 `--`）；分组菜单右上角带设置齿轮按钮一键跳转贴片设置；移除 `EVENT_OBJECT_REORDER` 风暴钩子、采用无激活 `AppWindow.Show(false)`、状态去重写盘与节流 Z 序检测，消除任务栏闪烁、点击秒退与卡死。
 
 ## 二、验证基线（2026-11-20）
 
-- **单元测试**：`dotnet test tests\GearDeck.Tests\GearDeck.Tests.csproj -c Release` — **91/91 全部通过**（0 失败，0 跳过；含 `V102UpgradeTests`、`XamlSafetyTests`、`GameProfileMatcherTests`、`NewFeaturesAndDevicesTests`、`OpenMouseProtocolTests`、`ProtocolTests`、`HardwareProtocolTests`、`WidgetLayoutTests`、`UpdateClientTests`）。
+- **单元测试**：`dotnet test tests\GearDeck.Tests\GearDeck.Tests.csproj -c Release` — **92/92 全部通过**（0 失败，0 跳过；含 `V102UpgradeTests`、`XamlSafetyTests`、`GameProfileMatcherTests`、`NewFeaturesAndDevicesTests`、`OpenMouseProtocolTests`、`ProtocolTests`、`HardwareProtocolTests`、`WidgetLayoutTests`、`UpdateClientTests`）。
 - **构建与贴片自检**：`MSBuild.exe` 编译 `GearDeck.Widget.csproj`（`Debug|x64`、`Release|x64`）与 `GearDeck.App.csproj`（`Debug|x64`、`Release|x64`）0 编译错误；`GearDeck.Widget.exe --render-test`（含双行上下叠排像素断言）与 `--window-test` 均返回退出码 `0`。
 - **发布归档**：`scripts/package-release.ps1 -Version 1.0.3` 生成便携包 `GearDeck-v1.0.3-win-x64.zip`、补丁包 `GearDeck-patch-v1.0.3-win-x64.zip` 与 `latest.json`（`.exe` 安装包由 GitHub Actions Windows runner 自动调用 Inno Setup 6 编译发布）。
 

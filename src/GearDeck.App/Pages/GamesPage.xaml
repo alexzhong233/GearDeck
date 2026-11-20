@@ -109,6 +109,10 @@
                     <!-- ============ TAB 1: 游戏（手动新增 + 本机游戏库 / 单游戏专属配置详情） ============ -->
                     <StackPanel x:Name="PanelGames" Spacing="14" Visibility="Visible">
 
+                        <InfoBar IsOpen="True" IsClosable="False" Severity="Informational"
+                                 Title="单游戏配置优先（默认关闭）"
+                                 Message="每款游戏的配置默认关闭；在下方卡片开启开关并指派外设预设后，运行该游戏时将以单游戏单独配置优先，自动覆盖「全屏策略」。" />
+
                         <!-- 视图 A：手动新增 + 本机游戏库 -->
                         <StackPanel x:Name="GamesListView" Spacing="14" Visibility="Visible">
                             <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -200,7 +204,7 @@
                                     </StackPanel>
 
                                     <ToggleSwitch Grid.Column="2" x:Name="ExclusiveRuleEnableToggle"
-                                                  OnContent="已启用" OffContent="已停用"
+                                                  OnContent="已开启" OffContent="已关闭"
                                                   MinWidth="0" VerticalAlignment="Center" />
                                 </Grid>
                             </Border>
@@ -244,6 +248,9 @@
                                                   OffContent="已关闭（默认不生效，下方全屏独占策略已锁定）"
                                                   Toggled="OnFullscreenMasterToggled" />
                                 </controls:ResponsiveWrapPanel>
+                                <InfoBar IsOpen="True" IsClosable="False" Severity="Informational"
+                                         Title="优先级提醒：单游戏单独配置优先"
+                                         Message="若某款游戏已在「游戏」标签页开启开关并设置了外设预设（或设为保持不变），运行该游戏时将以单游戏配置优先，自动覆盖此处的全屏独占策略。" />
                                 <controls:ResponsiveItemsHost x:Name="StrategyCardsHost" MinCardWidth="380" Gap="12" />
                             </StackPanel>
                         </Border>

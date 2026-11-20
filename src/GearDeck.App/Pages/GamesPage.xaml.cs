@@ -24,8 +24,9 @@ public sealed partial class GamesPage : Page
         public string? IconPath { get; set; }
         public ScannedGameEntry? Scanned { get; init; }
         public GameAutoRule? Rule { get; set; }
-        public bool HasConfiguredTargets => Rule is { PerMouseTargets.Count: > 0 };
-        public bool IsRuleEnabled => Rule == null || Rule.Enabled;
+        public bool HasConfiguredTargets => Rule != null && Rule.PerMouseTargets.Values.Any(v => !GameProfileRuleMatcher.ParseTarget(v).IsEmpty);
+        public int ConfiguredTargetCount => Rule?.PerMouseTargets.Values.Count(v => !GameProfileRuleMatcher.ParseTarget(v).IsEmpty) ?? 0;
+        public bool IsRuleEnabled => Rule is { Enabled: true };
         public string PrimaryExe => ProcessNames.FirstOrDefault() ?? "";
     }
 
@@ -241,13 +242,50 @@ public sealed partial class GamesPage : Page
         }
 
         var orderedScanned = list
-            .OrderByDescending(g => g.HasConfiguredTargets)
+            .OrderByDescending(g => g.IsRuleEnabled && g.HasConfiguredTargets)
+            .ThenByDescending(g => g.HasConfiguredTargets || g.IsRuleEnabled)
             .ThenBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase);
 
         var combined = new List<UnifiedLibraryGame>(manualGames.Count + list.Count);
         combined.AddRange(manualGames);
         combined.AddRange(orderedScanned);
         return combined;
+    }
+
+    private static void ApplyGameBadge(TextBlock badgeBlock, UnifiedLibraryGame item)
+    {
+        if (item.IsRuleEnabled && item.HasConfiguredTargets)
+        {
+            badgeBlock.Text = $"● 已开启 · 优先覆盖全屏策略 ({item.ConfiguredTargetCount} 台设备)";
+            badgeBlock.Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"];
+            badgeBlock.FontWeight = FontWeights.SemiBold;
+        }
+        else if (item.IsRuleEnabled)
+        {
+            badgeBlock.Text = "◐ 已开启 · 待点「游戏配置」选预设";
+            badgeBlock.Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"];
+            badgeBlock.FontWeight = FontWeights.SemiBold;
+        }
+        else if (item.HasConfiguredTargets)
+        {
+            badgeBlock.Text = $"○ 已关闭（已存 {item.ConfiguredTargetCount} 台设备方案）";
+            badgeBlock.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+            badgeBlock.FontWeight = FontWeights.Normal;
+        }
+        else
+        {
+            badgeBlock.Text = "○ 默认关闭";
+            badgeBlock.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+            badgeBlock.FontWeight = FontWeights.Normal;
+        }
+    }
+
+    private void UpdateLibraryHint(IReadOnlyList<UnifiedLibraryGame> all)
+    {
+        int enabledCount = all.Count(g => g.IsRuleEnabled);
+        int configuredCount = all.Count(g => g.HasConfiguredTargets);
+        int scannedCount = _cachedGames?.Count ?? 0;
+        ScannedGamesHint.Text = $"共收录 {all.Count} 款游戏（扫描 {scannedCount} 款 · 已开启 {enabledCount} 款 · 已配方案 {configuredCount} 款）；开启后将优先于「全屏策略」生效";
     }
 
     private void RenderUnifiedGameLibrary()
@@ -261,9 +299,7 @@ public sealed partial class GamesPage : Page
                              g.ProcessNames.Any(p => p.Contains(q, StringComparison.OrdinalIgnoreCase)))
                  .ToList();
 
-        int configuredCount = all.Count(g => g.HasConfiguredTargets);
-        int scannedCount = _cachedGames?.Count ?? 0;
-        ScannedGamesHint.Text = $"共收录 {all.Count} 款游戏（扫描 {scannedCount} 款 · 已设专属方案 {configuredCount} 款）；点击对应「游戏配置」进入专属设置";
+        UpdateLibraryHint(all);
 
         var elements = new List<UIElement>(filtered.Count);
         if (filtered.Count == 0)
@@ -279,154 +315,208 @@ public sealed partial class GamesPage : Page
             return;
         }
 
-        foreach (var item in filtered)
+        bool wasBinding = _binding;
+        _binding = true;
+        try
         {
-            var iconElem = CreateGameIconElement(item.IconPath, _isCardMode ? 42 : 32);
-            var card = new Border
+            foreach (var item in filtered)
             {
-                Background = (Brush)Application.Current.Resources["SubtleFillColorSecondaryBrush"],
-                BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12),
-            };
-
-            string badgeText;
-            Brush badgeBrush;
-            if (item.HasConfiguredTargets && item.IsRuleEnabled)
-            {
-                badgeText = $"● 已设专属 ({item.Rule!.PerMouseTargets.Count} 台设备)";
-                badgeBrush = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"];
-            }
-            else if (item.HasConfiguredTargets)
-            {
-                badgeText = "○ 专属方案已停用";
-                badgeBrush = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
-            }
-            else
-            {
-                badgeText = "未配置";
-                badgeBrush = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
-            }
-
-            var configBtn = new Button
-            {
-                Content = "游戏配置",
-                Style = (Style)Application.Current.Resources["AccentButtonStyle"],
-                Padding = new Thickness(12, 5, 12, 5),
-                FontSize = 12,
-            };
-            configBtn.Click += (_, _) => OpenExclusiveGameDetail(item);
-
-            Button? removeBtn = null;
-            if (item.Scanned == null && item.Rule != null)
-            {
-                removeBtn = new Button
+                var iconElem = CreateGameIconElement(item.IconPath, _isCardMode ? 42 : 32);
+                var card = new Border
                 {
-                    Content = "移除",
-                    Padding = new Thickness(10, 5, 10, 5),
-                    FontSize = 12,
+                    Background = (Brush)Application.Current.Resources["SubtleFillColorSecondaryBrush"],
+                    BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(12),
                 };
-                var ruleToRemove = item.Rule;
-                removeBtn.Click += (_, _) =>
-                {
-                    App.Settings.Current.GameRules.Remove(ruleToRemove);
-                    App.Settings.Save();
-                    App.GameAuto?.ClearAppliedCache();
-                    RefreshAllUi();
-                    ShowStatus($"已将「{item.Name}」从本机游戏库移除。", InfoBarSeverity.Informational);
-                };
-            }
-
-            if (_isCardMode)
-            {
-                var stack = new StackPanel { Spacing = 8 };
-                var top = new Grid { ColumnSpacing = 10 };
-                top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                top.Children.Add(iconElem);
-
-                var meta = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-                meta.Children.Add(new TextBlock
-                {
-                    Text = item.Name,
-                    FontSize = 14,
-                    FontWeight = FontWeights.SemiBold,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                });
-                meta.Children.Add(new TextBlock
-                {
-                    Text = $"{item.Platform} · {string.Join(", ", item.ProcessNames)}",
-                    FontSize = 11,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-                });
-                meta.Children.Add(new TextBlock
-                {
-                    Text = badgeText,
-                    FontSize = 11,
-                    FontWeight = item.HasConfiguredTargets ? FontWeights.SemiBold : FontWeights.Normal,
-                    Foreground = badgeBrush,
-                });
-                Grid.SetColumn(meta, 1);
-                top.Children.Add(meta);
-                stack.Children.Add(top);
-
-                var btnRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                btnRow.Children.Add(configBtn);
-                if (removeBtn != null)
-                    btnRow.Children.Add(removeBtn);
-                stack.Children.Add(btnRow);
-                card.Child = stack;
-            }
-            else
-            {
-                var row = new Grid { ColumnSpacing = 10 };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.Children.Add(iconElem);
-
-                var meta = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
-                meta.Children.Add(new TextBlock { Text = item.Name, FontWeight = FontWeights.SemiBold });
-                meta.Children.Add(new TextBlock
-                {
-                    Text = $"{item.Platform} · {string.Join(", ", item.ProcessNames)}",
-                    FontSize = 11,
-                    Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-                });
-                Grid.SetColumn(meta, 1);
-                row.Children.Add(meta);
 
                 var badgeBlock = new TextBlock
                 {
-                    Text = badgeText,
                     FontSize = 11,
                     VerticalAlignment = VerticalAlignment.Center,
-                    Foreground = badgeBrush,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
                 };
-                Grid.SetColumn(badgeBlock, 2);
-                row.Children.Add(badgeBlock);
+                ApplyGameBadge(badgeBlock, item);
 
-                var rightBtns = new StackPanel
+                var enableSwitch = new ToggleSwitch
                 {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 6,
+                    IsOn = item.IsRuleEnabled,
+                    OnContent = "已开启",
+                    OffContent = "已关闭",
+                    MinWidth = 0,
                     VerticalAlignment = VerticalAlignment.Center,
                 };
-                rightBtns.Children.Add(configBtn);
-                if (removeBtn != null)
-                    rightBtns.Children.Add(removeBtn);
-                Grid.SetColumn(rightBtns, 3);
-                row.Children.Add(rightBtns);
-                card.Child = row;
+                enableSwitch.Toggled += (_, _) =>
+                {
+                    if (_binding) return;
+                    bool enabled = enableSwitch.IsOn;
+                    if (item.Rule == null)
+                    {
+                        item.Rule = new GameAutoRule
+                        {
+                            Name = item.Name,
+                            Enabled = enabled,
+                            Platform = item.Platform,
+                            IconPath = item.IconPath,
+                            ProcessNames = item.ProcessNames.ToList(),
+                            RequireFullscreen = false,
+                        };
+                        App.Settings.Current.GameRules.Add(item.Rule);
+                    }
+                    else
+                    {
+                        item.Rule.Enabled = enabled;
+                    }
+
+                    App.Settings.Save();
+                    App.GameAuto?.ClearAppliedCache();
+                    _ = App.GameAuto?.ForceReevaluateAsync();
+                    ApplyGameBadge(badgeBlock, item);
+                    UpdateLibraryHint(all);
+
+                    if (enabled)
+                    {
+                        ShowStatus(
+                            item.HasConfiguredTargets
+                                ? $"已开启「{item.Name}」单独配置：运行该游戏时将优先覆盖全屏策略。"
+                                : $"已开启「{item.Name}」配置开关；请点击「游戏配置」为外设选择预设，设置后将优先覆盖全屏策略。",
+                            item.HasConfiguredTargets ? InfoBarSeverity.Success : InfoBarSeverity.Informational);
+                    }
+                    else
+                    {
+                        ShowStatus(
+                            $"已关闭「{item.Name}」单独配置（若已开启全屏策略，全屏运行时将按全屏策略生效）。",
+                            InfoBarSeverity.Informational);
+                    }
+                };
+
+                var configBtn = new Button
+                {
+                    Content = "游戏配置",
+                    Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+                    Padding = new Thickness(10, 5, 10, 5),
+                    FontSize = 12,
+                };
+                configBtn.Click += (_, _) => OpenExclusiveGameDetail(item);
+
+                Button? removeBtn = null;
+                if (item.Scanned == null && item.Rule != null)
+                {
+                    removeBtn = new Button
+                    {
+                        Content = "移除",
+                        Padding = new Thickness(8, 5, 8, 5),
+                        FontSize = 12,
+                    };
+                    var ruleToRemove = item.Rule;
+                    removeBtn.Click += (_, _) =>
+                    {
+                        App.Settings.Current.GameRules.Remove(ruleToRemove);
+                        App.Settings.Save();
+                        App.GameAuto?.ClearAppliedCache();
+                        RefreshAllUi();
+                        ShowStatus($"已将「{item.Name}」从本机游戏库移除。", InfoBarSeverity.Informational);
+                    };
+                }
+
+                if (_isCardMode)
+                {
+                    var stack = new StackPanel { Spacing = 8 };
+                    var top = new Grid { ColumnSpacing = 10 };
+                    top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    top.Children.Add(iconElem);
+
+                    var meta = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+                    meta.Children.Add(new TextBlock
+                    {
+                        Text = item.Name,
+                        FontSize = 14,
+                        FontWeight = FontWeights.SemiBold,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                    });
+                    meta.Children.Add(new TextBlock
+                    {
+                        Text = $"{item.Platform} · {string.Join(", ", item.ProcessNames)}",
+                        FontSize = 11,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+                    });
+                    meta.Children.Add(badgeBlock);
+                    Grid.SetColumn(meta, 1);
+                    top.Children.Add(meta);
+                    stack.Children.Add(top);
+
+                    var bottomRow = new Grid { ColumnSpacing = 8 };
+                    bottomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    bottomRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    bottomRow.Children.Add(enableSwitch);
+
+                    var btnRow = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 6,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    };
+                    btnRow.Children.Add(configBtn);
+                    if (removeBtn != null)
+                        btnRow.Children.Add(removeBtn);
+                    Grid.SetColumn(btnRow, 1);
+                    bottomRow.Children.Add(btnRow);
+                    stack.Children.Add(bottomRow);
+                    card.Child = stack;
+                }
+                else
+                {
+                    var row = new Grid { ColumnSpacing = 10 };
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                    row.Children.Add(iconElem);
+
+                    var meta = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+                    meta.Children.Add(new TextBlock { Text = item.Name, FontWeight = FontWeights.SemiBold });
+                    meta.Children.Add(new TextBlock
+                    {
+                        Text = $"{item.Platform} · {string.Join(", ", item.ProcessNames)}",
+                        FontSize = 11,
+                        Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+                    });
+                    Grid.SetColumn(meta, 1);
+                    row.Children.Add(meta);
+
+                    Grid.SetColumn(badgeBlock, 2);
+                    row.Children.Add(badgeBlock);
+
+                    Grid.SetColumn(enableSwitch, 3);
+                    row.Children.Add(enableSwitch);
+
+                    var rightBtns = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 6,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    };
+                    rightBtns.Children.Add(configBtn);
+                    if (removeBtn != null)
+                        rightBtns.Children.Add(removeBtn);
+                    Grid.SetColumn(rightBtns, 4);
+                    row.Children.Add(rightBtns);
+                    card.Child = row;
+                }
+
+                elements.Add(card);
             }
 
-            elements.Add(card);
+            ScannedGamesHost.SetItems(elements);
         }
-
-        ScannedGamesHost.SetItems(elements);
+        finally
+        {
+            _binding = wasBinding;
+        }
     }
 
     private void OpenExclusiveGameDetail(UnifiedLibraryGame item)
@@ -435,7 +525,7 @@ public sealed partial class GamesPage : Page
         _activeRule = item.Rule ?? new GameAutoRule
         {
             Name = item.Name,
-            Enabled = true,
+            Enabled = false,
             ProcessNames = item.ProcessNames.ToList(),
             RequireFullscreen = false,
             Platform = item.Platform,
@@ -503,7 +593,7 @@ public sealed partial class GamesPage : Page
             {
                 foreach (var (deviceId, dev, displayName, _) in devs)
                 {
-                    var options = BuildTargetOptionsForDevice(deviceId, dev);
+                    var options = BuildTargetOptionsForDevice(deviceId, dev, isGameExclusive: true);
                     ExclusiveTargetsPanel.Children.Add(CreateDeviceTargetRow(
                         deviceId,
                         displayName,
@@ -516,7 +606,16 @@ public sealed partial class GamesPage : Page
                             if (_activeGame != null)
                                 _activeGame.ProcessNames = _activeRule.ProcessNames.ToList();
                         },
-                        onAfterSave: UpdateExclusiveSubText));
+                        onAfterSave: () =>
+                        {
+                            UpdateExclusiveSubText();
+                            if (_activeGame != null && _activeRule != null &&
+                                !_activeRule.Enabled &&
+                                _activeRule.PerMouseTargets.Values.Any(v => !GameProfileRuleMatcher.ParseTarget(v).IsEmpty))
+                            {
+                                ShowStatus($"已保存「{_activeGame.Name}」的外设配置；当前该游戏开关为「已关闭」，开启右上角或总览卡片开关后即可优先覆盖全屏策略。", InfoBarSeverity.Informational);
+                            }
+                        }));
                 }
             }
         }
@@ -529,9 +628,13 @@ public sealed partial class GamesPage : Page
     private void UpdateExclusiveSubText()
     {
         if (_activeGame == null || _activeRule == null) return;
-        string state = _activeRule.PerMouseTargets.Count > 0
-            ? $"已配置 {_activeRule.PerMouseTargets.Count} 台设备 · {(_activeRule.Enabled ? "规则已启用" : "规则已停用")}"
-            : "尚未指派专属外设配置（从下方为每台设备选择即可生效）";
+        int count = _activeRule.PerMouseTargets.Values.Count(v => !GameProfileRuleMatcher.ParseTarget(v).IsEmpty);
+        string toggleState = _activeRule.Enabled
+            ? "规则已开启（优先覆盖全屏策略）"
+            : "规则已关闭（开启右上角或总览卡片开关后生效）";
+        string state = count > 0
+            ? $"已配置 {count} 台设备 · {toggleState}"
+            : $"尚未指派专属预设 · {toggleState}";
         ExclusiveGameSubText.Text = $"{_activeGame.Platform} · {state}";
     }
 
@@ -544,6 +647,21 @@ public sealed partial class GamesPage : Page
         App.GameAuto?.ClearAppliedCache();
         _ = App.GameAuto?.ForceReevaluateAsync();
         UpdateExclusiveSubText();
+        if (_activeGame != null)
+        {
+            if (_activeRule.Enabled)
+            {
+                ShowStatus(
+                    _activeGame.HasConfiguredTargets
+                        ? $"已开启「{_activeGame.Name}」单独配置：运行该游戏时将优先覆盖全屏策略。"
+                        : $"已开启「{_activeGame.Name}」单独配置开关；请为下方外设选择目标预设，设置后将优先覆盖全屏策略。",
+                    _activeGame.HasConfiguredTargets ? InfoBarSeverity.Success : InfoBarSeverity.Informational);
+            }
+            else
+            {
+                ShowStatus($"已关闭「{_activeGame.Name}」单独配置（全屏运行时将回退由全屏策略控制）。", InfoBarSeverity.Informational);
+            }
+        }
     }
 
     private void OnExclusiveProcessLostFocus(object sender, RoutedEventArgs e)
@@ -579,9 +697,9 @@ public sealed partial class GamesPage : Page
     private async void OnExclusiveApplyNow(object sender, RoutedEventArgs e)
     {
         if (_activeRule == null || App.GameAuto == null) return;
-        if (_activeRule.PerMouseTargets.Count == 0)
+        if (!_activeRule.PerMouseTargets.Values.Any(v => !GameProfileRuleMatcher.ParseTarget(v).IsEmpty))
         {
-            ShowStatus("请先在上方至少为一台外设选择目标板载槽位或预设。", InfoBarSeverity.Warning);
+            ShowStatus("请先在上方至少为一台外设选择目标板载槽位、预设或保持当前不变。", InfoBarSeverity.Warning);
             return;
         }
         EnsureActiveRulePersisted();
@@ -596,6 +714,7 @@ public sealed partial class GamesPage : Page
         if (_activeGame == null || _activeRule == null) return;
         _activeRule.PerMouseTargets.Clear();
         _activeRule.RequireFullscreen = false;
+        _activeRule.Enabled = false;
         if (_activeGame.Scanned != null)
         {
             App.Settings.Current.GameRules.Remove(_activeRule);
@@ -603,7 +722,7 @@ public sealed partial class GamesPage : Page
             _activeRule = new GameAutoRule
             {
                 Name = _activeGame.Name,
-                Enabled = true,
+                Enabled = false,
                 ProcessNames = _activeGame.ProcessNames.ToList(),
                 Platform = _activeGame.Platform,
                 IconPath = _activeGame.IconPath,
@@ -769,14 +888,14 @@ public sealed partial class GamesPage : Page
             App.Settings.Current.GameRules.Add(new GameAutoRule
             {
                 Name = name,
-                Enabled = true,
+                Enabled = false,
                 Platform = "手动添加",
                 IconPath = iconPath,
                 ProcessNames = procs,
                 RequireFullscreen = false,
             });
             App.Settings.Save();
-            ShowStatus($"已将「{name}」加入本机游戏库；点击对应卡片的「游戏配置」即可设置专属方案。", InfoBarSeverity.Success);
+            ShowStatus($"已将「{name}」加入本机游戏库（默认关闭）；点击「游戏配置」指派预设并在卡片开启开关后将优先覆盖全屏策略。", InfoBarSeverity.Success);
         }
 
         NewRuleNameBox.Text = "";
@@ -814,7 +933,11 @@ public sealed partial class GamesPage : Page
         ShowStatus("已完成前台窗口检测并按策略向已唤醒外设执行对应配置。", InfoBarSeverity.Informational);
     }
 
-    private List<TargetOption> BuildTargetOptionsForDevice(string deviceId, PeripheralDevice? dev, bool isExitRestore = false)
+    private List<TargetOption> BuildTargetOptionsForDevice(
+        string deviceId,
+        PeripheralDevice? dev,
+        bool isExitRestore = false,
+        bool isGameExclusive = false)
     {
         var list = isExitRestore
             ? new List<TargetOption>
@@ -822,10 +945,16 @@ public sealed partial class GamesPage : Page
                 new("", "回退开启前的模式（默认）"),
                 new(GameProfileRuleMatcher.KeepCurrentTargetId, "保持切换后不变（不回退）"),
             }
-            : new List<TargetOption>
-            {
-                new("", "保持当前不变"),
-            };
+            : isGameExclusive
+                ? new List<TargetOption>
+                {
+                    new("", "未设置"),
+                    new(GameProfileRuleMatcher.KeepCurrentTargetId, "保持当前不变（覆盖全屏策略，不切换）"),
+                }
+                : new List<TargetOption>
+                {
+                    new("", "保持当前不变"),
+                };
 
         var onboardSlots = App.Settings.GetDeviceOnboardSlots(dev, deviceId);
         foreach (var s in onboardSlots)

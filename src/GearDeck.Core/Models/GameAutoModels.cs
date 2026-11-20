@@ -99,7 +99,7 @@ public sealed class GameAutoRule
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N")[..10];
     public string Name { get; set; } = "新游戏规则";
-    public bool Enabled { get; set; } = true;
+    public bool Enabled { get; set; } = false;
     public string Platform { get; set; } = "";
     public string? IconPath { get; set; }
 
