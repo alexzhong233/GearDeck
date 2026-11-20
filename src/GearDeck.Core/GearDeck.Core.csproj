@@ -8,6 +8,7 @@
   <ItemGroup>
     <PackageReference Include="HidSharp" Version="2.1.0" />
     <InternalsVisibleTo Include="GearDeck.Tests" />
+    <InternalsVisibleTo Include="GearDeck.App" />
   </ItemGroup>
 </Project>
 

@@ -33,8 +33,24 @@
             <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </controls:ResponsiveWrapPanel>
 
-        <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled">
-            <controls:ResponsiveItemsHost x:Name="DeviceHost" MinCardWidth="310" Gap="12" />
+        <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="20" Padding="0,0,0,16">
+                <controls:ResponsiveItemsHost x:Name="DeviceHost" MinCardWidth="310" Gap="12" />
+
+                <!-- 从设置页迁移过来的各设备独立低电量提醒策略（默认阈值 20%） -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="10" Padding="18">
+                    <StackPanel Spacing="12">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="单设备低电量提醒策略" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="全局默认低电量阈值为 20%；可在此按设备单独开关提醒、定制独立阈值或控制桌面弹窗通知。"
+                                       FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <controls:ResponsiveItemsHost x:Name="DevicePoliciesHost" MinCardWidth="310" Gap="10" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
         </ScrollViewer>
     </Grid>
 </Page>

@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "rules": [
     {
       "id": "logi_pro_x3_superstrike",
@@ -34,14 +34,56 @@
       "name": "Angry Miao AM Infinity .97",
       "vidPid": "0e8d:0703",
       "preset": "am_infinity_97",
-      "cloudUrl": "https://cdn-www.angrymiao.com/products/products_am_infinity_mouse_97.png"
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png"
+    },
+    {
+      "id": "am_infinity_97_wired",
+      "name": "Angry Miao AM Infinity .97 (Wired)",
+      "vidPid": "0e8d:0880",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png"
+    },
+    {
+      "id": "am_infinity_97_alt",
+      "name": "Angry Miao AM Infinity .97",
+      "vidPid": "35a1:0035",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png"
+    },
+    {
+      "id": "am_infinity_100r2_dongle",
+      "name": "Angry Miao AM INFINITY .100R2",
+      "vidPid": "0e8d:0704",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30r2-mouse.png"
+    },
+    {
+      "id": "am_infinity_100r2_wired",
+      "name": "Angry Miao AM INFINITY .100R2 (Wired)",
+      "vidPid": "0e8d:0881",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30r2-mouse.png"
+    },
+    {
+      "id": "am_infinity_am30_dongle",
+      "name": "Angry Miao AM Infinity Mouse",
+      "vidPid": "3151:5007",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30-mouse.png"
+    },
+    {
+      "id": "am_infinity_am30_wired",
+      "name": "Angry Miao AM Infinity Mouse (Wired)",
+      "vidPid": "3151:402a",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30-mouse.png"
     },
     {
       "id": "am_infinity_wired",
       "name": "Angry Miao AM Infinity (Wired)",
       "vidPid": "3151:3010",
       "preset": "am_infinity_97",
-      "cloudUrl": "https://cdn-www.angrymiao.com/products/products_am_infinity_mouse_97.png"
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30-mouse.png"
     },
     {
       "id": "razer_viper_v3_pro",
@@ -243,7 +285,7 @@
       "keywords": ["angry", "infinity", "怒喵"],
       "kind": "Mouse",
       "preset": "am_infinity_97",
-      "cloudUrl": "https://cdn-www.angrymiao.com/products/products_am_infinity_mouse_97.png"
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png"
     },
     {
       "id": "aula_mouse_family",

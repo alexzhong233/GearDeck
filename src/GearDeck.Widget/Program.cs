@@ -143,7 +143,7 @@ internal static class Program
         [
             new WidgetChip { GroupId = "builtin:mouse", Glyph = "\uE962", Text = "85% \u26A1", Tip = "鼠标", Low = false, Dim = false },
             new WidgetChip { GroupId = "builtin:keyboard", Glyph = "\uE765", Text = "--", Tip = "键盘", Low = false, Dim = true },
-            new WidgetChip { GroupId = "builtin:headset", Glyph = "\uE7F5", Text = "12%", Tip = "耳机", Low = true, Dim = false },
+            new WidgetChip { GroupId = "builtin:headset", Glyph = "\uE7F5", Text = "L88%/R82%", TextTop = "L 88%", TextBottom = "R 82%\u26A1", Tip = "Sony INZONE Buds", Low = false, Dim = false },
         ],
     };
 
@@ -171,6 +171,26 @@ internal static class Program
         };
         var layout = TaskbarRenderer.BuildLayout(state, scale, maxHeightPx: 72, sample);
         using var bmp = TaskbarRenderer.RenderBitmap(layout, light: !dark, embedded: true, scale: scale, hoverIndex: -1, sample);
+        var dualBlock = layout.Blocks.FirstOrDefault(b => !string.IsNullOrEmpty(b.TextTop) && !string.IsNullOrEmpty(b.TextBottom));
+        if (dualBlock != null)
+        {
+            int topInk = 0;
+            int botInk = 0;
+            int midY = bmp.Height / 2;
+            for (int y = 0; y < bmp.Height; y++)
+            {
+                for (int x = dualBlock.Bounds.Left; x < Math.Min(bmp.Width, dualBlock.Bounds.Right); x++)
+                {
+                    if (bmp.GetPixel(x, y).A > 32)
+                    {
+                        if (y < midY) topInk++;
+                        else botInk++;
+                    }
+                }
+            }
+            if (topInk == 0 || botInk == 0)
+                throw new InvalidOperationException($"Dual-line stacked chip render failed: topInk={topInk}, botInk={botInk}");
+        }
         var dir = Path.GetDirectoryName(outPath);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         bmp.Save(outPath, ImageFormat.Png);
@@ -242,6 +262,8 @@ internal sealed class WidgetChip
     public string Glyph { get; set; } = "";
     public string IconPath { get; set; } = "";
     public string Text { get; set; } = "";
+    public string TextTop { get; set; } = "";
+    public string TextBottom { get; set; } = "";
     public string Tip { get; set; } = "";
     public bool Low { get; set; }
     public bool Dim { get; set; }
@@ -251,13 +273,15 @@ internal enum BlockKind { Group, Monitor }
 
 internal sealed class Block
 {
-    public Block(BlockKind kind, string groupId, string glyph, string iconPath, string text, string tip, bool low, bool dim, Rectangle bounds, string metricTop, string metricBottom)
+    public Block(BlockKind kind, string groupId, string glyph, string iconPath, string text, string tip, bool low, bool dim, Rectangle bounds, string metricTop, string metricBottom, string textTop = "", string textBottom = "")
     {
         Kind = kind;
         GroupId = groupId;
         Glyph = glyph;
         IconPath = iconPath;
         Text = text;
+        TextTop = textTop;
+        TextBottom = textBottom;
         Tip = tip;
         Low = low;
         Dim = dim;
@@ -271,6 +295,8 @@ internal sealed class Block
     public string Glyph { get; }
     public string IconPath { get; }
     public string Text { get; }
+    public string TextTop { get; }
+    public string TextBottom { get; }
     public string Tip { get; }
     public bool Low { get; }
     public bool Dim { get; }
@@ -358,14 +384,15 @@ internal static class TaskbarRenderer
         return sf;
     }
 
-    private static (Font IconFont, Font TextFont, Font SmallFont) CreateFonts(int fontSizeDip, double scale)
+    private static (Font IconFont, Font TextFont, Font SmallFont, Font TwoLineFont) CreateFonts(int fontSizeDip, double scale)
     {
         int clamped = Math.Clamp(fontSizeDip, 9, 20);
         float fontPx = clamped * (float)scale;
         var iconFont = new Font(IconFontFamily, fontPx * 1.12f, FontStyle.Regular, GraphicsUnit.Pixel);
         var textFont = new Font(TextFontFamily, fontPx, TextFontStyle, GraphicsUnit.Pixel);
         var smallFont = new Font(TextFontFamily, Math.Max(9f * (float)scale, fontPx * 0.82f), TextFontStyle, GraphicsUnit.Pixel);
-        return (iconFont, textFont, smallFont);
+        var twoLineFont = new Font(TextFontFamily, Math.Max(7.5f * (float)scale, fontPx * 0.74f), TextFontStyle, GraphicsUnit.Pixel);
+        return (iconFont, textFont, smallFont, twoLineFont);
     }
 
     private static readonly SystemMetricsSnapshot RefSnapshot = new()
@@ -401,10 +428,11 @@ internal static class TaskbarRenderer
         int blockGap = (int)Math.Round(2 * scale);
         int minBlockW = (int)Math.Round(Math.Clamp(state.BlockWidth, 48, 220) * scale);
 
-        var (iconFont, textFont, smallFont) = CreateFonts(state.FontSize, scale);
+        var (iconFont, textFont, smallFont, twoLineFont) = CreateFonts(state.FontSize, scale);
         using var _1 = iconFont;
         using var _2 = textFont;
         using var _3 = smallFont;
+        using var _4 = twoLineFont;
         using var probeBmp = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(probeBmp);
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
@@ -417,11 +445,16 @@ internal static class TaskbarRenderer
             float iconW = TryGetCustomIcon(grp.IconPath) != null
                 ? iconPx
                 : g.MeasureString(grp.Glyph, iconFont, PointF.Empty, sf).Width;
-            var ts = g.MeasureString(grp.Text, textFont, PointF.Empty, sf);
-            int contentW = (int)Math.Ceiling(iconW + gap + ts.Width);
+            bool twoLine = !string.IsNullOrEmpty(grp.TextTop) && !string.IsNullOrEmpty(grp.TextBottom);
+            float textW = twoLine
+                ? Math.Max(
+                    g.MeasureString(grp.TextTop, twoLineFont, PointF.Empty, sf).Width,
+                    g.MeasureString(grp.TextBottom, twoLineFont, PointF.Empty, sf).Width)
+                : g.MeasureString(grp.Text, textFont, PointF.Empty, sf).Width;
+            int contentW = (int)Math.Ceiling(iconW + gap + textW);
             int w = Math.Max(minBlockW, contentW + innerPadX * 2);
             blocks.Add(new Block(BlockKind.Group, grp.GroupId, grp.Glyph, grp.IconPath ?? "", grp.Text, grp.Tip, grp.Low, grp.Dim,
-                new Rectangle(x, 0, w, blockH), "", ""));
+                new Rectangle(x, 0, w, blockH), "", "", grp.TextTop ?? "", grp.TextBottom ?? ""));
             x += w + blockGap;
         }
 
@@ -480,10 +513,11 @@ internal static class TaskbarRenderer
             FillRounded(g, bgBrush, borderPen, pillRect, pillRadius);
         }
 
-        var (iconFont, textFont, smallFont) = CreateFonts(layout.FontSize, scale);
+        var (iconFont, textFont, smallFont, twoLineFont) = CreateFonts(layout.FontSize, scale);
         using var _1 = iconFont;
         using var _2 = textFont;
         using var _3 = smallFont;
+        using var _4 = twoLineFont;
         using var sf = CreateStringFormat();
 
         var primaryColor = light ? Color.FromArgb(255, 20, 20, 20) : Color.FromArgb(255, 246, 246, 246);
@@ -537,17 +571,30 @@ internal static class TaskbarRenderer
             {
                 var iconColor = b.Dim ? dimColor : primaryColor;
                 var textColor = b.Low ? lowColor : (b.Dim ? dimColor : primaryColor);
-                var ts = g.MeasureString(b.Text, textFont, PointF.Empty, sf);
+                bool hasTwoLines = !string.IsNullOrEmpty(b.TextTop) && !string.IsNullOrEmpty(b.TextBottom);
+                SizeF tsTop = default, tsBot = default, tsSingle = default;
+                float textW;
+                if (hasTwoLines)
+                {
+                    tsTop = g.MeasureString(b.TextTop, twoLineFont, PointF.Empty, sf);
+                    tsBot = g.MeasureString(b.TextBottom, twoLineFont, PointF.Empty, sf);
+                    textW = Math.Max(tsTop.Width, tsBot.Width);
+                }
+                else
+                {
+                    tsSingle = g.MeasureString(b.Text, textFont, PointF.Empty, sf);
+                    textW = tsSingle.Width;
+                }
                 using var textBrush = new SolidBrush(textColor);
 
+                float textX;
                 var customBmp = TryGetCustomIcon(b.IconPath);
                 if (customBmp != null)
                 {
                     float iconSize = Math.Max(14f, (float)Math.Round(layout.FontSize * scale * 1.25));
-                    float totalW = iconSize + gap + ts.Width;
+                    float totalW = iconSize + gap + textW;
                     float sx = b.Bounds.X + Math.Max(2f, (b.Bounds.Width - totalW) / 2f);
                     float iy = Math.Max(0f, (bmp.Height - iconSize) / 2f);
-                    float ty = Math.Max(0f, (bmp.Height - ts.Height) / 2f);
 
                     var prevInterp = g.InterpolationMode;
                     g.InterpolationMode = InterpolationMode.HighQualityBicubic;
@@ -566,19 +613,35 @@ internal static class TaskbarRenderer
                         }
                     }
                     g.InterpolationMode = prevInterp;
-                    g.DrawString(b.Text, textFont, textBrush, sx + iconSize + gap, ty, sf);
+                    textX = sx + iconSize + gap;
                 }
                 else
                 {
                     var gs = g.MeasureString(b.Glyph, iconFont, PointF.Empty, sf);
-                    float totalW = gs.Width + gap + ts.Width;
+                    float totalW = gs.Width + gap + textW;
                     float sx = b.Bounds.X + Math.Max(2f, (b.Bounds.Width - totalW) / 2f);
                     float iy = Math.Max(0f, (bmp.Height - gs.Height) / 2f);
-                    float ty = Math.Max(0f, (bmp.Height - ts.Height) / 2f);
 
                     using var iconBrush = new SolidBrush(iconColor);
                     g.DrawString(b.Glyph, iconFont, iconBrush, sx, iy, sf);
-                    g.DrawString(b.Text, textFont, textBrush, sx + gs.Width + gap, ty, sf);
+                    textX = sx + gs.Width + gap;
+                }
+
+                if (hasTwoLines)
+                {
+                    float lineGap = (float)(1.5 * scale);
+                    if (tsTop.Height + lineGap + tsBot.Height > bmp.Height - 2f)
+                        lineGap = Math.Max(0f, bmp.Height - 2f - tsTop.Height - tsBot.Height);
+                    float totalH = tsTop.Height + lineGap + tsBot.Height;
+                    float topY = Math.Max(0f, (bmp.Height - totalH) / 2f);
+                    float botY = Math.Min(Math.Max(0f, bmp.Height - tsBot.Height), topY + tsTop.Height + lineGap);
+                    g.DrawString(b.TextTop, twoLineFont, textBrush, textX, topY, sf);
+                    g.DrawString(b.TextBottom, twoLineFont, textBrush, textX, botY, sf);
+                }
+                else
+                {
+                    float ty = Math.Max(0f, (bmp.Height - tsSingle.Height) / 2f);
+                    g.DrawString(b.Text, textFont, textBrush, textX, ty, sf);
                 }
             }
         }
@@ -630,7 +693,6 @@ internal sealed class TaskbarForm : Form
     private const uint UlwAlpha = 0x00000002;
     private const uint GwHwndPrev = 3;
     private const uint EventSystemForeground = 0x0003;
-    private const uint EventObjectReorder = 0x8004;
     private const uint WineventOutOfContext = 0x0000;
     private const uint WineventSkipOwnProcess = 0x0002;
     private const uint MonitorDefaultToNearest = 2;
@@ -694,11 +756,12 @@ internal sealed class TaskbarForm : Form
     private readonly bool _testMode;
     private WinEventDelegate? _winEventProc;
     private IntPtr _hookFg;
-    private IntPtr _hookReorder;
+    private long _lastZCheckTick;
 
     public TaskbarForm(bool testMode = false)
     {
         _testMode = testMode;
+        _childLayeredFailed = !testMode;
         Text = "GearDeck Widget";
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -754,20 +817,24 @@ internal sealed class TaskbarForm : Form
         if (_winEventProc != null) return;
         _winEventProc = OnWinEvent;
         _hookFg = SetWinEventHook(EventSystemForeground, EventSystemForeground, IntPtr.Zero, _winEventProc, 0, 0, WineventOutOfContext | WineventSkipOwnProcess);
-        _hookReorder = SetWinEventHook(EventObjectReorder, EventObjectReorder, IntPtr.Zero, _winEventProc, 0, 0, WineventOutOfContext | WineventSkipOwnProcess);
     }
+
+    private static bool IsPopupFlyoutOpen()
+        => FindWindow(null, "GearDeck Flyout") != IntPtr.Zero
+           || FindWindow(null, "GearDeck Monitor") != IntPtr.Zero;
 
     private void OnWinEvent(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
     {
         if (!IsHandleCreated || IsDisposed || _testMode || !_state.Embedded || _usingChildMode || _hiddenByFullscreen)
             return;
-        if (eventType == EventObjectReorder && idObject != 0)
+        if (IsPopupFlyoutOpen())
             return;
         IntPtr tray = FindWindow("Shell_TrayWnd", null);
         if (tray == IntPtr.Zero) tray = FindWindow("Shell_SecondaryTrayWnd", null);
         if (tray != IntPtr.Zero && !IsWindowAbove(Handle, tray))
         {
-            SetWindowPos(Handle, HwndTopMost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate | SwpShowWindow);
+            uint flags = SwpNoMove | SwpNoSize | SwpNoActivate | (IsWindowVisible(Handle) ? 0u : SwpShowWindow);
+            SetWindowPos(Handle, HwndTopMost, 0, 0, 0, 0, flags);
         }
     }
 
@@ -972,12 +1039,20 @@ internal sealed class TaskbarForm : Form
 
             int sx = _trayLeft + _relX;
             int sy = _trayTop + _relY;
-            bool behindTray = !IsWindowAbove(Handle, tray);
+            bool flyoutOpen = IsPopupFlyoutOpen();
+            long now = Environment.TickCount64;
+            bool behindTray = false;
+            if (!flyoutOpen && now - _lastZCheckTick >= 800)
+            {
+                _lastZCheckTick = now;
+                behindTray = !IsWindowAbove(Handle, tray);
+            }
             if (_hiddenByFullscreen)
                 _dirtyRender = true;
-            if (_hiddenByFullscreen || behindTray || _appliedX != sx || _appliedY != sy || _appliedW != _width || _appliedH != _height || !_appliedTopMost)
+            if (!flyoutOpen && (_hiddenByFullscreen || behindTray || _appliedX != sx || _appliedY != sy || _appliedW != _width || _appliedH != _height || !_appliedTopMost))
             {
-                SetWindowPos(Handle, HwndTopMost, sx, sy, _width, _height, SwpNoActivate | SwpShowWindow);
+                uint swpFlags = SwpNoActivate | ((_hiddenByFullscreen || !IsWindowVisible(Handle)) ? SwpShowWindow : 0u);
+                SetWindowPos(Handle, HwndTopMost, sx, sy, _width, _height, swpFlags);
                 _appliedX = sx; _appliedY = sy; _appliedW = _width; _appliedH = _height; _appliedTopMost = true;
                 _hiddenByFullscreen = false;
             }
@@ -1466,7 +1541,6 @@ internal sealed class TaskbarForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         if (_hookFg != IntPtr.Zero) { UnhookWinEvent(_hookFg); _hookFg = IntPtr.Zero; }
-        if (_hookReorder != IntPtr.Zero) { UnhookWinEvent(_hookReorder); _hookReorder = IntPtr.Zero; }
         _winEventProc = null;
         _timer.Stop();
         _timer.Dispose();
@@ -1476,7 +1550,7 @@ internal sealed class TaskbarForm : Form
 
     private delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindow(string cls, string? title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindow(string? cls, string? title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string? title);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);

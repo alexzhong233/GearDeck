@@ -95,11 +95,15 @@
                                       OnContent="已开启（左侧显示「诊断」页）"
                                       OffContent="已隐藏诊断页"
                                       Toggled="OnDebugToggled" />
+                        <ToggleSwitch x:Name="GlobalLowBatNotifySwitch"
+                                      Header="全局设备低电量通知提醒（默认低于 20%，单设备可在设备总览页单独调整）"
+                                      OnContent="开启低电量通知提醒"
+                                      OffContent="全局暂停低电量提醒"
+                                      Toggled="OnGlobalLowBatNotifyToggled" />
                     </controls:ResponsiveWrapPanel>
 
                     <controls:ResponsiveWrapPanel Spacing="16" LineSpacing="10">
                         <NumberBox x:Name="IntervalBox" Header="扫描间隔（秒）" Maximum="300" Minimum="5" Width="180" SpinButtonPlacementMode="Compact" />
-                        <NumberBox x:Name="ThresholdBox" Header="全局默认低电量阈值（%）" Maximum="80" Minimum="5" Width="210" SpinButtonPlacementMode="Compact" />
                     </controls:ResponsiveWrapPanel>
 
                     <controls:ResponsiveWrapPanel Spacing="12" LineSpacing="8">
@@ -127,26 +131,6 @@
                         <TextBlock x:Name="ImageSyncHintText" VerticalAlignment="Center" FontSize="12"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </controls:ResponsiveWrapPanel>
-                </StackPanel>
-            </Border>
-
-            <!-- 每台设备独立低电量阈值管理 -->
-            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1" CornerRadius="8" Padding="18">
-                <StackPanel Spacing="12">
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="2">
-                            <TextBlock Text="各设备独立低电量提醒与阈值" FontSize="18" FontWeight="SemiBold" />
-                            <TextBlock Text="可为鼠标、键盘、耳机、手柄分别单独启用或调整低电量提醒阈值与 Windows 原生通知。"
-                                       FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        </StackPanel>
-                        <StackPanel x:Name="ViewSwitchSlot" Grid.Column="1" VerticalAlignment="Center" />
-                    </Grid>
-                    <controls:ResponsiveItemsHost x:Name="DevicePoliciesHost" MinCardWidth="310" Gap="10" />
                 </StackPanel>
             </Border>
         </StackPanel>

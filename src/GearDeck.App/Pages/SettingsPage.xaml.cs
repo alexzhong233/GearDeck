@@ -13,48 +13,34 @@ namespace GearDeck.App.Pages;
 public sealed partial class SettingsPage : Page
 {
     private bool _binding;
-    private bool _isCardMode;
 
     public SettingsPage()
     {
         InitializeComponent();
-        _isCardMode = App.Settings.Current.UseCardLayout;
-        DevicePoliciesHost.IsCardMode = _isCardMode;
-        ViewSwitchSlot.Children.Add(UiBuilders.CreateViewModeSwitcher(_isCardMode, isCard =>
-        {
-            _isCardMode = isCard;
-            DevicePoliciesHost.IsCardMode = isCard;
-            RebuildDevicePolicies();
-        }));
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        App.Devices.DevicesUpdated += OnDevicesUpdated;
         App.Updater.StateChanged += OnUpdateStateChanged;
         _binding = true;
-        _isCardMode = App.Settings.Current.UseCardLayout;
-        DevicePoliciesHost.IsCardMode = _isCardMode;
         CloseToTraySwitch.IsOn = App.Settings.Current.CloseToTray;
         StartupSwitch.IsOn = App.Settings.Current.LaunchOnStartup;
         NotifySwitch.IsOn = App.Settings.Current.NotifyOnProfileSwitch;
         DebugSwitch.IsOn = App.Settings.Current.DebugModeEnabled;
+        GlobalLowBatNotifySwitch.IsOn = App.Settings.Current.GlobalLowBatteryNotificationEnabled;
         IntervalBox.Value = App.Settings.Current.PollIntervalSeconds;
-        ThresholdBox.Value = App.Settings.Current.LowBatteryThreshold;
         CloudManifestUrlBox.Text = App.Settings.Current.CustomCloudGalleryManifestUrl;
         CurrentVersionBadgeText.Text = $"当前版本 v{AppUpdateService.CurrentVersion}";
         AutoCheckUpdateSwitch.IsOn = App.Settings.Current.CheckUpdateOnStartup;
         GitHubMirrorBox.Text = App.Settings.Current.GitHubMirrorUrl;
         _binding = false;
         RenderUpdateOutcome(App.Updater.LastOutcome);
-        RebuildDevicePolicies();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        App.Devices.DevicesUpdated -= OnDevicesUpdated;
         App.Updater.StateChanged -= OnUpdateStateChanged;
     }
 
@@ -227,9 +213,6 @@ public sealed partial class SettingsPage : Page
         }
     }
 
-    private void OnDevicesUpdated(IReadOnlyList<PeripheralDevice> _)
-        => App.UiQueue?.TryEnqueue(RebuildDevicePolicies);
-
     private void OnDebugToggled(object sender, RoutedEventArgs e)
     {
         if (_binding) return;
@@ -238,14 +221,21 @@ public sealed partial class SettingsPage : Page
         MainWindow.Instance?.UpdateDebugVisibility();
     }
 
+    private void OnGlobalLowBatNotifyToggled(object sender, RoutedEventArgs e)
+    {
+        if (_binding) return;
+        App.Settings.Current.GlobalLowBatteryNotificationEnabled = GlobalLowBatNotifySwitch.IsOn;
+        App.Settings.Save();
+    }
+
     private void OnSave(object sender, RoutedEventArgs e)
     {
         App.Settings.Current.CloseToTray = CloseToTraySwitch.IsOn;
         App.Settings.Current.LaunchOnStartup = StartupSwitch.IsOn;
         App.Settings.Current.NotifyOnProfileSwitch = NotifySwitch.IsOn;
         App.Settings.Current.DebugModeEnabled = DebugSwitch.IsOn;
+        App.Settings.Current.GlobalLowBatteryNotificationEnabled = GlobalLowBatNotifySwitch.IsOn;
         App.Settings.Current.PollIntervalSeconds = (int)IntervalBox.Value;
-        App.Settings.Current.LowBatteryThreshold = (int)ThresholdBox.Value;
         App.Settings.Current.CheckUpdateOnStartup = AutoCheckUpdateSwitch.IsOn;
         App.Settings.Current.GitHubMirrorUrl = GitHubMirrorBox.Text?.Trim() ?? "";
         App.Settings.Save();
@@ -253,7 +243,6 @@ public sealed partial class SettingsPage : Page
         MainWindow.Instance?.UpdateDebugVisibility();
         App.Devices.Start(App.Settings.Current.PollIntervalSeconds);
         App.RefreshWidget();
-        RebuildDevicePolicies();
         SavedHintText.Text = $"已保存 ({DateTime.Now:HH:mm:ss})";
     }
 
@@ -289,121 +278,5 @@ public sealed partial class SettingsPage : Page
         {
             SyncCloudImagesBtn.IsEnabled = true;
         }
-    }
-
-    private void RebuildDevicePolicies()
-    {
-        var devices = App.LastDevices.ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
-        var ids = devices.Keys
-            .Concat(App.Settings.Current.DeviceLowBatteryPolicies.Keys)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(id => devices.TryGetValue(id, out var d) ? d.Name : id)
-            .ToList();
-
-        var elements = new List<UIElement>(ids.Count);
-        if (ids.Count == 0)
-        {
-            elements.Add(new TextBlock
-            {
-                Text = "尚无已扫描到的外设；等待设备接入后可在此按设备配置独立提醒。",
-                FontSize = 12,
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            });
-            DevicePoliciesHost.SetItems(elements);
-            return;
-        }
-
-        foreach (string id in ids)
-        {
-            devices.TryGetValue(id, out var dev);
-            string devName = dev?.Name ?? id;
-            var policy = App.Settings.GetLowBatteryPolicy(id);
-            int eff = App.Settings.GetEffectiveLowBatteryThreshold(id);
-
-            var card = new Border
-            {
-                Background = (Brush)Application.Current.Resources["SubtleFillColorSecondaryBrush"],
-                BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12),
-            };
-
-            var stack = new StackPanel { Spacing = 8 };
-            var head = new Grid { ColumnSpacing = 10 };
-            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            if (dev != null)
-                head.Children.Add(UiBuilders.CreateDeviceAvatar(dev, 36));
-            else
-                head.Children.Add(new FontIcon { Glyph = "\uE962", FontSize = 18 });
-
-            var title = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
-            title.Children.Add(new TextBlock { Text = devName, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-            title.Children.Add(new TextBlock
-            {
-                Text = policy.CustomThresholdPercent.HasValue ? $"独立阈值：{eff}%" : $"跟随全局：{eff}%",
-                FontSize = 11,
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            });
-            Grid.SetColumn(title, 1);
-            head.Children.Add(title);
-            stack.Children.Add(head);
-
-            var controls = new ResponsiveWrapPanel { Spacing = 10, LineSpacing = 6 };
-            var enableChk = new CheckBox { Content = "提醒", IsChecked = policy.Enabled };
-            var notifyChk = new CheckBox { Content = "弹窗通知", IsChecked = policy.WindowsNotification };
-            var numBox = new NumberBox
-            {
-                Header = "独立阈值 (%)",
-                Maximum = 80,
-                Minimum = 5,
-                Width = 130,
-                Value = eff,
-                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-            };
-
-            void CommitCustom(int? customVal)
-            {
-                App.Settings.Current.DeviceLowBatteryPolicies[id] = new DeviceLowBatteryPolicy
-                {
-                    Enabled = enableChk.IsChecked == true,
-                    CustomThresholdPercent = customVal,
-                    WindowsNotification = notifyChk.IsChecked == true,
-                };
-                App.Settings.Save();
-                App.RefreshWidget();
-            }
-
-            enableChk.Checked += (_, _) => CommitCustom(policy.CustomThresholdPercent);
-            enableChk.Unchecked += (_, _) => CommitCustom(policy.CustomThresholdPercent);
-            notifyChk.Checked += (_, _) => CommitCustom(policy.CustomThresholdPercent);
-            notifyChk.Unchecked += (_, _) => CommitCustom(policy.CustomThresholdPercent);
-            numBox.ValueChanged += (_, args) =>
-            {
-                if (!double.IsNaN(args.NewValue))
-                    CommitCustom(Math.Clamp((int)Math.Round(args.NewValue), 5, 80));
-            };
-
-            var resetBtn = new Button { Content = "恢复跟随全局", Padding = new Thickness(10, 4, 10, 4), VerticalAlignment = VerticalAlignment.Bottom };
-            resetBtn.Click += (_, _) =>
-            {
-                App.Settings.Current.DeviceLowBatteryPolicies.Remove(id);
-                App.Settings.Save();
-                App.RefreshWidget();
-                RebuildDevicePolicies();
-            };
-
-            controls.Children.Add(enableChk);
-            controls.Children.Add(notifyChk);
-            controls.Children.Add(numBox);
-            controls.Children.Add(resetBtn);
-            stack.Children.Add(controls);
-
-            card.Child = stack;
-            elements.Add(card);
-        }
-
-        DevicePoliciesHost.SetItems(elements);
     }
 }

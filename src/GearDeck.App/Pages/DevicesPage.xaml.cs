@@ -18,11 +18,13 @@ public sealed partial class DevicesPage : Page
         InitializeComponent();
         _isCardMode = App.Settings.Current.UseCardLayout;
         DeviceHost.IsCardMode = _isCardMode;
+        DevicePoliciesHost.IsCardMode = _isCardMode;
 
         ViewSwitchSlot.Children.Add(UiBuilders.CreateViewModeSwitcher(_isCardMode, isCard =>
         {
             _isCardMode = isCard;
             DeviceHost.IsCardMode = isCard;
+            DevicePoliciesHost.IsCardMode = isCard;
             Apply(App.Devices.LastSnapshot());
         }));
 
@@ -34,6 +36,7 @@ public sealed partial class DevicesPage : Page
     {
         _isCardMode = App.Settings.Current.UseCardLayout;
         DeviceHost.IsCardMode = _isCardMode;
+        DevicePoliciesHost.IsCardMode = _isCardMode;
         App.Devices.DevicesUpdated += OnDevicesUpdated;
         DeviceImageService.ImagesUpdated += OnImagesUpdated;
         Apply(App.Devices.LastSnapshot());
@@ -67,6 +70,7 @@ public sealed partial class DevicesPage : Page
                 items.Add(_isCardMode ? BuildDeviceCard(d) : BuildDeviceRow(d));
         }
         DeviceHost.SetItems(items);
+        RebuildDevicePolicies(devices);
         if (GearDeck.Core.Services.ExternalConfiguratorGuard.IsBackgroundYieldActive(out string? yieldReason))
             StatusText.Text = $"共 {devices.Count} 台 · {yieldReason}（点击左侧按钮可立即刷新收回控制）";
         else
@@ -328,6 +332,136 @@ public sealed partial class DevicesPage : Page
         App.Settings.Save();
         App.RefreshWidget();
         StatusText.Text = $"已将「{d.Name}」固定到任务栏对应分组";
+    }
+
+    private void RebuildDevicePolicies(IReadOnlyList<PeripheralDevice> snapshot)
+    {
+        var devices = snapshot.ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
+        var ids = devices.Keys
+            .Concat(App.Settings.Current.DeviceLowBatteryPolicies.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => devices.TryGetValue(id, out var d) ? d.Name : id)
+            .ToList();
+
+        var elements = new List<UIElement>(ids.Count);
+        if (ids.Count == 0)
+        {
+            elements.Add(new TextBlock
+            {
+                Text = "尚无已扫描到的外设；等待设备接入后可在此按设备配置独立提醒。",
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            });
+            DevicePoliciesHost.SetItems(elements);
+            return;
+        }
+
+        foreach (string id in ids)
+        {
+            devices.TryGetValue(id, out var dev);
+            string devName = dev?.Name ?? id;
+            var policy = App.Settings.GetLowBatteryPolicy(id);
+            int eff = App.Settings.GetEffectiveLowBatteryThreshold(id);
+
+            var card = new Border
+            {
+                Background = (Brush)Application.Current.Resources["SubtleFillColorSecondaryBrush"],
+                BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12),
+            };
+
+            var stack = new StackPanel { Spacing = 8 };
+            var head = new Grid { ColumnSpacing = 10 };
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            if (dev != null)
+                head.Children.Add(UiBuilders.CreateDeviceAvatar(dev, 36));
+            else
+                head.Children.Add(new FontIcon { Glyph = "\uE962", FontSize = 18 });
+
+            var title = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+            title.Children.Add(new TextBlock { Text = devName, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+            var thresholdSubText = new TextBlock
+            {
+                Text = policy.CustomThresholdPercent.HasValue ? $"独立阈值：{eff}%" : $"默认阈值：{SettingsService.DefaultLowBatteryThreshold}%",
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            };
+            title.Children.Add(thresholdSubText);
+            Grid.SetColumn(title, 1);
+            head.Children.Add(title);
+            stack.Children.Add(head);
+
+            var controls = new ResponsiveWrapPanel { Spacing = 10, LineSpacing = 6 };
+            var enableChk = new CheckBox { Content = "提醒", IsChecked = policy.Enabled };
+            var notifyChk = new CheckBox { Content = "弹窗通知", IsChecked = policy.WindowsNotification };
+            var numBox = new NumberBox
+            {
+                Header = "独立阈值 (%)",
+                Maximum = 80,
+                Minimum = 5,
+                Width = 130,
+                Value = eff,
+                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+            };
+
+            bool bindingRow = true;
+
+            void CommitPolicy(int? customVal)
+            {
+                App.Settings.Current.DeviceLowBatteryPolicies[id] = new DeviceLowBatteryPolicy
+                {
+                    Enabled = enableChk.IsChecked == true,
+                    CustomThresholdPercent = customVal,
+                    WindowsNotification = notifyChk.IsChecked == true,
+                };
+                App.Settings.Save();
+                App.RefreshWidget();
+                int nextEff = App.Settings.GetEffectiveLowBatteryThreshold(id);
+                thresholdSubText.Text = customVal.HasValue
+                    ? $"独立阈值：{nextEff}%"
+                    : $"默认阈值：{SettingsService.DefaultLowBatteryThreshold}%";
+            }
+
+            enableChk.Checked += (_, _) => CommitPolicy(App.Settings.GetLowBatteryPolicy(id).CustomThresholdPercent);
+            enableChk.Unchecked += (_, _) => CommitPolicy(App.Settings.GetLowBatteryPolicy(id).CustomThresholdPercent);
+            notifyChk.Checked += (_, _) => CommitPolicy(App.Settings.GetLowBatteryPolicy(id).CustomThresholdPercent);
+            notifyChk.Unchecked += (_, _) => CommitPolicy(App.Settings.GetLowBatteryPolicy(id).CustomThresholdPercent);
+            numBox.ValueChanged += (_, args) =>
+            {
+                if (bindingRow || double.IsNaN(args.NewValue)) return;
+                CommitPolicy(Math.Clamp((int)Math.Round(args.NewValue), 5, 80));
+            };
+
+            var resetBtn = new Button
+            {
+                Content = $"恢复默认 ({SettingsService.DefaultLowBatteryThreshold}%)",
+                Padding = new Thickness(10, 4, 10, 4),
+                VerticalAlignment = VerticalAlignment.Bottom,
+            };
+            resetBtn.Click += (_, _) =>
+            {
+                App.Settings.Current.DeviceLowBatteryPolicies.Remove(id);
+                App.Settings.Save();
+                App.RefreshWidget();
+                RebuildDevicePolicies(App.LastDevices);
+            };
+
+            bindingRow = false;
+
+            controls.Children.Add(enableChk);
+            controls.Children.Add(notifyChk);
+            controls.Children.Add(numBox);
+            controls.Children.Add(resetBtn);
+            stack.Children.Add(controls);
+
+            card.Child = stack;
+            elements.Add(card);
+        }
+
+        DevicePoliciesHost.SetItems(elements);
     }
 
     private void OnRefreshClick(object sender, RoutedEventArgs e)

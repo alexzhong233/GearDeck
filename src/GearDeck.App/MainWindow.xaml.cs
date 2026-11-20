@@ -406,6 +406,17 @@ public sealed partial class MainWindow : Window
             ContentFrame.Navigate(typeof(MonitorPage));
     }
 
+    public void OpenWidgetPage()
+    {
+        ShowOrActivate();
+        _activeDeviceId = null;
+        _suppressNavHandler = true;
+        Nav.SelectedItem = WidgetNav;
+        _suppressNavHandler = false;
+        if (ContentFrame.CurrentSourcePageType != typeof(WidgetPage))
+            ContentFrame.Navigate(typeof(WidgetPage));
+    }
+
     private void SelectDeviceInNav(string deviceId)
     {
         string expectedTag = $"device:{deviceId}";
@@ -456,6 +467,12 @@ public sealed partial class MainWindow : Window
     public void ShowGroupFlyout(string groupId, RectInt32? anchor = null)
     {
         CloseMonitorFlyout();
+        if (_groupWindow is { IsClosed: false } open && string.Equals(open.GroupId, groupId, StringComparison.Ordinal))
+        {
+            try { open.Close(); } catch { }
+            _groupWindow = null;
+            return;
+        }
         var devices = App.LastDevices;
         string title = groupId switch
         {
@@ -480,8 +497,7 @@ public sealed partial class MainWindow : Window
             : Services.GroupIconCatalog.ResolveDefaultGlyph(groupId, members);
         string? iconPath = cfg != null ? Services.GroupIconCatalog.ResolveValidIconPath(cfg) : null;
         try { _groupWindow?.Close(); } catch { }
-        _groupWindow = new WidgetGroupWindow(title, members, anchor, glyph, iconPath);
-        _groupWindow.Activate();
+        _groupWindow = new WidgetGroupWindow(groupId, title, members, anchor, glyph, iconPath);
     }
 
     private void OnDevicesUpdated(IReadOnlyList<PeripheralDevice> devices)

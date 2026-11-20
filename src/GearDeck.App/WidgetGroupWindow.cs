@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -8,14 +10,31 @@ using Windows.Graphics;
 
 namespace GearDeck.App;
 
-/// <summary>点击任务栏组后弹出：显示组图标、标题与设备列表，鼠标移出自动关闭。</summary>
+/// <summary>点击任务栏组后弹出：显示组图标、标题、贴片设置入口与设备列表。</summary>
 public sealed class WidgetGroupWindow : Window
 {
+    private readonly DispatcherQueueTimer? _dismissTimer;
+    private readonly long _openedAt;
+    private readonly IntPtr _hwnd;
+    private readonly double _scale;
+    private readonly RectInt32? _anchor;
     private bool _entered;
 
-    public WidgetGroupWindow(string title, IReadOnlyList<PeripheralDevice> devices, RectInt32? anchor = null, string? groupGlyph = null, string? groupIconPath = null)
+    public string GroupId { get; }
+    public bool IsClosed { get; private set; }
+
+    public WidgetGroupWindow(string groupId, string title, IReadOnlyList<PeripheralDevice> devices, RectInt32? anchor = null, string? groupGlyph = null, string? groupIconPath = null)
     {
-        Title = "GearDeck";
+        GroupId = groupId;
+        _anchor = anchor;
+        Title = "GearDeck Flyout";
+        _openedAt = Environment.TickCount64;
+        Closed += (_, _) =>
+        {
+            IsClosed = true;
+            _dismissTimer?.Stop();
+        };
+
         try
         {
             var appIcon = Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
@@ -44,13 +63,16 @@ public sealed class WidgetGroupWindow : Window
             Padding = new Thickness(12),
         };
         panel.PointerEntered += (_, _) => _entered = true;
-        panel.PointerExited += (_, _) => { if (_entered) Close(); };
 
         var root = new StackPanel { Spacing = 8 };
-        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(4, 0, 4, 2) };
+        var headerGrid = new Grid { Margin = new Thickness(4, 0, 0, 2) };
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var headerLeft = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         if (!string.IsNullOrWhiteSpace(groupIconPath) && File.Exists(groupIconPath))
         {
-            header.Children.Add(new Image
+            headerLeft.Children.Add(new Image
             {
                 Source = new BitmapImage(new Uri(groupIconPath)),
                 Width = 18,
@@ -60,21 +82,40 @@ public sealed class WidgetGroupWindow : Window
         }
         else if (!string.IsNullOrWhiteSpace(groupGlyph))
         {
-            header.Children.Add(new FontIcon
+            headerLeft.Children.Add(new FontIcon
             {
                 Glyph = groupGlyph,
                 FontSize = 15,
                 VerticalAlignment = VerticalAlignment.Center,
             });
         }
-        header.Children.Add(new TextBlock
+        headerLeft.Children.Add(new TextBlock
         {
             Text = title,
             FontSize = 13,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
         });
-        root.Children.Add(header);
+        headerGrid.Children.Add(headerLeft);
+
+        var settingsBtn = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE713", FontSize = 13 },
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6, 4, 6, 4),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(settingsBtn, "跳转到任务栏贴片设置");
+        settingsBtn.Click += (_, _) =>
+        {
+            MainWindow.Instance?.OpenWidgetPage();
+            Close();
+        };
+        Grid.SetColumn(settingsBtn, 1);
+        headerGrid.Children.Add(settingsBtn);
+
+        root.Children.Add(headerGrid);
 
         if (devices.Count == 0)
         {
@@ -106,17 +147,44 @@ public sealed class WidgetGroupWindow : Window
             info.Children.Add(new TextBlock { Text = d.Name, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
             info.Children.Add(new TextBlock
             {
-                Text = $"{d.Provider} · {d.Transport}",
+                Text = d.IsSleeping ? $"{d.Provider} · 休眠" : $"{d.Provider} · {d.Transport}",
                 FontSize = 11,
                 Foreground = new SolidColorBrush(dark ? Microsoft.UI.Colors.LightGray : Microsoft.UI.Colors.DimGray),
             });
             Grid.SetColumn(info, 1);
             row.Children.Add(info);
 
+            var cached = App.Settings.GetLastKnownBattery(d.Id);
+            string batDisplay;
+            bool isDual = d.LeftEarPercent.HasValue || d.RightEarPercent.HasValue
+                          || (cached != null && (cached.LeftEarPercent.HasValue || cached.RightEarPercent.HasValue));
+            if (d.FormatDualEarSummary(compact: true) is { } dualText)
+            {
+                batDisplay = dualText;
+            }
+            else if (isDual && cached != null)
+            {
+                string l = cached.LeftEarPercent is { } lv ? $"{lv}%" : "--";
+                string r = cached.RightEarPercent is { } rv ? $"{rv}%" : "--";
+                batDisplay = $"L{l} R{r} (历史)";
+            }
+            else if (d.BatteryPercent is { } p)
+            {
+                batDisplay = d.State == BatteryState.Charging ? $"{p}%⚡" : $"{p}%";
+            }
+            else if (cached?.BatteryPercent is { } hp)
+            {
+                batDisplay = d.IsSleeping ? $"{hp}% (休眠)" : $"{hp}% (历史)";
+            }
+            else
+            {
+                batDisplay = "--";
+            }
+
             var battery = new TextBlock
             {
-                Text = d.FormatDualEarSummary(compact: true) ?? (d.BatteryPercent is { } p ? $"{p}%" : "--"),
-                FontSize = d.LeftEarPercent.HasValue || d.RightEarPercent.HasValue ? 12.5 : 15,
+                Text = batDisplay,
+                FontSize = isDual ? 12 : 14,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -139,17 +207,17 @@ public sealed class WidgetGroupWindow : Window
         };
         Content = panel;
 
-        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        uint dpi = GetDpiForWindow(hwnd);
-        double scale = (dpi == 0 ? 96u : dpi) / 96.0;
-        int flyoutW = (int)Math.Round(320 * scale);
+        _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        uint dpi = GetDpiForWindow(_hwnd);
+        _scale = (dpi == 0 ? 96u : dpi) / 96.0;
+        int flyoutW = (int)Math.Round(328 * _scale);
         int flyoutH = Math.Clamp(
-            (int)Math.Round((52 + Math.Max(1, devices.Count) * 56) * scale),
-            (int)Math.Round(104 * scale),
-            (int)Math.Round(480 * scale));
+            (int)Math.Round((56 + Math.Max(1, devices.Count) * 56) * _scale),
+            (int)Math.Round(108 * _scale),
+            (int)Math.Round(480 * _scale));
         AppWindow.Resize(new SizeInt32(flyoutW, flyoutH));
 
-        int gap = (int)Math.Round(8 * scale);
+        int gap = (int)Math.Round(8 * _scale);
         if (anchor is { Width: > 0 } a)
         {
             var display = DisplayArea.GetFromPoint(new PointInt32(a.X + a.Width / 2, a.Y), DisplayAreaFallback.Primary);
@@ -166,17 +234,79 @@ public sealed class WidgetGroupWindow : Window
         {
             var area = DisplayArea.Primary.WorkArea;
             AppWindow.Move(new PointInt32(
-                area.X + area.Width - flyoutW - (int)Math.Round(20 * scale),
-                area.Y + area.Height - flyoutH - (int)Math.Round(12 * scale)));
+                area.X + area.Width - flyoutW - (int)Math.Round(20 * _scale),
+                area.Y + area.Height - flyoutH - (int)Math.Round(12 * _scale)));
         }
 
-        Activate();
-        SetWindowPos(hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+        try { AppWindow.Show(false); } catch { }
+        SetWindowPos(_hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+
+        var dq = DispatcherQueue.GetForCurrentThread();
+        if (dq != null)
+        {
+            _dismissTimer = dq.CreateTimer();
+            _dismissTimer.Interval = TimeSpan.FromMilliseconds(100);
+            _dismissTimer.IsRepeating = true;
+            _dismissTimer.Tick += OnDismissTick;
+            _dismissTimer.Start();
+        }
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private void OnDismissTick(DispatcherQueueTimer sender, object args)
+    {
+        if (IsClosed) return;
+        if (!GetCursorPos(out var pt) || !GetWindowRect(_hwnd, out var rc)) return;
+
+        bool inside = pt.X >= rc.Left && pt.X <= rc.Right && pt.Y >= rc.Top && pt.Y <= rc.Bottom;
+        if (inside)
+        {
+            _entered = true;
+            return;
+        }
+
+        long elapsed = Environment.TickCount64 - _openedAt;
+        if (elapsed >= 250)
+        {
+            bool lDown = (GetAsyncKeyState(0x01) & 0x8000) != 0;
+            bool rDown = (GetAsyncKeyState(0x02) & 0x8000) != 0;
+            bool onAnchor = _anchor is { Width: > 0 } a
+                            && pt.X >= a.X && pt.X <= a.X + a.Width
+                            && pt.Y >= a.Y && pt.Y <= a.Y + a.Height;
+            if ((lDown || rDown) && !onAnchor)
+            {
+                Close();
+                return;
+            }
+        }
+
+        if (_entered && elapsed >= 650)
+        {
+            int dx = pt.X < rc.Left ? rc.Left - pt.X : (pt.X > rc.Right ? pt.X - rc.Right : 0);
+            int dy = pt.Y < rc.Top ? rc.Top - pt.Y : (pt.Y > rc.Bottom ? pt.Y - rc.Bottom : 0);
+            int margin = (int)Math.Round(48 * _scale);
+            if (dx > margin || dy > margin)
+                Close();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
 
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT pt);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
 }

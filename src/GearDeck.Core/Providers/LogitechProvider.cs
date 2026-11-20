@@ -431,9 +431,9 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
             }
             caps.SupportedLodOptions =
             [
-                new(1, "低 (Low)"),
-                new(2, "中 (Medium)"),
-                new(3, "高 (High)"),
+                new(1, "0.7 mm (低)"),
+                new(2, "1.2 mm (中)"),
+                new(3, "2.0 mm (高)"),
             ];
             if (caps.CurrentLod == 0) caps.CurrentLod = 2;
         }

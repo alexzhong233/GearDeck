@@ -384,18 +384,56 @@ public sealed class AngryMiaoProvider : ITunablePeripheralProvider
             {
                 var (vid, pid) = g.Key;
                 string? devName = g.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+
+                if (AngryMiaoRaceProtocol.IsRaceVidPid(vid, pid))
+                {
+                    var probe = AngryMiaoRaceProtocol.ProbeStatusAsyncSafe(g, vid, pid);
+                    bool awake = probe?.IsAwake == true;
+                    string cleanRaceName = AngryMiaoRaceProtocol.ResolveModelName(vid, pid, devName);
+                    string transport = AngryMiaoRaceProtocol.IsDongleVidPid(vid, pid) ? "2.4G" : "USB";
+
+                    string? raceNote = null;
+                    if (awake)
+                    {
+                        if (probe?.DockBatteryPercent is { } dp)
+                            raceNote = $"接收器备用电池仓 {dp}%" + (probe.DockCharging ? "⚡" : "");
+                    }
+                    else
+                    {
+                        raceNote = probe?.DockBatteryPercent is { } dp
+                            ? $"鼠标无线休眠中（接收器备用电池仓 {dp}%，晃动唤醒）"
+                            : "鼠标无线休眠中（晃动即可唤醒）";
+                    }
+
+                    results.Add(new PeripheralDevice
+                    {
+                        Id = $"am:{vid:X4}-{pid:X4}",
+                        VendorId = vid,
+                        ProductId = pid,
+                        Name = cleanRaceName,
+                        Kind = DeviceKind.Mouse,
+                        Provider = ProviderName,
+                        Connected = true,
+                        IsSleeping = !awake,
+                        Transport = transport,
+                        BatteryPercent = awake ? probe?.MouseBatteryPercent : null,
+                        State = awake && probe?.MouseCharging == true ? BatteryState.Charging : BatteryState.Normal,
+                        Note = raceNote,
+                        LastUpdated = DateTimeOffset.Now,
+                    });
+                    continue;
+                }
+
                 string cleanName = string.IsNullOrWhiteSpace(devName) || devName.Contains("Receiver", StringComparison.OrdinalIgnoreCase)
-                    ? (pid == 0x0703 ? "Angry Miao AM Infinity .97" : $"Angry Miao {vid:X4}:{pid:X4}")
+                    ? $"Angry Miao {vid:X4}:{pid:X4}"
                     : devName.Trim();
 
-                (int Battery, bool Charging, int? DockBattery)? hit = pid == 0x0703 ? null : ProbeGroup(g, vid, pid);
+                var hit = ProbeGroup(g, vid, pid);
                 string? note = hit is { DockBattery: { } dock }
                     ? $"底座电池 {dock}%"
-                    : pid == 0x0703
-                        ? "AM35 定制主控已识别（热插拔电量/参数由 AM Master 专有接口管理，可点击打开怒喵网页驱动）"
-                        : hit == null
-                            ? "已连接（有线供电无电池或无线休眠中）"
-                            : null;
+                    : hit == null
+                        ? "已连接（有线供电无电池或无线休眠中）"
+                        : null;
 
                 results.Add(new PeripheralDevice
                 {
@@ -406,8 +444,8 @@ public sealed class AngryMiaoProvider : ITunablePeripheralProvider
                     Kind = DeviceKind.Mouse,
                     Provider = ProviderName,
                     Connected = true,
-                    IsSleeping = pid != 0x0703 && hit == null,
-                    Transport = "2.4G / USB",
+                    IsSleeping = hit == null,
+                    Transport = AngryMiaoRaceProtocol.IsDongleVidPid(vid, pid) ? "2.4G" : "USB",
                     BatteryPercent = hit?.Battery,
                     State = hit is { Charging: true } ? BatteryState.Charging : BatteryState.Normal,
                     Note = note,
@@ -437,6 +475,9 @@ public sealed class AngryMiaoProvider : ITunablePeripheralProvider
             caps.StatusMessage = "未找到怒喵 HID 设备（请确认接收器或数据线已连接）。";
             return caps;
         }
+
+        if (AngryMiaoRaceProtocol.IsRaceVidPid(vid, pid))
+            return AngryMiaoRaceProtocol.QueryCapabilities(deviceId, devs, vid, pid);
 
         string? rawName = devs.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
 
@@ -480,6 +521,12 @@ public sealed class AngryMiaoProvider : ITunablePeripheralProvider
             return new DeviceTuningResult(false, "无效的怒喵设备 ID。");
 
         var devs = HidSafe.EnumerateDevices(vid, pid);
+        if (devs.Count == 0)
+            return new DeviceTuningResult(false, "未找到怒喵 HID 设备。");
+
+        if (AngryMiaoRaceProtocol.IsRaceVidPid(vid, pid))
+            return AngryMiaoRaceProtocol.ApplySettings(deviceId, devs, vid, pid, update);
+
         string? rawName = devs.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
 
         var ghRes = GearHubMuProtocol.ApplySettings(deviceId, devs, update);
@@ -507,7 +554,9 @@ public sealed class AngryMiaoProvider : ITunablePeripheralProvider
 
     private static bool IsAngryMiaoDevice(HidDevice d)
     {
-        if (d.VendorID == 0x3151 || (d.VendorID == 0x0E8D && d.ProductID == 0x0703))
+        ushort vid = (ushort)d.VendorID;
+        ushort pid = (ushort)d.ProductID;
+        if (AngryMiaoRaceProtocol.IsKnownAngryMiaoVidPid(vid, pid))
             return true;
         string name = HidSafe.ProductName(d);
         return name.Contains("Angry Miao", StringComparison.OrdinalIgnoreCase)

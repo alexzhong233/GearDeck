@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using GearDeck.App.Controls;
 using GearDeck.App.Services;
 using GearDeck.Core;
@@ -24,11 +26,13 @@ public sealed partial class DeviceDetailPage : Page
     private bool _busy;
     private DeviceTuningUpdate? _queuedUpdate;
 
-    private string _activeTab = "overview";
+    private string _activeTab = "perf";
     private LocalDriverInfo? _localDriver;
     private WebDriverInfo? _webDriver;
 
     private List<LodOption> _lodOptions = [];
+    private bool _lodUsesDirectMm;
+    private double _lodMinMm = 0.7;
 
     private bool _analogModeInitialized;
     private bool _analogIndependent;
@@ -36,8 +40,24 @@ public sealed partial class DeviceDetailPage : Page
     private AnalogButtonConfig _leftAnalog = new(0, 4, true, 3, true, 4);
     private AnalogButtonConfig _rightAnalog = new(1, 4, true, 3, true, 4);
 
+    private Border[] _leftBarSegments = [];
+    private Border[] _rightBarSegments = [];
+    private TextBlock? _leftBarSummary;
+    private TextBlock? _rightBarSummary;
+    private DispatcherQueueTimer? _analogPressTimer;
+    private double _leftTravel;
+    private double _rightTravel;
+    private double _leftRtExtreme;
+    private double _rightRtExtreme;
+    private bool _leftTriggered;
+    private bool _rightTriggered;
+
     private DispatcherQueueTimer? _debounceTimer;
     private DeviceTuningUpdate? _debouncedPending;
+
+    private static readonly int[] AutoWakeBackoffMs = [3000, 8000, 20000];
+    private int _autoWakeAttempts;
+    private long _nextAutoWakeTick;
 
     public DeviceDetailPage()
     {
@@ -46,9 +66,10 @@ public sealed partial class DeviceDetailPage : Page
         InitializeDebounceTimer();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        RootShellGrid.PointerMoved += OnPagePointerMoved;
         RootShellGrid.SizeChanged += (_, e) =>
         {
-            HeroColumnDef.Width = new GridLength(e.NewSize.Width < 860 ? 220 : 268);
+            HeroColumnDef.Width = new GridLength(e.NewSize.Width < 860 ? 228 : 284);
         };
     }
 
@@ -88,16 +109,9 @@ public sealed partial class DeviceDetailPage : Page
             ShowStatus("已恢复 GearDeck 同步控制并重新读取设备参数。", InfoBarSeverity.Success);
         };
 
-        TabOverviewBtn.Click += (_, _) => SelectTab("overview");
         TabPerfBtn.Click += (_, _) => SelectTab("perf");
         TabButtonsBtn.Click += (_, _) => SelectTab("buttons");
         TabAdvancedBtn.Click += (_, _) => SelectTab("advanced");
-        TabProfilesBtn.Click += (_, _) => SelectTab("profiles");
-
-        DeviceLowBatEnableSwitch.Toggled += OnDeviceLowBatPolicyChanged;
-        DeviceLowBatCustomSwitch.Toggled += OnDeviceLowBatPolicyChanged;
-        DeviceLowBatNotifySwitch.Toggled += OnDeviceLowBatPolicyChanged;
-        DeviceLowBatSlider.ValueChanged += OnDeviceLowBatSliderChanged;
 
         SyncXySwitch.Toggled += OnSyncXyToggled;
         AddStageBtn.Click += OnAddStage;
@@ -105,10 +119,13 @@ public sealed partial class DeviceDetailPage : Page
         DpiXSlider.ValueChanged += OnDpiXSliderChanged;
         DpiXSlider.PointerCaptureLost += (_, _) => FlushDebouncedUpdate();
         DpiXBox.ValueChanged += OnDpiXBoxChanged;
+        DpiXBox.KeyDown += (_, e) => { if (e.Key == Windows.System.VirtualKey.Enter) App.UiQueue?.TryEnqueue(FlushDebouncedUpdate); };
+        DpiXBox.LostFocus += (_, _) => FlushDebouncedUpdate();
         DpiYSlider.ValueChanged += OnDpiYSliderChanged;
         DpiYSlider.PointerCaptureLost += (_, _) => FlushDebouncedUpdate();
         DpiYBox.ValueChanged += OnDpiYBoxChanged;
-        ApplyDpiBtn.Click += OnApplyDpi;
+        DpiYBox.KeyDown += (_, e) => { if (e.Key == Windows.System.VirtualKey.Enter) App.UiQueue?.TryEnqueue(FlushDebouncedUpdate); };
+        DpiYBox.LostFocus += (_, _) => FlushDebouncedUpdate();
 
         MotionSyncSwitch.Toggled += OnMotionSyncToggled;
         AngleSnapSwitch.Toggled += OnAngleSnapToggled;
@@ -134,10 +151,17 @@ public sealed partial class DeviceDetailPage : Page
 
         LodSlider.ValueChanged += OnLodSliderChanged;
         LodSlider.PointerCaptureLost += (_, _) => FlushDebouncedUpdate();
+        LodSlider.ThumbToolTipValueConverter = new CallbackThumbToolTipConverter(FormatLodTooltipValue);
         AsymLodSwitch.Toggled += OnApplyAsymLod;
         AsymLiftSlider.ValueChanged += OnAsymSliderChanged;
         AsymLandSlider.ValueChanged += OnAsymSliderChanged;
+        AsymLiftSlider.ThumbToolTipValueConverter = new CallbackThumbToolTipConverter(v => $"{v:0.0} mm");
+        AsymLandSlider.ThumbToolTipValueConverter = new CallbackThumbToolTipConverter(v => $"{v:0.0} mm");
         ApplyAsymLodBtn.Click += OnApplyAsymLod;
+
+        AnalogPressTestPad.RightTapped += (_, e) => e.Handled = true;
+        AnalogPressTestPad.PointerPressed += (_, _) => UpdateAnalogLiveSample();
+        AnalogPressTestPad.PointerReleased += (_, _) => UpdateAnalogLiveSample();
         DebounceSlider.ValueChanged += OnDebounceSliderChanged;
         DebounceSlider.PointerCaptureLost += (_, _) => FlushDebouncedUpdate();
         AngleSlider.ValueChanged += OnAngleSliderChanged;
@@ -189,11 +213,14 @@ public sealed partial class DeviceDetailPage : Page
         {
             _deviceId = e.Parameter as string;
             _caps = null;
+            _autoWakeAttempts = 0;
+            _nextAutoWakeTick = Environment.TickCount64 + AutoWakeBackoffMs[0];
             _analogModeInitialized = false;
             _analogEditingRight = false;
+            _leftTravel = _rightTravel = 0;
+            _leftTriggered = _rightTriggered = false;
             SelectTab(_activeTab);
             ShowOverview();
-            BindDeviceLowBatteryPolicy();
             RefreshDeviceSavedPresets();
             BindQuickMacroControls();
             _ = LoadCapabilitiesAsync();
@@ -211,6 +238,7 @@ public sealed partial class DeviceDetailPage : Page
         DeviceImageService.ImagesUpdated += OnImagesUpdated;
         ExternalConfiguratorGuard.StateChanged += OnGuardStateChanged;
         UpdateCoexistenceBanner();
+        UpdateAnalogPressTimerState();
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -219,6 +247,7 @@ public sealed partial class DeviceDetailPage : Page
         DeviceImageService.ImagesUpdated -= OnImagesUpdated;
         ExternalConfiguratorGuard.StateChanged -= OnGuardStateChanged;
         _debounceTimer?.Stop();
+        _analogPressTimer?.Stop();
     }
 
     private void OnUpdated(IReadOnlyList<PeripheralDevice> devices) => App.UiQueue?.TryEnqueue(ShowOverview);
@@ -227,22 +256,26 @@ public sealed partial class DeviceDetailPage : Page
 
     private void SelectTab(string tabKey)
     {
-        _activeTab = string.IsNullOrWhiteSpace(tabKey) ? "overview" : tabKey;
+        _activeTab = tabKey is "buttons" or "advanced" ? tabKey : "perf";
 
-        PanelOverview.Visibility = _activeTab == "overview" ? Visibility.Visible : Visibility.Collapsed;
         PanelPerf.Visibility = _activeTab == "perf" ? Visibility.Visible : Visibility.Collapsed;
         PanelButtons.Visibility = _activeTab == "buttons" ? Visibility.Visible : Visibility.Collapsed;
         PanelAdvanced.Visibility = _activeTab == "advanced" ? Visibility.Visible : Visibility.Collapsed;
-        PanelProfiles.Visibility = _activeTab == "profiles" ? Visibility.Visible : Visibility.Collapsed;
 
         var accent = (Style)Application.Current.Resources["AccentButtonStyle"];
         var normal = (Style)Application.Current.Resources["DefaultButtonStyle"];
 
-        TabOverviewBtn.Style = _activeTab == "overview" ? accent : normal;
         TabPerfBtn.Style = _activeTab == "perf" ? accent : normal;
         TabButtonsBtn.Style = _activeTab == "buttons" ? accent : normal;
         TabAdvancedBtn.Style = _activeTab == "advanced" ? accent : normal;
-        TabProfilesBtn.Style = _activeTab == "profiles" ? accent : normal;
+
+        UpdateAnalogPressTimerState();
+
+        if (_caps is { IsOnline: false } && FallbackCard.Visibility == Visibility.Visible)
+        {
+            // FallbackCard 常驻于顶部，避免与 StatusInfoBar 重复显示同一段休眠文案
+            StatusInfoBar.IsOpen = false;
+        }
     }
 
     private void UpdateCoexistenceBanner()
@@ -288,11 +321,12 @@ public sealed partial class DeviceDetailPage : Page
                 OverviewBatteryText.Text = d.State == BatteryState.Charging ? $"{bat} (充电中)" : bat;
             }
 
+            bool isSleepingState = d.IsSleeping || (_caps is { IsOnline: false } && _caps.DeviceId == d.Id);
             StateText.Text = d.State switch
             {
                 BatteryState.Charging => "● 充电中 ⚡",
                 BatteryState.FullyCharged => "● 已充满",
-                _ => d.IsSleeping ? "○ 无线休眠中" : (d.Connected ? "● 已连接" : "○ 离线"),
+                _ => isSleepingState ? "○ 无线休眠中" : (d.Connected ? "● 已连接" : "○ 离线"),
             };
             NoteText.Text = d.Note ?? "";
 
@@ -309,7 +343,7 @@ public sealed partial class DeviceDetailPage : Page
                 WebDriverBtnText.Text = _webDriver.DisplayName;
 
             AvatarHost.Children.Clear();
-            AvatarHost.Children.Add(UiBuilders.CreateDeviceAvatar(d, 152));
+            AvatarHost.Children.Add(UiBuilders.CreateHeroDeviceVisual(d, 168));
 
             UpdateOverviewKpis(d, _caps);
             UpdateCoexistenceBanner();
@@ -353,67 +387,6 @@ public sealed partial class DeviceDetailPage : Page
         if (d == null) return;
         if (await DeviceImagePickerDialog.ShowAsync(this.XamlRoot, d))
             ShowOverview();
-    }
-
-    // ── 本设备独立低电量提醒策略 ──────────────────────────────────────────────────
-    private void BindDeviceLowBatteryPolicy()
-    {
-        if (string.IsNullOrWhiteSpace(_deviceId)) return;
-        _binding = true;
-        try
-        {
-            var policy = App.Settings.GetLowBatteryPolicy(_deviceId);
-            DeviceLowBatEnableSwitch.IsOn = policy.Enabled;
-            DeviceLowBatCustomSwitch.IsOn = policy.CustomThresholdPercent.HasValue;
-            DeviceLowBatNotifySwitch.IsOn = policy.WindowsNotification;
-
-            int eff = App.Settings.GetEffectiveLowBatteryThreshold(_deviceId);
-            SafeSetSlider(DeviceLowBatSlider, 5, 80, 1, eff);
-            DeviceLowBatThresholdRow.Visibility = policy.CustomThresholdPercent.HasValue ? Visibility.Visible : Visibility.Collapsed;
-            DeviceLowBatValueText.Text = policy.CustomThresholdPercent.HasValue ? $"独立阈值 {eff}%" : $"跟随全局 ({eff}%)";
-        }
-        finally
-        {
-            _binding = false;
-        }
-    }
-
-    private void OnDeviceLowBatPolicyChanged(object sender, RoutedEventArgs e)
-    {
-        if (_binding || string.IsNullOrWhiteSpace(_deviceId)) return;
-        var map = App.Settings.Current.DeviceLowBatteryPolicies;
-        var policy = new DeviceLowBatteryPolicy
-        {
-            Enabled = DeviceLowBatEnableSwitch.IsOn,
-            CustomThresholdPercent = DeviceLowBatCustomSwitch.IsOn
-                ? Math.Clamp((int)Math.Round(DeviceLowBatSlider.Value), 5, 80)
-                : null,
-            WindowsNotification = DeviceLowBatNotifySwitch.IsOn,
-        };
-        map[_deviceId] = policy;
-        App.Settings.Save();
-        App.RefreshWidget();
-
-        DeviceLowBatThresholdRow.Visibility = policy.CustomThresholdPercent.HasValue ? Visibility.Visible : Visibility.Collapsed;
-        int eff = App.Settings.GetEffectiveLowBatteryThreshold(_deviceId);
-        DeviceLowBatValueText.Text = policy.CustomThresholdPercent.HasValue ? $"独立阈值 {eff}%" : $"跟随全局 ({eff}%)";
-    }
-
-    private void OnDeviceLowBatSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        if (_binding || string.IsNullOrWhiteSpace(_deviceId)) return;
-        int val = Math.Clamp((int)Math.Round(e.NewValue), 5, 80);
-        DeviceLowBatValueText.Text = $"独立阈值 {val}%";
-        if (!DeviceLowBatCustomSwitch.IsOn) return;
-
-        App.Settings.Current.DeviceLowBatteryPolicies[_deviceId] = new DeviceLowBatteryPolicy
-        {
-            Enabled = DeviceLowBatEnableSwitch.IsOn,
-            CustomThresholdPercent = val,
-            WindowsNotification = DeviceLowBatNotifySwitch.IsOn,
-        };
-        App.Settings.Save();
-        App.RefreshWidget();
     }
 
     private void SetBusy(bool busy)
@@ -463,7 +436,11 @@ public sealed partial class DeviceDetailPage : Page
                 App.Settings.RecordCapabilitiesManifest(_deviceId, caps);
 
             if (currentDev != null)
+            {
                 UpdateOverviewKpis(currentDev, caps);
+                if (currentDev.State == BatteryState.Normal && currentDev.Connected)
+                    StateText.Text = caps.IsOnline ? "● 已连接" : "○ 无线休眠中";
+            }
 
             var cachedSlots = !string.IsNullOrWhiteSpace(_deviceId)
                 ? App.Settings.GetDeviceOnboardSlots(currentDev, _deviceId)
@@ -472,7 +449,7 @@ public sealed partial class DeviceDetailPage : Page
             bool hasAnyTunable = caps.SupportsDpi || caps.SupportedPollingRates.Count > 0 || caps.SupportedLodOptions.Count > 0 || caps.SupportsAnalogSwitchTuning;
             bool isConfigurableKind = currentDev?.Kind is DeviceKind.Mouse or DeviceKind.Controller;
 
-            ProfileCard.Visibility = (isConfigurableKind || (caps.IsOnline && (hasOnboardProfiles || hasAnyTunable)))
+            TopProfileBarCard.Visibility = (isConfigurableKind || caps.SupportsHostModeSwitch || (caps.IsOnline && (hasOnboardProfiles || hasAnyTunable)))
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             OnboardProfileSection.Visibility = hasOnboardProfiles ? Visibility.Visible : Visibility.Collapsed;
@@ -553,10 +530,10 @@ public sealed partial class DeviceDetailPage : Page
                 AsymLodSwitch.IsOn = caps.AsymmetricLodEnabled;
                 int lift = Math.Clamp(caps.AsymmetricLiftOff, 2, 26);
                 int land = Math.Clamp(caps.AsymmetricLanding, 1, lift - 1);
-                SafeSetSlider(AsymLiftSlider, 2, 26, 1, lift);
-                SafeSetSlider(AsymLandSlider, 1, 25, 1, land);
-                AsymLiftText.Text = $"{lift} 档";
-                AsymLandText.Text = $"{land} 档";
+                SafeSetSlider(AsymLiftSlider, 0.2, 2.6, 0.1, lift * 0.1);
+                SafeSetSlider(AsymLandSlider, 0.1, 2.5, 0.1, land * 0.1);
+                AsymLiftText.Text = $"{lift * 0.1:0.0} mm";
+                AsymLandText.Text = $"{land * 0.1:0.0} mm";
             }
 
             DebounceSection.Visibility = hasDebounce ? Visibility.Visible : Visibility.Collapsed;
@@ -617,12 +594,25 @@ public sealed partial class DeviceDetailPage : Page
                 FallbackMessage.Text = caps.StatusMessage ?? "当前设备暂无可调节的公开 HID 参数。";
             }
 
-            if (!caps.IsOnline)
+            if (caps.IsOnline)
+            {
+                _autoWakeAttempts = 0;
+                if (caps.SupportsHostModeSwitch && !caps.IsHostMode)
+                    ShowStatus(caps.StatusMessage ?? "当前处于板载内存模式。", InfoBarSeverity.Informational);
+                else if (!string.IsNullOrWhiteSpace(caps.StatusMessage))
+                    ShowStatus(caps.StatusMessage, InfoBarSeverity.Informational);
+                else
+                    StatusInfoBar.IsOpen = false;
+            }
+            else if (!anyControl && FallbackCard.Visibility == Visibility.Visible)
+            {
+                // FallbackCard 常驻于顶部，避免与 StatusInfoBar 重复显示同一段文字
+                StatusInfoBar.IsOpen = false;
+            }
+            else
+            {
                 ShowStatus(caps.StatusMessage ?? "设备当前未唤醒。", InfoBarSeverity.Warning);
-            else if (caps.SupportsHostModeSwitch && !caps.IsHostMode)
-                ShowStatus(caps.StatusMessage ?? "当前处于板载内存模式。", InfoBarSeverity.Informational);
-            else if (!string.IsNullOrWhiteSpace(caps.StatusMessage))
-                ShowStatus(caps.StatusMessage, InfoBarSeverity.Informational);
+            }
         }
         catch (Exception ex)
         {
@@ -641,6 +631,7 @@ public sealed partial class DeviceDetailPage : Page
         if (!caps.SupportsAnalogSwitchTuning)
         {
             AnalogSwitchCard.Visibility = Visibility.Collapsed;
+            UpdateAnalogPressTimerState();
             return;
         }
 
@@ -657,6 +648,7 @@ public sealed partial class DeviceDetailPage : Page
         }
 
         RenderAnalogSwitchControls();
+        UpdateAnalogPressTimerState();
     }
 
     private void RenderAnalogSwitchControls()
@@ -766,11 +758,12 @@ public sealed partial class DeviceDetailPage : Page
     {
         AnalogVisualBarsPanel.Children.Clear();
         int total = Math.Clamp(maxActuation, 5, 20);
-        BuildSingleAnalogBar("Left", _leftAnalog, total);
-        BuildSingleAnalogBar("Right", _rightAnalog, total);
+        _leftBarSegments = BuildSingleAnalogBar("Left", _leftAnalog, total, out _leftBarSummary);
+        _rightBarSegments = BuildSingleAnalogBar("Right", _rightAnalog, total, out _rightBarSummary);
+        RenderLiveAnalogBars();
     }
 
-    private void BuildSingleAnalogBar(string label, AnalogButtonConfig cfg, int totalSteps)
+    private Border[] BuildSingleAnalogBar(string label, AnalogButtonConfig cfg, int totalSteps, out TextBlock summaryBlock)
     {
         var row = new Grid { ColumnSpacing = 8 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(46) });
@@ -786,39 +779,201 @@ public sealed partial class DeviceDetailPage : Page
         });
 
         var segGrid = new Grid { ColumnSpacing = 4, VerticalAlignment = VerticalAlignment.Center };
-        int actIdx = Math.Clamp(cfg.Actuation, 1, totalSteps) - 1;
-        var accentBrush = (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"];
-        var idleBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(44, 128, 128, 128));
-        var traceBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(72, 16, 185, 129));
-
+        var segments = new Border[totalSteps];
         for (int i = 0; i < totalSteps; i++)
         {
             segGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var box = new Border
             {
-                Height = i == actIdx ? 12 : 8,
+                Height = 8,
                 CornerRadius = new CornerRadius(3),
-                Background = i == actIdx ? accentBrush : (cfg.RapidTriggerEnabled && i < actIdx ? traceBrush : idleBrush),
             };
             Grid.SetColumn(box, i);
             segGrid.Children.Add(box);
+            segments[i] = box;
         }
 
         Grid.SetColumn(segGrid, 1);
         row.Children.Add(segGrid);
 
-        var summary = new TextBlock
+        summaryBlock = new TextBlock
         {
-            Text = cfg.RapidTriggerEnabled ? $"触发 {cfg.Actuation} · RT {cfg.RapidTrigger}" : $"触发 {cfg.Actuation} · RT 关",
+            Text = FormatConfigSummary(cfg),
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
-            MinWidth = 96,
+            MinWidth = 116,
             Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
         };
-        Grid.SetColumn(summary, 2);
-        row.Children.Add(summary);
+        Grid.SetColumn(summaryBlock, 2);
+        row.Children.Add(summaryBlock);
 
         AnalogVisualBarsPanel.Children.Add(row);
+        return segments;
+    }
+
+    private static string FormatConfigSummary(AnalogButtonConfig cfg)
+        => cfg.RapidTriggerEnabled ? $"触发 {cfg.Actuation} · RT {cfg.RapidTrigger}" : $"触发 {cfg.Actuation} · RT 关";
+
+    private void UpdateAnalogPressTimerState()
+    {
+        bool shouldRun = IsLoaded && _activeTab == "buttons" && AnalogSwitchCard.Visibility == Visibility.Visible;
+        if (!shouldRun)
+        {
+            _analogPressTimer?.Stop();
+            return;
+        }
+
+        if (_analogPressTimer == null)
+        {
+            var dq = DispatcherQueue.GetForCurrentThread();
+            if (dq == null) return;
+            _analogPressTimer = dq.CreateTimer();
+            _analogPressTimer.Interval = TimeSpan.FromMilliseconds(25);
+            _analogPressTimer.IsRepeating = true;
+            _analogPressTimer.Tick += (_, _) => UpdateAnalogLiveSample();
+        }
+
+        if (!_analogPressTimer.IsRunning)
+            _analogPressTimer.Start();
+    }
+
+    private void UpdateAnalogLiveSample()
+    {
+        if (AnalogSwitchCard.Visibility != Visibility.Visible || _leftBarSegments.Length == 0)
+            return;
+
+        bool swapped = GetSystemMetrics(23) != 0;
+        int vkLeft = swapped ? 0x02 : 0x01;
+        int vkRight = swapped ? 0x01 : 0x02;
+        bool leftPressed = (GetAsyncKeyState(vkLeft) & 0x8000) != 0;
+        bool rightPressed = (GetAsyncKeyState(vkRight) & 0x8000) != 0;
+
+        StepAnalogSide(leftPressed, _leftAnalog, _leftBarSegments.Length, ref _leftTravel, ref _leftRtExtreme, ref _leftTriggered);
+        StepAnalogSide(rightPressed, _rightAnalog, _rightBarSegments.Length, ref _rightTravel, ref _rightRtExtreme, ref _rightTriggered);
+
+        RenderLiveAnalogBars();
+    }
+
+    private static void StepAnalogSide(bool pressed, AnalogButtonConfig cfg, int totalSteps, ref double travel, ref double extreme, ref bool triggered)
+    {
+        double actThreshold = Math.Clamp(cfg.Actuation, 1, totalSteps);
+        if (pressed)
+        {
+            double stepUp = Math.Max(0.45, totalSteps * 0.22);
+            travel = Math.Min(totalSteps, travel + stepUp);
+        }
+        else
+        {
+            double stepDown = Math.Max(0.50, totalSteps * 0.24);
+            travel = Math.Max(0.0, travel - stepDown);
+        }
+
+        if (!cfg.RapidTriggerEnabled)
+        {
+            triggered = travel >= actThreshold - 0.15;
+            extreme = travel;
+            return;
+        }
+
+        double rtDelta = Math.Clamp(0.25 + (Math.Max(1, cfg.RapidTrigger) - 1) * 0.35, 0.25, totalSteps * 0.65);
+        if (travel <= 0.15)
+        {
+            triggered = false;
+            extreme = 0.0;
+            return;
+        }
+
+        if (triggered)
+        {
+            extreme = Math.Max(extreme, travel);
+            if (extreme - travel >= rtDelta)
+            {
+                triggered = false;
+                extreme = travel;
+            }
+        }
+        else
+        {
+            if (extreme == 0.0)
+            {
+                if (travel >= actThreshold - 0.15)
+                {
+                    triggered = true;
+                    extreme = travel;
+                }
+            }
+            else
+            {
+                extreme = Math.Min(extreme, travel);
+                if (travel - extreme >= rtDelta && travel >= 0.8)
+                {
+                    triggered = true;
+                    extreme = travel;
+                }
+            }
+        }
+    }
+
+    private void RenderLiveAnalogBars()
+    {
+        RenderSingleLiveBar(_leftBarSegments, _leftBarSummary, _leftAnalog, _leftTravel, _leftTriggered);
+        RenderSingleLiveBar(_rightBarSegments, _rightBarSummary, _rightAnalog, _rightTravel, _rightTriggered);
+
+        if (_leftTravel <= 0.05 && _rightTravel <= 0.05)
+        {
+            AnalogLiveStateText.Text = "待按压测试";
+        }
+        else
+        {
+            int lSteps = Math.Max(1, _leftBarSegments.Length);
+            int rSteps = Math.Max(1, _rightBarSegments.Length);
+            int pctL = (int)Math.Round(_leftTravel * 100.0 / lSteps);
+            int pctR = (int)Math.Round(_rightTravel * 100.0 / rSteps);
+            AnalogLiveStateText.Text = $"L {pctL}% {(_leftTriggered ? "⚡触发" : "○")}  |  R {pctR}% {(_rightTriggered ? "⚡触发" : "○")}";
+        }
+    }
+
+    private static void RenderSingleLiveBar(Border[] segments, TextBlock? summary, AnalogButtonConfig cfg, double travel, bool triggered)
+    {
+        if (segments.Length == 0) return;
+
+        int totalSteps = segments.Length;
+        int actIdx = Math.Clamp(cfg.Actuation, 1, totalSteps) - 1;
+        int filledCount = travel > 0.05 ? Math.Clamp((int)Math.Ceiling(travel - 0.05), 1, totalSteps) : 0;
+
+        var accentBrush = (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"];
+        var idleBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(44, 128, 128, 128));
+        var traceBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(72, 16, 185, 129));
+        var pressingBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(200, 56, 189, 248));
+        var activeTriggeredBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(240, 16, 185, 129));
+        var actTriggeredMarkerBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 245, 158, 11));
+
+        for (int i = 0; i < totalSteps; i++)
+        {
+            bool isAct = i == actIdx;
+            bool isFilled = i < filledCount;
+            segments[i].Height = isAct ? (triggered ? 15 : 13) : (isFilled ? 10 : 8);
+
+            if (isFilled)
+                segments[i].Background = triggered ? (isAct ? actTriggeredMarkerBrush : activeTriggeredBrush) : pressingBrush;
+            else if (isAct)
+                segments[i].Background = triggered ? actTriggeredMarkerBrush : accentBrush;
+            else
+                segments[i].Background = (cfg.RapidTriggerEnabled && i < actIdx) ? traceBrush : idleBrush;
+        }
+
+        if (summary != null)
+        {
+            if (travel > 0.05)
+            {
+                int pct = (int)Math.Round(travel * 100.0 / totalSteps);
+                summary.Text = $"力度 {pct}% {(triggered ? "● 已触发" : "○ 按压中")}";
+            }
+            else
+            {
+                summary.Text = FormatConfigSummary(cfg);
+            }
+        }
     }
 
     private void UpdateActiveAnalogConfig(Func<AnalogButtonConfig, AnalogButtonConfig> mutator)
@@ -942,30 +1097,19 @@ public sealed partial class DeviceDetailPage : Page
             var cached = cachedSlots.FirstOrDefault(s => s.SlotIndex == i);
             string baseName = i < caps.OnboardProfileNames.Count && !string.IsNullOrWhiteSpace(caps.OnboardProfileNames[i])
                 ? caps.OnboardProfileNames[i]
-                : (cached != null && !string.IsNullOrWhiteSpace(cached.Name) ? cached.Name : $"板载配置 {i + 1}");
-
-            var stack = new StackPanel { Spacing = 2 };
-            stack.Children.Add(new TextBlock
-            {
-                Text = slot == activeSlot ? $"{baseName} (当前)" : baseName,
-                FontWeight = FontWeights.SemiBold,
-                FontSize = 13,
-            });
-            stack.Children.Add(new TextBlock
-            {
-                Text = !string.IsNullOrWhiteSpace(cached?.Summary)
-                    ? cached.Summary
-                    : (caps.IsOnline ? "点击切换并读取" : "待唤醒读取"),
-                FontSize = 11,
-                Opacity = 0.85,
-            });
+                : (cached != null && !string.IsNullOrWhiteSpace(cached.Name) ? cached.Name : $"槽位 {i + 1}");
 
             var btn = new Button
             {
-                Content = stack,
-                Padding = new Thickness(14, 8, 14, 8),
+                Content = slot == activeSlot ? $"{baseName} ✓" : baseName,
+                FontSize = 12,
+                Padding = new Thickness(10, 5, 10, 5),
                 IsEnabled = caps.IsOnline,
             };
+            string tip = !string.IsNullOrWhiteSpace(cached?.Summary)
+                ? $"{baseName}: {cached.Summary}"
+                : (caps.IsOnline ? $"点击切换到 {baseName}" : "待唤醒后可切换");
+            ToolTipService.SetToolTip(btn, tip);
             if (slot == activeSlot)
                 btn.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
             btn.Click += (_, _) => _ = ApplyUpdateAsync(new DeviceTuningUpdate { ActiveOnboardProfile = slot });
@@ -1006,8 +1150,9 @@ public sealed partial class DeviceDetailPage : Page
         {
             DeviceSavedPresetsPanel.Children.Add(new TextBlock
             {
-                Text = "该设备尚无已保存预设；调整完 DPI/回报率/RT/模式后输入名称保存即可。",
-                FontSize = 12,
+                Text = "暂无快速预设 · 可在此保存当前 DPI / 回报率 / RT 为一键切换预设",
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
                 Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
             });
             return;
@@ -1025,52 +1170,36 @@ public sealed partial class DeviceDetailPage : Page
             if (preset.DebounceMs is { } db) parts.Add($"防抖{db}ms");
             if (preset.AnalogSwitches != null) parts.Add($"触发{preset.AnalogSwitches.Left.Actuation}/RT");
 
-            var card = new Border
+            var chip = new Border
             {
                 Background = (Brush)Application.Current.Resources["SubtleFillColorSecondaryBrush"],
                 BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(12, 8, 12, 8),
+                Padding = new Thickness(8, 4, 6, 4),
             };
-            var row = new Grid { ColumnSpacing = 10 };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
 
-            var meta = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-            meta.Children.Add(new TextBlock
-            {
-                Text = preset.Name,
-                FontWeight = FontWeights.SemiBold,
-                FontSize = 13,
-            });
-            meta.Children.Add(new TextBlock
-            {
-                Text = parts.Count > 0 ? string.Join(" · ", parts) : "硬件参数预设",
-                FontSize = 11,
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
-            });
-            row.Children.Add(meta);
-
-            var btns = new ResponsiveWrapPanel { Spacing = 6, LineSpacing = 4, VerticalAlignment = VerticalAlignment.Center };
             var applyBtn = new Button
             {
-                Content = "写入设备",
+                Content = preset.Name,
                 Style = (Style)Application.Current.Resources["AccentButtonStyle"],
-                Padding = new Thickness(10, 4, 10, 4),
+                Padding = new Thickness(9, 3, 9, 3),
                 FontSize = 12,
                 IsEnabled = _caps is { IsOnline: true },
             };
+            ToolTipService.SetToolTip(applyBtn, parts.Count > 0 ? $"点击立即写入: {string.Join(" · ", parts)}" : "点击立即写入设备");
             applyBtn.Click += (_, _) => _ = ApplyUpdateAsync(preset.ToUpdate());
-            btns.Children.Add(applyBtn);
+            row.Children.Add(applyBtn);
 
             var updateBtn = new Button
             {
-                Content = "当前覆盖",
-                Padding = new Thickness(10, 4, 10, 4),
-                FontSize = 12,
+                Content = "覆盖",
+                Padding = new Thickness(7, 3, 7, 3),
+                FontSize = 11,
                 IsEnabled = _caps is { IsOnline: true },
             };
+            ToolTipService.SetToolTip(updateBtn, "用当前设备参数覆盖此预设");
             updateBtn.Click += (_, _) =>
             {
                 if (_caps is not { IsOnline: true }) return;
@@ -1083,21 +1212,20 @@ public sealed partial class DeviceDetailPage : Page
                 RefreshDeviceSavedPresets();
                 ShowStatus($"已使用当前硬件参数覆盖更新预设「{preset.Name}」。", InfoBarSeverity.Success);
             };
-            btns.Children.Add(updateBtn);
+            row.Children.Add(updateBtn);
 
-            var delBtn = new Button { Content = "删除", Padding = new Thickness(8, 4, 8, 4), FontSize = 12 };
+            var delBtn = new Button { Content = "×", Padding = new Thickness(6, 2, 6, 2), FontSize = 12 };
+            ToolTipService.SetToolTip(delBtn, $"删除预设「{preset.Name}」");
             delBtn.Click += (_, _) =>
             {
                 App.Settings.Current.Presets.RemoveAll(p => p.Id == preset.Id);
                 App.Settings.Save();
                 RefreshDeviceSavedPresets();
             };
-            btns.Children.Add(delBtn);
+            row.Children.Add(delBtn);
 
-            Grid.SetColumn(btns, 1);
-            row.Children.Add(btns);
-            card.Child = row;
-            DeviceSavedPresetsPanel.Children.Add(card);
+            chip.Child = row;
+            DeviceSavedPresetsPanel.Children.Add(chip);
         }
     }
 
@@ -1387,7 +1515,7 @@ public sealed partial class DeviceDetailPage : Page
         if (min > max) (min, max) = (max, min);
         s.Minimum = Math.Min(s.Minimum, min);
         s.Maximum = Math.Max(s.Maximum, max);
-        s.StepFrequency = Math.Max(1, step);
+        s.StepFrequency = Math.Max(0.05, step);
         s.Minimum = min;
         s.Maximum = max;
         s.Value = Math.Clamp(val, min, max);
@@ -1455,7 +1583,9 @@ public sealed partial class DeviceDetailPage : Page
             DpiStagesPanel.Children.Add(btn);
         }
 
-        int maxStages = _caps.DeviceId.StartsWith("razer:", StringComparison.OrdinalIgnoreCase) ? 5 : 6;
+        int maxStages = _caps.DeviceId.StartsWith("razer:", StringComparison.OrdinalIgnoreCase)
+            ? 5
+            : (_caps.DeviceId.StartsWith("am:", StringComparison.OrdinalIgnoreCase) ? 8 : 6);
         AddStageBtn.IsEnabled = _caps.SupportsDpiStagesWrite && _caps.DpiStages.Count < maxStages;
         RemoveStageBtn.IsEnabled = _caps.SupportsDpiStagesWrite && _caps.DpiStages.Count > 1;
     }
@@ -1495,18 +1625,69 @@ public sealed partial class DeviceDetailPage : Page
 
         int activeIdx = Math.Max(0, _lodOptions.FindIndex(o => o.Code == currentLod));
         LodSlider.Visibility = _lodOptions.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        _lodUsesDirectMm = false;
+
         if (_lodOptions.Count > 1)
-            SafeSetSlider(LodSlider, 0, _lodOptions.Count - 1, 1, activeIdx);
-        LodSliderValueText.Text = _lodOptions.Count > 0 ? _lodOptions[activeIdx].Label : "-";
+        {
+            var mms = _lodOptions.Select(o => TryParseLodMm(o.Label)).ToList();
+            bool uniformTenthMm = mms.All(m => m.HasValue)
+                && Enumerable.Range(1, mms.Count - 1)
+                    .All(i => Math.Abs((mms[i]!.Value - mms[i - 1]!.Value) - 0.1) < 0.015);
+
+            if (uniformTenthMm)
+            {
+                _lodUsesDirectMm = true;
+                _lodMinMm = mms[0]!.Value;
+                SafeSetSlider(LodSlider, _lodMinMm, mms[^1]!.Value, 0.1, mms[activeIdx]!.Value);
+            }
+            else
+            {
+                SafeSetSlider(LodSlider, 0, _lodOptions.Count - 1, 1, activeIdx);
+            }
+        }
+        LodSliderValueText.Text = _lodOptions.Count > 0 ? FormatLodLabel(_lodOptions[activeIdx]) : "-";
     }
 
     private void OnLodSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (_binding || _lodOptions.Count == 0) return;
-        int idx = Math.Clamp((int)Math.Round(e.NewValue), 0, _lodOptions.Count - 1);
+        int idx = _lodUsesDirectMm
+            ? Math.Clamp((int)Math.Round((e.NewValue - _lodMinMm) / 0.1), 0, _lodOptions.Count - 1)
+            : Math.Clamp((int)Math.Round(e.NewValue), 0, _lodOptions.Count - 1);
         var opt = _lodOptions[idx];
-        LodSliderValueText.Text = opt.Label;
+        LodSliderValueText.Text = FormatLodLabel(opt);
         ScheduleDebouncedUpdate(new DeviceTuningUpdate { LodCode = opt.Code });
+    }
+
+    private string FormatLodTooltipValue(double val)
+    {
+        if (_lodUsesDirectMm)
+            return $"{val:0.0} mm";
+        if (_lodOptions.Count == 0)
+            return $"{val:0.0} mm";
+        int idx = Math.Clamp((int)Math.Round(val), 0, _lodOptions.Count - 1);
+        double? mm = TryParseLodMm(_lodOptions[idx].Label);
+        return mm.HasValue ? $"{mm.Value:0.0} mm" : _lodOptions[idx].Label;
+    }
+
+    private static string FormatLodLabel(LodOption opt)
+    {
+        double? mm = TryParseLodMm(opt.Label);
+        if (mm.HasValue) return opt.Label;
+        return double.TryParse(opt.Label, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out double raw)
+            ? $"{raw:0.0} mm"
+            : opt.Label;
+    }
+
+    private static double? TryParseLodMm(string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label)) return null;
+        var m = Regex.Match(label, @"(\d+(?:\.\d+)?)\s*mm", RegexOptions.IgnoreCase);
+        return m.Success && double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out double mm)
+            ? mm
+            : null;
     }
 
     // ── 支持实时合并队列的硬件下发引擎 ──────────────────────────────────────────────
@@ -1740,7 +1921,9 @@ public sealed partial class DeviceDetailPage : Page
     private void OnAddStage(object sender, RoutedEventArgs e)
     {
         if (_caps == null || _caps.DpiStages.Count == 0) return;
-        int maxStages = _caps.DeviceId.StartsWith("razer:", StringComparison.OrdinalIgnoreCase) ? 5 : 6;
+        int maxStages = _caps.DeviceId.StartsWith("razer:", StringComparison.OrdinalIgnoreCase)
+            ? 5
+            : (_caps.DeviceId.StartsWith("am:", StringComparison.OrdinalIgnoreCase) ? 8 : 6);
         if (_caps.DpiStages.Count >= maxStages) return;
         var stages = _caps.DpiStages.ToList();
         var last = stages[^1];
@@ -1768,62 +1951,27 @@ public sealed partial class DeviceDetailPage : Page
         });
     }
 
-    private void OnApplyDpi(object sender, RoutedEventArgs e)
-    {
-        _debounceTimer?.Stop();
-        _debouncedPending = null;
-
-        int minDpi = Math.Max(10, _caps?.MinDpi ?? 50);
-        int maxDpi = Math.Max(minDpi + 50, _caps?.MaxDpi ?? 45000);
-        int step = Math.Max(1, _caps?.DpiStep ?? 50);
-
-        if (int.TryParse(DpiXBox.Text?.Trim(), out int typedX))
-        {
-            int snappedX = SnapDpi(typedX, minDpi, maxDpi, step);
-            _binding = true;
-            DpiXBox.Value = snappedX;
-            DpiXSlider.Value = snappedX;
-            if (SyncXySwitch.IsOn)
-            {
-                DpiYBox.Value = snappedX;
-                DpiYSlider.Value = snappedX;
-            }
-            _binding = false;
-        }
-        if (!SyncXySwitch.IsOn && int.TryParse(DpiYBox.Text?.Trim(), out int typedY))
-        {
-            int snappedY = SnapDpi(typedY, minDpi, maxDpi, step);
-            _binding = true;
-            DpiYBox.Value = snappedY;
-            DpiYSlider.Value = snappedY;
-            _binding = false;
-        }
-
-        UpdateDpiSummaryText();
-        _ = ApplyCurrentDpiFromUiAsync();
-    }
-
     private void OnAsymSliderChanged(object sender, RangeBaseValueChangedEventArgs e)
     {
         if (_binding) return;
-        int lift = Math.Clamp((int)Math.Round(AsymLiftSlider.Value), 2, 26);
-        int land = Math.Clamp((int)Math.Round(AsymLandSlider.Value), 1, 25);
+        int lift = Math.Clamp((int)Math.Round(AsymLiftSlider.Value * 10), 2, 26);
+        int land = Math.Clamp((int)Math.Round(AsymLandSlider.Value * 10), 1, 25);
         if (land >= lift)
         {
             land = lift - 1;
             _binding = true;
-            AsymLandSlider.Value = land;
+            AsymLandSlider.Value = land * 0.1;
             _binding = false;
         }
-        AsymLiftText.Text = $"{lift} 档";
-        AsymLandText.Text = $"{land} 档";
+        AsymLiftText.Text = $"{lift * 0.1:0.0} mm";
+        AsymLandText.Text = $"{land * 0.1:0.0} mm";
     }
 
     private void OnApplyAsymLod(object sender, RoutedEventArgs e)
     {
         if (_binding || _caps == null || !_caps.SupportsAsymmetricLod) return;
-        int lift = Math.Clamp((int)Math.Round(AsymLiftSlider.Value), 2, 26);
-        int land = Math.Clamp((int)Math.Round(AsymLandSlider.Value), 1, lift - 1);
+        int lift = Math.Clamp((int)Math.Round(AsymLiftSlider.Value * 10), 2, 26);
+        int land = Math.Clamp((int)Math.Round(AsymLandSlider.Value * 10), 1, lift - 1);
         _ = ApplyUpdateAsync(new DeviceTuningUpdate
         {
             AsymmetricLod = (AsymLodSwitch.IsOn, lift, land),
@@ -1863,7 +2011,46 @@ public sealed partial class DeviceDetailPage : Page
         _ = ApplyUpdateAsync(update);
     }
 
-    private void OnRetryProbe(object sender, RoutedEventArgs e) => _ = LoadCapabilitiesAsync();
+    private void OnRetryProbe(object sender, RoutedEventArgs e)
+    {
+        _autoWakeAttempts = 0;
+        _nextAutoWakeTick = Environment.TickCount64 + AutoWakeBackoffMs[0];
+        _ = RefreshAndReloadAsync(manual: true);
+    }
+
+    private void OnPagePointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_busy || string.IsNullOrWhiteSpace(_deviceId) || _caps is not { IsOnline: false })
+            return;
+        if (_autoWakeAttempts >= AutoWakeBackoffMs.Length)
+            return;
+        long now = Environment.TickCount64;
+        if (now < _nextAutoWakeTick)
+            return;
+        if (ExternalConfiguratorGuard.IsBackgroundYieldActive(out _))
+            return;
+
+        int delay = AutoWakeBackoffMs[_autoWakeAttempts];
+        _autoWakeAttempts++;
+        _nextAutoWakeTick = now + delay;
+        _ = RefreshAndReloadAsync(manual: false);
+    }
+
+    private async Task RefreshAndReloadAsync(bool manual)
+    {
+        if (string.IsNullOrWhiteSpace(_deviceId) || _busy) return;
+        try
+        {
+            if (manual || !ExternalConfiguratorGuard.IsBackgroundYieldActive(out _))
+            {
+                await App.Devices.RefreshAsync(bypassCoexistenceGuard: manual);
+                ShowOverview();
+            }
+        }
+        catch { }
+
+        await LoadCapabilitiesAsync();
+    }
 
     private void OnPinToTaskbar(object sender, RoutedEventArgs e)
     {
@@ -1886,4 +2073,20 @@ public sealed partial class DeviceDetailPage : Page
         App.RefreshWidget();
         ShowStatus("已固定到任务栏对应分组。", InfoBarSeverity.Success);
     }
+
+    private sealed class CallbackThumbToolTipConverter(Func<double, string> formatter)
+        : Microsoft.UI.Xaml.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, string language)
+            => value is double d ? formatter(d) : $"{value}";
+
+        public object ConvertBack(object value, Type targetType, object parameter, string language)
+            => DependencyProperty.UnsetValue;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
 }

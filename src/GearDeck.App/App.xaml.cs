@@ -98,6 +98,7 @@ public partial class App : Application
     {
         _startedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         Settings = new SettingsService();
+        AtkModelCatalog.SeedPersistentReceiverModels(Settings.Current.KnownReceiverModels);
         var cmdArgs = Environment.GetCommandLineArgs();
         var mirrorArg = cmdArgs.FirstOrDefault(a => a.StartsWith("--mirror=", StringComparison.OrdinalIgnoreCase));
         if (mirrorArg is { Length: > 9 })
@@ -367,6 +368,24 @@ public partial class App : Application
     private static void OnDevicesUpdated(IReadOnlyList<PeripheralDevice> devices)
     {
         LastDevices = devices;
+        bool receiverChanged = false;
+        foreach (var d in devices)
+        {
+            if (d.Id.StartsWith("atk:", StringComparison.OrdinalIgnoreCase)
+                && !AtkModelCatalog.IsGenericReceiverName(d.Name))
+            {
+                if (!Settings.Current.KnownReceiverModels.TryGetValue(d.Id, out var prev)
+                    || !string.Equals(prev, d.Name, StringComparison.Ordinal))
+                {
+                    Settings.Current.KnownReceiverModels[d.Id] = d.Name;
+                    receiverChanged = true;
+                }
+            }
+        }
+        bool batChanged = Settings.RecordObservedDevices(devices);
+        if (receiverChanged && !batChanged)
+            Settings.Save();
+
         NativeNotificationService.CheckAndNotifyLowBattery(devices);
         _ = DeviceImageService.EnsureAutoCloudImagesAsync(devices);
         if (Settings.Current.WidgetVisible)

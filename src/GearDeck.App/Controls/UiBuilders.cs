@@ -111,6 +111,31 @@ public static class UiBuilders
         return border;
     }
 
+    /// <summary>生成左侧详情 Hero 区的无嵌套纯设备外观视图（仅图标或透明产品图，无额外嵌套灰框）。</summary>
+    public static FrameworkElement CreateHeroDeviceVisual(PeripheralDevice device, double maxVisualSize = 168)
+    {
+        var src = DeviceImageService.LoadImageSource(device, maxVisualSize);
+        if (src != null)
+        {
+            return new Image
+            {
+                Source = src,
+                Stretch = Stretch.Uniform,
+                MaxHeight = maxVisualSize,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+        }
+
+        return new FontIcon
+        {
+            Glyph = FallbackGlyph(device.Kind),
+            FontSize = Math.Max(28, maxVisualSize * 0.34),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+    }
+
     public static string FallbackGlyph(DeviceKind kind) => kind switch
     {
         DeviceKind.Keyboard => "\uE765",

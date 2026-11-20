@@ -69,7 +69,9 @@ public static class DeviceImageService
         new("cloud_gpw_svg", "Logitech G PRO Wireless (Piper)", "Logitech", "usb:046d:c088;g pro wireless;gpw", $"{PiperSvgBaseUrl}logitech-g-pro-wireless.svg", true),
         new("cloud_g502x", "Logitech G502 X Plus (Piper)", "Logitech", "usb:046d:c08b;usb:046d:c08d;g502", $"{PiperSvgBaseUrl}logitech-g502-x-plus.svg", true),
         new("cloud_viper_v3", "Razer Viper V3 Pro 毒蝰 V3 Pro", "Razer", "usb:1532:00c1;viper v3 pro;viper", "https://assets2.razerzone.com/images/pnx.assets/05b2ecb314fa052d217b254d5a3c86c9/viper-v3-pro-black-500x500.webp", false),
-        new("cloud_am_97", "Angry Miao AM Infinity .97 怒喵无限鼠标", "Angry Miao", "usb:0e8d:0703;usb:3151:3010;infinity;怒喵", "https://cdn-www.angrymiao.com/products/products_am_infinity_mouse_97.png", false),
+        new("cloud_am_97", "Angry Miao AM Infinity .97 怒喵无限鼠标", "Angry Miao", "usb:0e8d:0703;usb:0e8d:0880;usb:35a1:0035;infinity;怒喵", "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png", false),
+        new("cloud_am_100r2", "Angry Miao AM INFINITY .100R2", "Angry Miao", "usb:0e8d:0704;usb:0e8d:0881;100r2", "https://ammaster.angrymiao.com/mouse/am30r2-mouse.png", false),
+        new("cloud_am_30", "Angry Miao AM Infinity Mouse", "Angry Miao", "usb:3151:5007;usb:3151:402a;usb:3151:3010", "https://ammaster.angrymiao.com/mouse/am30-mouse.png", false),
         new("cloud_aula_l5", "AULA 狼蛛昆仑 L5 Ultra", "AULA", "usb:38a6:2f1a;usb:38a6:2f0c;usb:258a:0138;狼蛛;昆仑", "https://cdn2.aulacn.com/storage/20261015/UGa1792055906WIAjQC.jpg", false),
         new("cloud_wlmouse", "WLmouse 镁合金系列", "WLmouse", "usb:36a7:a856;usb:36a7:a860;beast;wlmouse;万灵", "https://www.wlmouse.com/cdn/shop/files/9ed5786037e96b6a3eb76ee579be7e4c.png", false),
         new("cloud_lamzu", "Lamzu Maya / Inca 系列", "Lamzu", "usb:373e:;usb:37b0:;lamzu;maya;inca;兰族", "https://lamzu.com/cdn/shop/files/3_44a7403b-e6a7-419c-9910-a7679e7315fd.png", false),
@@ -208,6 +210,21 @@ public static class DeviceImageService
                     Gallery = bundled.Gallery.Count > 0 ? bundled.Gallery : local.Gallery,
                 };
                 File.WriteAllText(LocalManifestPath, DeviceImageRuleMatcher.SerializeManifest(upgraded), Encoding.UTF8);
+                CheckedAutoIds.Clear();
+
+                string oldAmGroupHash = Convert.ToHexString(SHA256.HashData(
+                    Encoding.UTF8.GetBytes("https://cdn-www.angrymiao.com/products/products_am_infinity_mouse_97.png")))[..16];
+                var staleAutoKeys = App.Settings.Current.AutoCloudDeviceImages
+                    .Where(kv => Path.GetFileName(kv.Value).StartsWith(oldAmGroupHash, StringComparison.OrdinalIgnoreCase))
+                    .Select(kv => kv.Key)
+                    .ToList();
+                if (staleAutoKeys.Count > 0)
+                {
+                    foreach (string k in staleAutoKeys)
+                        App.Settings.Current.AutoCloudDeviceImages.Remove(k);
+                    App.Settings.Save();
+                }
+
                 Diag.Log($"[DeviceImages] 已将本地图像规则清单自动升级至 v{bundled.Version}");
             }
         }

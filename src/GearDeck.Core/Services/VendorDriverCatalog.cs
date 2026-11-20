@@ -38,12 +38,9 @@ public static class VendorDriverCatalog
     private static readonly LocalDriverInfo RogLocal = new(
         "rog",
         "打开 ROG 奥创中心",
-        ["ArmouryCrate", "ArmouryCrate.UserSessionHelper"],
-        [
-            @"C:\Program Files\ASUS\ARMOURY CRATE Service\ArmouryCrate.exe",
-            @"C:\Program Files (x86)\ASUS\Armoury Crate\ArmouryCrate.exe",
-        ],
-        ["Armoury Crate", "ARMOURY CRATE"],
+        [],
+        [],
+        [],
         "shell:AppsFolder\\B9ECED6F.ArmouryCrate_qmba6cd70vzyy!App",
         "https://rog.asus.com/armoury-crate/");
 
@@ -87,22 +84,11 @@ public static class VendorDriverCatalog
         null,
         "https://www.flydigi.com/index/down");
 
-    private static readonly LocalDriverInfo AngryMiaoLocal = new(
-        "angrymiao",
-        "打开 AM Master 客户端",
-        ["AM Master", "AMasterDriver"],
-        [
-            @"C:\Program Files\AM Master\AM Master.exe",
-            @"C:\Program Files\AngryMiao\AM Master\AM Master.exe",
-        ],
-        ["AM Master", "AMasterDriver"],
-        null,
-        "https://www.angrymiao.com/am-master/");
-
     private static readonly WebDriverInfo RazerWeb = new("razer", "打开雷蛇网页驱动", "https://synapse.razer.com");
+    private static readonly WebDriverInfo FlydigiWeb = new("flydigi", "打开飞智网页空间站", "https://space_station.flydigi.com/");
     private static readonly WebDriverInfo AtkWeb = new("atk", "打开 ATK 网页驱动", "https://hub.atk.pro");
     private static readonly WebDriverInfo WlmouseWeb = new("wlmouse", "打开万灵网页驱动", "https://gm.wlmouse.gg");
-    private static readonly WebDriverInfo AngryMiaoWeb = new("angrymiao", "打开怒喵网页驱动", "https://diy.angrymiao.com/device-connect/");
+    private static readonly WebDriverInfo AngryMiaoWeb = new("angrymiao", "打开怒喵鼠标驱动", "https://ammaster.angrymiao.com/mouse/devices");
     private static readonly WebDriverInfo AulaWeb = new("aula", "打开狼蛛网页驱动", "https://hub.aulacn.com");
     private static readonly WebDriverInfo LamzuWeb = new("lamzu", "打开兰族网页驱动", "https://www.lamzu.net/#/project/items");
     private static readonly WebDriverInfo RogWeb = new("rog", "打开 ROG Gear Link 网页驱动", "https://gearlink.asus.com");
@@ -134,7 +120,7 @@ public static class VendorDriverCatalog
             return new VendorDriverLinks(SonyLocal, null);
 
         if (vid == 0x37D7 || id.StartsWith("flydigi:") || prov.Contains("flydigi") || name.Contains("飞智") || name.Contains("八爪鱼"))
-            return new VendorDriverLinks(FlydigiLocal, null);
+            return new VendorDriverLinks(FlydigiLocal, FlydigiWeb);
 
         if (vid is 0x373B || id.StartsWith("atk:") || prov.Contains("atk") || name.Contains("atk") || name.Contains("vxe") || name.Contains("vgn"))
             return new VendorDriverLinks(null, AtkWeb);
@@ -142,8 +128,8 @@ public static class VendorDriverCatalog
         if (vid is 0x36A7 || id.StartsWith("wlmouse:") || prov.Contains("wlmouse") || name.Contains("beast") || name.Contains("万灵"))
             return new VendorDriverLinks(null, WlmouseWeb);
 
-        if (vid is 0x0E8D or 0x3710 || id.StartsWith("am:") || prov.Contains("angry") || name.Contains("infinity") || name.Contains("怒喵"))
-            return new VendorDriverLinks(AngryMiaoLocal, AngryMiaoWeb);
+        if (vid is 0x0E8D or 0x35A1 || id.StartsWith("am:") || prov.Contains("angry") || name.Contains("infinity") || name.Contains("怒喵"))
+            return new VendorDriverLinks(null, AngryMiaoWeb);
 
         if (vid is 0x38A6 or 0x384C || id.StartsWith("aula:") || prov.Contains("aula") || name.Contains("狼蛛") || name.Contains("昆仑"))
             return new VendorDriverLinks(null, AulaWeb);

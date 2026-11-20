@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Win32;
 using GearDeck.Core;
 using GearDeck.Core.Models;
+using GearDeck.Core.Services;
 
 namespace GearDeck.App.Services;
 
@@ -92,7 +93,11 @@ public sealed class AppSettings
 
     public int PollIntervalSeconds { get; set; } = 30;
 
-    public int LowBatteryThreshold { get; set; } = 20;
+    public int LowBatteryThreshold { get; set; } = BatteryHistoryHelper.DefaultLowBatteryThreshold;
+
+    public bool GlobalLowBatteryNotificationEnabled { get; set; } = true;
+
+    public Dictionary<string, CachedBatteryRecord> LastKnownBatteries { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public bool DebugModeEnabled { get; set; }
 
@@ -301,6 +306,8 @@ public sealed class SettingsService
         Current.Macros ??= [];
         Current.LocalButtonMacroBindings ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Current.DeviceLowBatteryPolicies ??= new Dictionary<string, DeviceLowBatteryPolicy>(StringComparer.OrdinalIgnoreCase);
+        Current.LastKnownBatteries ??= new Dictionary<string, CachedBatteryRecord>(StringComparer.OrdinalIgnoreCase);
+        Current.KnownReceiverModels ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Current.DeviceImageOverrides ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Current.AutoCloudDeviceImages ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Current.CustomCloudGalleryManifestUrl ??= "";
@@ -316,6 +323,8 @@ public sealed class SettingsService
             m.Slots ??= [];
     }
 
+    public const int DefaultLowBatteryThreshold = BatteryHistoryHelper.DefaultLowBatteryThreshold;
+
     public DeviceLowBatteryPolicy GetLowBatteryPolicy(string deviceId)
     {
         if (!string.IsNullOrWhiteSpace(deviceId) &&
@@ -324,12 +333,14 @@ public sealed class SettingsService
         return new DeviceLowBatteryPolicy();
     }
 
-    public int GetEffectiveLowBatteryThreshold(string deviceId)
+    public int GetEffectiveLowBatteryThreshold(string? deviceId)
     {
+        if (string.IsNullOrWhiteSpace(deviceId))
+            return DefaultLowBatteryThreshold;
         var policy = GetLowBatteryPolicy(deviceId);
         return policy.CustomThresholdPercent is { } c
             ? Math.Clamp(c, 5, 80)
-            : Math.Clamp(Current.LowBatteryThreshold, 5, 80);
+            : DefaultLowBatteryThreshold;
     }
 
     public bool IsDeviceLowBattery(string deviceId, int batteryPercent)
@@ -340,8 +351,23 @@ public sealed class SettingsService
 
     public bool ShouldNotifyLowBattery(string deviceId, int batteryPercent)
     {
+        if (!Current.GlobalLowBatteryNotificationEnabled)
+            return false;
         var policy = GetLowBatteryPolicy(deviceId);
         return policy.Enabled && policy.WindowsNotification && batteryPercent <= GetEffectiveLowBatteryThreshold(deviceId);
+    }
+
+    public CachedBatteryRecord? GetLastKnownBattery(string? deviceId)
+        => !string.IsNullOrWhiteSpace(deviceId) && Current.LastKnownBatteries.TryGetValue(deviceId, out var rec)
+            ? rec
+            : null;
+
+    public bool RecordObservedDevices(IEnumerable<PeripheralDevice> devices)
+    {
+        bool changed = BatteryHistoryHelper.RecordObservedDevices(Current.LastKnownBatteries, devices);
+        if (changed)
+            Save();
+        return changed;
     }
 
     public static string BuildCapsSummary(DeviceTuningCapabilities caps)

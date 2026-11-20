@@ -144,8 +144,8 @@ public class V102UpgradeTests
         Assert.Equal("https://gearlink.asus.com", rog.Web?.Url);
 
         var am = VendorDriverCatalog.Resolve(new PeripheralDevice { Id = "am:0703", Name = "Angry Miao AM Infinity .97", Kind = DeviceKind.Mouse, Provider = "AngryMiao", VendorId = 0x0E8D, ProductId = 0x0703 });
-        Assert.NotNull(am.Local);
-        Assert.Equal("https://diy.angrymiao.com/device-connect/", am.Web?.Url);
+        Assert.Null(am.Local);
+        Assert.Equal("https://ammaster.angrymiao.com/mouse/devices", am.Web?.Url);
 
         var aula = VendorDriverCatalog.Resolve(new PeripheralDevice { Id = "aula:38A6:2F1A", Name = "AULA 昆仑 L5 Ultra", Kind = DeviceKind.Mouse, Provider = "AULA", VendorId = 0x38A6, ProductId = 0x2F1A });
         Assert.Null(aula.Local);
@@ -188,18 +188,19 @@ public class V102UpgradeTests
     }
 
     [Fact]
-    public void DeviceImageManifest_BundledV3RulesMatchAllCoreDevicesWithOnlineUrls()
+    public void DeviceImageManifest_BundledV4RulesMatchAllCoreDevicesWithSingleMouseUrls()
     {
         string path = Path.Combine(FindRepoRoot(), "src", "GearDeck.App", "Assets", "device-images.json");
         var manifest = DeviceImageRuleMatcher.ParseManifest(File.ReadAllText(path));
-        Assert.True(manifest.Version >= 3);
+        Assert.True(manifest.Version >= 4);
 
         var targets = new PeripheralDevice[]
         {
             new() { Id = "logi:C54F:01", Name = "Logitech PRO X3 SUPERSTRIKE", Kind = DeviceKind.Mouse, Provider = "Logitech", VendorId = 0x046D, ProductId = 0xC54F },
             new() { Id = "razer:00C1", Name = "Razer Viper V3 Pro", Kind = DeviceKind.Mouse, Provider = "Razer", VendorId = 0x1532, ProductId = 0x00C1 },
             new() { Id = "aula:38A6:2F1A", Name = "AULA 昆仑 L5 Ultra", Kind = DeviceKind.Mouse, Provider = "AULA", VendorId = 0x38A6, ProductId = 0x2F1A },
-            new() { Id = "am:0703", Name = "Angry Miao AM Infinity .97", Kind = DeviceKind.Mouse, Provider = "AngryMiao", VendorId = 0x0E8D, ProductId = 0x0703 },
+            new() { Id = "am:0E8D-0703", Name = "Angry Miao AM Infinity .97", Kind = DeviceKind.Mouse, Provider = "AngryMiao", VendorId = 0x0E8D, ProductId = 0x0703 },
+            new() { Id = "am:0E8D-0880", Name = "Angry Miao AM Infinity .97", Kind = DeviceKind.Mouse, Provider = "AngryMiao", VendorId = 0x0E8D, ProductId = 0x0880 },
             new() { Id = "rog:1B7A", Name = "ROG 游侠 2 RX 98 无线", Kind = DeviceKind.Keyboard, Provider = "ROG", VendorId = 0x0B05, ProductId = 0x1B7A },
             new() { Id = "sony:0EC2", Name = "Sony INZONE Buds", Kind = DeviceKind.Headset, Provider = "Sony", VendorId = 0x054C, ProductId = 0x0EC2 },
         };
@@ -210,6 +211,68 @@ public class V102UpgradeTests
             Assert.True(m.IsExactModelMatch, $"Expected exact VID:PID match for {d.Name} ({d.Id})");
             Assert.False(string.IsNullOrWhiteSpace(m.CloudUrl) && string.IsNullOrWhiteSpace(m.PiperSvg), $"Expected online URL for {d.Name}");
         }
+
+        var amMatch = DeviceImageRuleMatcher.MatchRule(targets[3], manifest.Rules);
+        Assert.Equal("https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png", amMatch.CloudUrl);
+    }
+
+    [Fact]
+    public void AngryMiaoRace_ParsesLiveDongleCaptures_BatteryDpiAndDebounce()
+    {
+        // Live 0E8D:0703 getDongleBattery (12303 / 0x300F) => 100% full dock spare battery (both 62B HID report and trimmed)
+        byte[] liveDockBat = [0x14, 0x0D, 0x00, 0x05, 0x5B, 0x09, 0x00, 0x0F, 0x30, 0x00, 0x02, 0x64, 0xFF, 0x01, 0x22, 0x01];
+        byte[] liveDockBat62 = new byte[62];
+        liveDockBat.CopyTo(liveDockBat62, 0);
+        Assert.Single(AngryMiaoRaceProtocol.ParseFeature14Frames(liveDockBat62));
+        var dockFrames = AngryMiaoRaceProtocol.ParseFeature14Frames(liveDockBat);
+        Assert.Single(dockFrames);
+        Assert.Equal(12303, dockFrames[0].RaceId);
+        var dockBat = AngryMiaoRaceProtocol.ParseBatteryPayload(dockFrames[0].Payload);
+        Assert.NotNull(dockBat);
+        Assert.True(dockBat!.Exists);
+        Assert.Equal(100, dockBat.Percent);
+        Assert.True(dockBat.Full);
+        Assert.False(dockBat.Charging);
+
+        // Live 0E8D:0703 getDonglePairedList (11414 / 0x2C96) => deviceId 0x81
+        byte[] livePaired = [0x14, 0x11, 0x00, 0x05, 0x5B, 0x0D, 0x00, 0x96, 0x2C, 0x00, 0x00, 0xBF, 0xA3, 0x5F, 0x45, 0xB3, 0x6C, 0x81, 0x01, 0x01];
+        var pairedFrames = AngryMiaoRaceProtocol.ParseFeature14Frames(livePaired);
+        var entries = AngryMiaoRaceProtocol.ParseDongleDeviceList(pairedFrames[0].Payload);
+        Assert.Single(entries);
+        Assert.Equal(0x81, entries[0].DeviceId);
+
+        // Live 0E8D:0703 getFwVersion dual-frame (ignores [0x00] ack and keeps v1.8.4 payload)
+        byte[] liveFw = [0x14, 0x16, 0x00, 0x05, 0x5B, 0x03, 0x00, 0x07, 0x1C, 0x00, 0x05, 0x5D, 0x0B, 0x00, 0x07, 0x1C, 0x00, 0x00, 0x06, 0x76, 0x31, 0x2E, 0x38, 0x2E, 0x34];
+        var fwFrames = AngryMiaoRaceProtocol.ParseFeature14Frames(liveFw);
+        Assert.Single(fwFrames);
+        Assert.Equal(7175, fwFrames[0].RaceId);
+        Assert.Contains("v1.8.4", System.Text.Encoding.ASCII.GetString(fwFrames[0].Payload));
+
+        // Frame builder + 8-stage DPI payload parse + 8000 Hz debounce scaling
+        byte[] race = AngryMiaoRaceProtocol.BuildRaceCommand(12484, [1, 0x20, 0x03, 0x40, 0x06]); // stage 1: 800/1600
+        byte[] feat14 = AngryMiaoRaceProtocol.BuildFeature14Report(0x80, race, 62);
+        Assert.Equal(62, feat14.Length);
+        Assert.Equal(0x14, feat14[0]);
+        Assert.Equal(11, feat14[1]);
+        Assert.Equal(0x80, feat14[2]);
+
+        var dpiPay = new byte[3 + 8 * 4]; // status=0, count=2, active=1, 8-slot stride
+        dpiPay[0] = 0; dpiPay[1] = 2; dpiPay[2] = 1;
+        dpiPay[3] = 0x90; dpiPay[4] = 0x01; // stage 0 X = 400
+        dpiPay[5] = 0x20; dpiPay[6] = 0x03; // stage 1 X = 800
+        dpiPay[19] = 0x90; dpiPay[20] = 0x01; // stage 0 Y = 400
+        dpiPay[21] = 0x40; dpiPay[22] = 0x06; // stage 1 Y = 1600
+        var dpi = AngryMiaoRaceProtocol.ParseDpiPayload(dpiPay);
+        Assert.NotNull(dpi);
+        Assert.Equal(1, dpi!.CurrentIndex);
+        Assert.False(dpi.SyncXY);
+        Assert.Equal((800, 1600), dpi.Stages[1]);
+
+        var (w8k, rf8k, bt8k) = AngryMiaoRaceProtocol.EncodeDebounceBytes(8000, 15);
+        Assert.Equal(31, w8k);
+        Assert.Equal(31, rf8k);
+        Assert.Equal(4, bt8k);
+        Assert.Equal(15, AngryMiaoRaceProtocol.DecodeDebounceMs(8000, w8k));
     }
 
     [Fact]
@@ -256,5 +319,161 @@ public class V102UpgradeTests
         Assert.NotNull(apiInfo);
         Assert.Equal("CAFE1234", apiInfo!.InstallerSha256);
         Assert.EndsWith("GearDeck-Setup-v1.0.2-win-x64.exe", apiInfo.RawInstallerUrl);
+    }
+
+    [Fact]
+    public void AtkModelCatalog_DisambiguatesCompxAndBitmouseCidMid_AndPersistsReceiverModels()
+    {
+        // Same (1, 4) CID/MID resolves to different models under Bitmouse vs CompX
+        string? bmMiniPlus = AtkModelCatalog.ResolveModelName(
+            0x373B, 0x1303, (1, 4), "Wireless mouse", AtkProtocolFamily.Bitmouse);
+        Assert.Equal("ATK A9 Mini +", bmMiniPlus);
+        Assert.Equal(AtkSensorKind.Paw3955Master,
+            AtkModelCatalog.ResolveSensor(0x373B, 0x1303, (1, 4), AtkProtocolFamily.Bitmouse, bmMiniPlus));
+
+        string? cmxZeroEx = AtkModelCatalog.ResolveModelName(
+            0x373B, 0x11CC, (1, 4), "Wireless mouse", AtkProtocolFamily.Compx);
+        Assert.Equal("ATK ZERO EX", cmxZeroEx);
+        Assert.Equal(AtkSensorKind.Paw3950Ultra,
+            AtkModelCatalog.ResolveSensor(0x373B, 0x11CC, (1, 4), AtkProtocolFamily.Compx, cmxZeroEx));
+
+        // Bitmouse (1, 16) -> ATK A9 Mini (PAW3950Ultra)
+        string? bmMini = AtkModelCatalog.ResolveModelName(
+            0x373B, 0x1303, (1, 16), "Wireless mouse", AtkProtocolFamily.Bitmouse);
+        Assert.Equal("ATK A9 Mini", bmMini);
+        Assert.Equal(AtkSensorKind.Paw3950Ultra,
+            AtkModelCatalog.ResolveSensor(0x373B, 0x1303, (1, 16), AtkProtocolFamily.Bitmouse, bmMini));
+
+        Assert.True(AtkModelCatalog.IsGenericReceiverName("Wireless mouse"));
+        Assert.True(AtkModelCatalog.IsGenericReceiverName("ATK 373B:1303"));
+        Assert.False(AtkModelCatalog.IsGenericReceiverName("ATK A9 Mini"));
+
+        AtkModelCatalog.SeedPersistentReceiverModels(new Dictionary<string, string>
+        {
+            ["atk:373B-13FE"] = "ATK A9 Mini",
+            ["atk:373B-13FF"] = "Wireless mouse",
+        });
+        Assert.Equal("ATK A9 Mini",
+            AtkModelCatalog.ResolveModelName(0x373B, 0x13FE, null, "Wireless mouse"));
+        Assert.Null(
+            AtkModelCatalog.ResolveModelName(0x373B, 0x13FF, null, null));
+        Assert.Equal("Wireless mouse",
+            AtkModelCatalog.ResolveModelName(0x373B, 0x13FF, null, "Wireless mouse"));
+    }
+
+    [Fact]
+    public void Compx08_UltraAndPaw3955Stages_And01MmLod_RoundTripAccurately()
+    {
+        foreach (int targetDpi in new[] { 400, 850, 12500, 36000 })
+        {
+            byte[] encoded = Compx08Protocol.EncodeDpiStageUltra(targetDpi, targetDpi);
+            var (x, y) = Compx08Protocol.DecodeDpiStageUltra(encoded);
+            Assert.Equal((targetDpi, targetDpi), (x, y));
+        }
+
+        byte[] p3955 = Compx08Protocol.EncodePaw3955Stage(42000, 42000);
+        Assert.Equal((42000, 42000), Compx08Protocol.DecodePaw3955Stage(p3955));
+
+        byte rateCode = Compx08Protocol.EncodePollingRate(4000)!.Value;
+        byte[] hdr =
+        [
+            rateCode, Compx08Protocol.ChecksumByte(rateCode),
+            0x05, Compx08Protocol.ChecksumByte(0x05), // StageCount = 5 (0x0002)
+            0x03, Compx08Protocol.ChecksumByte(0x03), // ActiveStageIndex = 3 (0x0004)
+            0, 0, 0, 0,
+            11, Compx08Protocol.ChecksumByte(11),     // 1.1 mm LOD
+        ];
+        byte[] stg0 = Compx08Protocol.EncodeDpiStageUltra(400, 400);
+        byte[] stg1 = Compx08Protocol.EncodeDpiStageUltra(800, 800);
+        byte[] stg2 = Compx08Protocol.EncodeDpiStageUltra(1600, 1600);
+        byte[] stg3 = Compx08Protocol.EncodeDpiStageUltra(3200, 3200);
+        byte[] stg4 = Compx08Protocol.EncodeDpiStageUltra(12000, 12000);
+        byte[] allStages = [.. stg0, .. stg1, .. stg2, .. stg3, .. stg4];
+
+        Assert.True(Compx08Protocol.TryParseVerifiedConfig(
+            hdr, allStages, out var cfg, useUltraDpi: true, sensor: AtkSensorKind.Paw3950Ultra));
+        Assert.Equal(5, cfg.StageCount);
+        Assert.Equal(3, cfg.ActiveStageIndex);
+        Assert.Equal((3200, 3200), cfg.Stages[3]);
+        Assert.Equal(11, cfg.LodLevel);
+    }
+
+    [Fact]
+    public void VendorDriverCatalog_RogUwpShellUriAndFlydigiWeb_ResolveCleanly()
+    {
+        var rogLinks = VendorDriverCatalog.Resolve(new PeripheralDevice
+        {
+            Id = "rog:0b05-1b7a",
+            Name = "ROG Strix Scope II 96 RX",
+            Kind = DeviceKind.Keyboard,
+            VendorId = 0x0B05,
+            Provider = "ROG",
+        });
+        Assert.NotNull(rogLinks.Local);
+        Assert.Equal(@"shell:AppsFolder\B9ECED6F.ArmouryCrate_qmba6cd70vzyy!App", rogLinks.Local!.ShellUri);
+        Assert.Empty(rogLinks.Local.ExeCandidatePaths);
+        Assert.Equal("https://gearlink.asus.com", rogLinks.Web?.Url);
+
+        var flyLinks = VendorDriverCatalog.Resolve(new PeripheralDevice
+        {
+            Id = "flydigi:cd2",
+            Name = "飞智充电底座 CD2",
+            Kind = DeviceKind.Controller,
+            VendorId = 0x37D7,
+            Provider = "Flydigi",
+        });
+        Assert.Equal("https://space_station.flydigi.com/", flyLinks.Web?.Url);
+    }
+
+    [Fact]
+    public void BatteryHistoryAndDualEarChipText_UsesHistoryWhenSleepingAndStacksLeftRight()
+    {
+        var cache = new Dictionary<string, CachedBatteryRecord>(StringComparer.OrdinalIgnoreCase);
+
+        var liveMouse = new PeripheralDevice { Id = "m:1", Name = "Mouse", Kind = DeviceKind.Mouse, Provider = "Mock", BatteryPercent = 84 };
+        var liveBuds = new PeripheralDevice
+        {
+            Id = "sony:buds",
+            Name = "Sony INZONE Buds",
+            Kind = DeviceKind.Headset,
+            Provider = "Sony",
+            BatteryPercent = 82,
+            LeftEarPercent = 88,
+            RightEarPercent = 82,
+            RightEarCharging = true,
+        };
+        var neverSeen = new PeripheralDevice { Id = "k:never", Name = "New Keyboard", Kind = DeviceKind.Keyboard, Provider = "Mock", BatteryPercent = null };
+
+        Assert.True(BatteryHistoryHelper.RecordObservedDevices(cache, [liveMouse, liveBuds, neverSeen]));
+        Assert.False(cache.ContainsKey("k:never"));
+        Assert.False(BatteryHistoryHelper.RecordObservedDevices(cache, [liveMouse, liveBuds]));
+
+        var liveChip = BatteryHistoryHelper.BuildChipText(liveBuds, "", showPct: true, cache["sony:buds"]);
+        Assert.Equal("L 88%", liveChip.TextTop);
+        Assert.Equal("R 82%\u26A1", liveChip.TextBottom);
+        Assert.False(liveChip.UsedHistoricalFallback);
+
+        var sleepingBuds = new PeripheralDevice
+        {
+            Id = "sony:buds",
+            Name = "Sony INZONE Buds",
+            Kind = DeviceKind.Headset,
+            Provider = "Sony",
+            BatteryPercent = null,
+            LeftEarPercent = null,
+            RightEarPercent = null,
+            RightEarCharging = false,
+            IsSleeping = true,
+            State = BatteryState.Unknown,
+        };
+        var sleepingChip = BatteryHistoryHelper.BuildChipText(sleepingBuds, "", showPct: true, cache["sony:buds"]);
+        Assert.Equal("L 88%", sleepingChip.TextTop);
+        Assert.Equal("R 82%", sleepingChip.TextBottom);
+        Assert.True(sleepingChip.UsedHistoricalFallback);
+
+        var neverChip = BatteryHistoryHelper.BuildChipText(neverSeen, "", showPct: true, null);
+        Assert.Equal("--", neverChip.Text);
+        Assert.Equal("", neverChip.TextTop);
+        Assert.False(neverChip.UsedHistoricalFallback);
     }
 }

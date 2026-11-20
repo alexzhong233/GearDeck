@@ -11,21 +11,69 @@ public static class VendorDriverLauncher
     {
         ExternalConfiguratorGuard.PauseForExternalDriver(info.DisplayName, TimeSpan.FromMinutes(3));
 
-        // 1. 若已在运行，尝试优先切到已装好的可执行文件
+        // 1. 尝试明确配置或注册表里的桌面客户端 exe（排除后台 service/helper/unins）
         string? exe = ResolveInstalledExe(info);
         if (!string.IsNullOrWhiteSpace(exe) && TryShellStart(exe))
             return (true, $"已启动 {info.DisplayName}，后台轮询已自动暂停 180 秒以避免抢占控制权。");
 
-        // 2. 尝试 Store / Shell URI（如 Armoury Crate）
-        if (!string.IsNullOrWhiteSpace(info.ShellUri))
+        // 2. 尝试 UWP / Store Shell URI（如 ROG Armoury Crate）
+        if (!string.IsNullOrWhiteSpace(info.ShellUri) && IsShellAppInstalled(info.ShellUri))
         {
             if (TryShellStart("explorer.exe", info.ShellUri))
-                return (true, $"已触发 {info.DisplayName}，后台轮询已自动暂停 180 秒以避免抢占控制权。");
+                return (true, $"已启动 {info.DisplayName}，后台轮询已自动暂停 180 秒以避免抢占控制权。");
         }
 
         // 3. 本地未检测到安装包时打开官方下载页面
         TryOpenWebBrowser(info.DownloadUrl, preferChromium: false);
         return (false, $"未在本机检测到已安装的 {info.DisplayName}，已为你打开官方下载页（并暂停后台轮询）。");
+    }
+
+    private static bool IsBackgroundOrInstallerExe(string path)
+    {
+        string name = Path.GetFileName(path);
+        return name.Contains("service", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("helper", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("unins", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("update", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("setup", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("install", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("crash", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("daemon", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsShellAppInstalled(string shellUri)
+    {
+        const string prefix = @"shell:AppsFolder\";
+        if (!shellUri.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        string appId = shellUri[prefix.Length..];
+        int bang = appId.IndexOf('!');
+        string pfn = bang > 0 ? appId[..bang] : appId;
+        if (string.IsNullOrWhiteSpace(pfn))
+            return true;
+
+        try
+        {
+            string pkgDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Packages",
+                pfn);
+            if (Directory.Exists(pkgDir))
+                return true;
+
+            using var famKey = Registry.CurrentUser.OpenSubKey(
+                $@"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Families\{pfn}");
+            if (famKey != null)
+                return true;
+        }
+        catch
+        {
+            // 若不确定（如受限权限读取注册表失败），仍允许 explorer 触发 Shell URI
+            return true;
+        }
+
+        return false;
     }
 
     public static (bool Launched, string Message) LaunchWeb(WebDriverInfo info)
@@ -56,7 +104,7 @@ public static class VendorDriverLauncher
             if (Directory.Exists(localCandidate))
             {
                 string? exe = Directory.EnumerateFiles(localCandidate, "*.exe", SearchOption.TopDirectoryOnly)
-                    .FirstOrDefault(f => !f.Contains("unins", StringComparison.OrdinalIgnoreCase));
+                    .FirstOrDefault(f => !IsBackgroundOrInstallerExe(f));
                 if (exe != null) return exe;
             }
         }
@@ -67,7 +115,7 @@ public static class VendorDriverLauncher
             {
                 var running = Process.GetProcessesByName(procName).FirstOrDefault();
                 string? modulePath = running?.MainModule?.FileName;
-                if (!string.IsNullOrWhiteSpace(modulePath) && File.Exists(modulePath))
+                if (!string.IsNullOrWhiteSpace(modulePath) && File.Exists(modulePath) && !IsBackgroundOrInstallerExe(modulePath))
                     return modulePath;
             }
         }
@@ -100,16 +148,21 @@ public static class VendorDriverLauncher
                         string? disp = sub?.GetValue("DisplayName") as string;
                         if (string.IsNullOrWhiteSpace(disp) || !disp.Contains(nameHint, StringComparison.OrdinalIgnoreCase))
                             continue;
+                        if (disp.Contains("Service", StringComparison.OrdinalIgnoreCase))
+                            continue;
 
                         string? icon = (sub?.GetValue("DisplayIcon") as string)?.Split(',')[0].Trim('"', ' ');
-                        if (!string.IsNullOrWhiteSpace(icon) && icon.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(icon))
+                        if (!string.IsNullOrWhiteSpace(icon) &&
+                            icon.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                            !IsBackgroundOrInstallerExe(icon) &&
+                            File.Exists(icon))
                             return icon;
 
                         string? installLoc = (sub?.GetValue("InstallLocation") as string)?.Trim('"', ' ');
                         if (!string.IsNullOrWhiteSpace(installLoc) && Directory.Exists(installLoc))
                         {
                             string? exe = Directory.EnumerateFiles(installLoc, "*.exe", SearchOption.TopDirectoryOnly)
-                                .FirstOrDefault(f => !f.Contains("unins", StringComparison.OrdinalIgnoreCase) && !f.Contains("update", StringComparison.OrdinalIgnoreCase));
+                                .FirstOrDefault(f => !IsBackgroundOrInstallerExe(f));
                             if (exe != null) return exe;
                         }
                     }

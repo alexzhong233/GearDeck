@@ -438,9 +438,9 @@ public sealed class RazerProvider : ITunablePeripheralProvider
 
         caps.SupportedLodOptions =
         [
-            new(0, "低 (Low)"),
-            new(1, "中 (Medium)"),
-            new(2, "高 (High)"),
+            new(0, "1.0 mm (低)"),
+            new(1, "1.5 mm (中)"),
+            new(2, "2.0 mm (高)"),
         ];
 
         int? explicitCached = ExplicitSymLodCache.TryGetValue(caps.DeviceId, out int cl) ? cl : null;

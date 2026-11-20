@@ -108,8 +108,8 @@ public class HardwareProtocolTests
         byte[] hdr =
         [
             rateCode, Compx08Protocol.ChecksumByte(rateCode), // rate=8000
-            0x01, Compx08Protocol.ChecksumByte(0x01),         // active stage=1
-            0x03, Compx08Protocol.ChecksumByte(0x03),         // 3 stages
+            0x03, Compx08Protocol.ChecksumByte(0x03),         // 3 stages (0x0002)
+            0x01, Compx08Protocol.ChecksumByte(0x01),         // active stage=1 (0x0004)
             0, 0, 0, 0,
             0x01, Compx08Protocol.ChecksumByte(0x01),         // lod=1
         ];

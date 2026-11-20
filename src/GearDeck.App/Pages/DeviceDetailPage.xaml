@@ -10,7 +10,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="HeroColumnDef" Width="268" />
+            <ColumnDefinition x:Name="HeroColumnDef" Width="284" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
@@ -91,6 +91,47 @@
                     </StackPanel>
                 </Border>
 
+                <!-- 硬件状态概览（常驻左侧） -->
+                <Border x:Name="OverviewSummaryCard"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="12" Padding="14">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="硬件状态概览" FontSize="15" FontWeight="SemiBold" />
+                        <Grid ColumnSpacing="8" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Border Grid.Row="0" Grid.Column="0" Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="电量 / 充电" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="OverviewBatteryText" Text="-" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="0" Grid.Column="1" Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="DPI / 回报率" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="OverviewPerfText" Text="-" FontSize="14" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="协议与特征" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="OverviewProtocolText" Text="-" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
                 <!-- 与原生驱动共存退让提示 -->
                 <InfoBar x:Name="CoexistenceBanner"
                          IsOpen="False" IsClosable="False" Severity="Informational"
@@ -104,26 +145,61 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- 右侧分段胶囊标签页 + 滚动内容 -->
+        <!-- 右侧顶部配置文件快切栏 + 三标签页 + 滚动内容 -->
         <Grid x:Name="RightContentPane" Grid.Row="1" Grid.Column="1" RowSpacing="12">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- 分段标签导航条（仿 G HUB 顶部胶囊 Tabs） -->
-            <Border Grid.Row="0" HorizontalAlignment="Left"
+            <!-- 独立于性能/RT/高级之上的顶部配置文件快切栏 -->
+            <Border x:Name="TopProfileBarCard" Grid.Row="0" Visibility="Collapsed"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="14,10">
+                <StackPanel Spacing="10">
+                    <Grid ColumnSpacing="12" RowSpacing="6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <TextBlock Text="配置文件" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <StackPanel x:Name="OnboardProfileSection" Orientation="Horizontal" Spacing="6" Visibility="Collapsed" VerticalAlignment="Center">
+                                <controls:ResponsiveWrapPanel x:Name="OnboardProfileButtonsPanel" Spacing="6" LineSpacing="6" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Button x:Name="ProbeAllSlotsBtn" Content="扫描板载槽位" Padding="10,5" FontSize="12" Visibility="Collapsed" />
+                            <StackPanel x:Name="HostModeCard" Orientation="Horizontal" Spacing="8" Visibility="Collapsed" VerticalAlignment="Center">
+                                <TextBlock Text="运行模式:" FontSize="12" VerticalAlignment="Center"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <ToggleSwitch x:Name="HostModeSwitch" OnContent="板载内存" OffContent="G HUB 宿主"
+                                              MinWidth="0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel x:Name="SavePresetSection" Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBox x:Name="SavePresetNameBox" PlaceholderText="保存当前参数为快速预设（如：CS2 / 办公）" Width="250" />
+                            <Button x:Name="SaveDevicePresetBtn" Style="{ThemeResource AccentButtonStyle}" Content="保存预设" />
+                        </StackPanel>
+                        <controls:ResponsiveWrapPanel x:Name="DeviceSavedPresetsPanel" Spacing="8" LineSpacing="6" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 分段标签导航条（性能 / 按键 & RT / 高级） -->
+            <Border Grid.Row="1" HorizontalAlignment="Left"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1" CornerRadius="10" Padding="4">
                 <StackPanel Orientation="Horizontal" Spacing="4">
-                    <Button x:Name="TabOverviewBtn" Tag="overview" CornerRadius="7" Padding="14,7">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE9D9;" FontSize="13" />
-                            <TextBlock Text="概览" />
-                        </StackPanel>
-                    </Button>
                     <Button x:Name="TabPerfBtn" Tag="perf" CornerRadius="7" Padding="14,7">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <FontIcon Glyph="&#xE945;" FontSize="13" />
@@ -142,96 +218,28 @@
                             <TextBlock Text="高级" />
                         </StackPanel>
                     </Button>
-                    <Button x:Name="TabProfilesBtn" Tag="profiles" CornerRadius="7" Padding="14,7">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE81E;" FontSize="13" />
-                            <TextBlock Text="配置文件" />
-                        </StackPanel>
-                    </Button>
                 </StackPanel>
             </Border>
 
-            <InfoBar Grid.Row="1" x:Name="StatusInfoBar" IsOpen="False" IsClosable="True" />
+            <InfoBar Grid.Row="2" x:Name="StatusInfoBar" IsOpen="False" IsClosable="True" />
 
-            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-                <StackPanel Spacing="14" MaxWidth="920" HorizontalAlignment="Stretch" Padding="0,0,8,24">
+            <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="14" HorizontalAlignment="Stretch" Padding="0,0,8,24">
 
-                    <!-- ============ TAB 1: 概览 ============ -->
-                    <StackPanel x:Name="PanelOverview" Spacing="14" Visibility="Visible">
-                        <Border x:Name="OverviewSummaryCard"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="10" Padding="18">
-                            <StackPanel Spacing="12">
-                                <TextBlock Text="硬件状态概览" FontSize="17" FontWeight="SemiBold" />
-                                <Grid ColumnSpacing="10" RowSpacing="10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0" Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                            CornerRadius="8" Padding="12">
-                                        <StackPanel Spacing="4">
-                                            <TextBlock Text="电量 / 充电" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <TextBlock x:Name="OverviewBatteryText" Text="-" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="1" Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                            CornerRadius="8" Padding="12">
-                                        <StackPanel Spacing="4">
-                                            <TextBlock Text="当前 DPI / 回报率" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <TextBlock x:Name="OverviewPerfText" Text="-" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Grid.Column="2" Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                            CornerRadius="8" Padding="12">
-                                        <StackPanel Spacing="4">
-                                            <TextBlock Text="协议与特征" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <TextBlock x:Name="OverviewProtocolText" Text="-" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </Border>
-                                </Grid>
-                            </StackPanel>
-                        </Border>
+                    <!-- 兜底提示卡（休眠或只读/未知协议设备） -->
+                    <Border x:Name="FallbackCard" Visibility="Collapsed"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="10" Padding="18">
+                        <StackPanel Spacing="6">
+                            <TextBlock x:Name="FallbackTitle" FontSize="16" FontWeight="SemiBold" />
+                            <TextBlock x:Name="FallbackMessage" FontSize="13" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </Border>
 
-                        <!-- 兜底提示卡（休眠或只读/未知协议设备） -->
-                        <Border x:Name="FallbackCard" Visibility="Collapsed"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="10" Padding="18">
-                            <StackPanel Spacing="6">
-                                <TextBlock x:Name="FallbackTitle" FontSize="16" FontWeight="SemiBold" />
-                                <TextBlock x:Name="FallbackMessage" FontSize="13" TextWrapping="Wrap"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
-                        </Border>
-
-                        <!-- 单设备低电提醒策略 -->
-                        <Border x:Name="LowBatteryPolicyCard"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="10" Padding="18">
-                            <StackPanel Spacing="12">
-                                <TextBlock Text="单设备低电量提醒策略" FontSize="17" FontWeight="SemiBold" />
-                                <ToggleSwitch x:Name="DeviceLowBatEnableSwitch"
-                                              Header="为此设备启用低电量通知" IsOn="True" />
-                                <ToggleSwitch x:Name="DeviceLowBatCustomSwitch"
-                                              Header="使用独立阈值（关闭时跟随全局阈值）" IsOn="False" />
-                                <StackPanel x:Name="DeviceLowBatThresholdRow" Orientation="Horizontal" Spacing="14" Visibility="Collapsed">
-                                    <Slider x:Name="DeviceLowBatSlider" Width="260"
-                                            Maximum="80" Minimum="0" StepFrequency="5" Value="20" />
-                                    <TextBlock x:Name="DeviceLowBatValueText" Text="20%" VerticalAlignment="Center"
-                                               FontWeight="SemiBold" MinWidth="46" />
-                                </StackPanel>
-                                <ToggleSwitch x:Name="DeviceLowBatNotifySwitch"
-                                              Header="弹出桌面右下角低电量提醒" IsOn="True" />
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-
-                    <!-- ============ TAB 2: 性能 ============ -->
-                    <StackPanel x:Name="PanelPerf" Spacing="14" Visibility="Collapsed">
+                    <!-- ============ TAB 1: 性能 ============ -->
+                    <StackPanel x:Name="PanelPerf" Spacing="14" Visibility="Visible">
                         <!-- DPI 与档位 -->
                         <Border x:Name="DpiCard" Visibility="Collapsed"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -293,11 +301,8 @@
                                     <controls:ResponsiveWrapPanel x:Name="DpiPresetsPanel" Spacing="8" LineSpacing="6" />
                                 </StackPanel>
 
-                                <StackPanel Orientation="Horizontal" Spacing="12">
-                                    <Button x:Name="ApplyDpiBtn" Style="{ThemeResource AccentButtonStyle}" Content="应用 DPI 到设备" />
-                                    <TextBlock x:Name="DpiRangeHint" VerticalAlignment="Center" FontSize="12"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                </StackPanel>
+                                <TextBlock x:Name="DpiRangeHint" FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
                         </Border>
 
@@ -356,8 +361,25 @@
                                     </StackPanel>
                                 </Grid>
 
-                                <!-- Left / Right 10 格可视化进度条 -->
+                                <!-- Left / Right 10 格可视化进度条 + 实时按压测试区 -->
                                 <StackPanel x:Name="AnalogVisualBarsPanel" Spacing="8" />
+                                <Border x:Name="AnalogPressTestPad"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1" CornerRadius="8" Padding="12,8">
+                                    <Grid ColumnSpacing="10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="在此区域按住左键 / 右键实时测试按压力度与 RT 动态触发（右键已屏蔽系统菜单）"
+                                                   FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Grid.Column="1" x:Name="AnalogLiveStateText" Text="待按压测试"
+                                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    </Grid>
+                                </Border>
 
                                 <!-- 独立模式下选择左/右键 -->
                                 <StackPanel x:Name="AnalogSideSelectorPanel" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
@@ -559,47 +581,6 @@
                                 </Grid>
 
                                 <Button x:Name="ApplyPowerBtn" Style="{ThemeResource AccentButtonStyle}" Content="应用电源与省电参数" />
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-
-                    <!-- ============ TAB 5: 配置文件 ============ -->
-                    <StackPanel x:Name="PanelProfiles" Spacing="14" Visibility="Collapsed">
-                        <Border x:Name="HostModeCard" Visibility="Collapsed"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="10" Padding="18">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="运行模式切换" FontSize="17" FontWeight="SemiBold" />
-                                <ToggleSwitch x:Name="HostModeSwitch"
-                                              Header="罗技 On-Board 内存模式（关闭以交还给 G HUB 宿主控制）" />
-                            </StackPanel>
-                        </Border>
-
-                        <Border x:Name="ProfileCard" Visibility="Collapsed"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1" CornerRadius="10" Padding="18">
-                            <StackPanel Spacing="14">
-                                <Grid>
-                                    <TextBlock Text="板载配置文件与本地预设" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                    <Button x:Name="ProbeAllSlotsBtn" Content="扫描所有板载槽位" HorizontalAlignment="Right" Visibility="Collapsed" />
-                                </Grid>
-
-                                <StackPanel x:Name="OnboardProfileSection" Spacing="8" Visibility="Collapsed">
-                                    <TextBlock Text="切换设备板载槽位" FontSize="13" FontWeight="SemiBold" />
-                                    <controls:ResponsiveWrapPanel x:Name="OnboardProfileButtonsPanel" Spacing="8" LineSpacing="6" />
-                                </StackPanel>
-
-                                <StackPanel x:Name="SavePresetSection" Spacing="8">
-                                    <TextBlock Text="保存当前调参为 GearDeck 预设（可用于游戏自动切换）" FontSize="13" FontWeight="SemiBold" />
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <TextBox x:Name="SavePresetNameBox" PlaceholderText="例如：CS2 低敏 / 日常办公" Width="260" />
-                                        <Button x:Name="SaveDevicePresetBtn" Style="{ThemeResource AccentButtonStyle}" Content="保存预设" />
-                                    </StackPanel>
-                                </StackPanel>
-
-                                <StackPanel x:Name="DeviceSavedPresetsPanel" Spacing="8" />
                             </StackPanel>
                         </Border>
                     </StackPanel>

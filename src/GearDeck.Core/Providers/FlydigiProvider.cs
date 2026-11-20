@@ -33,6 +33,9 @@ public sealed class FlydigiProvider : ITunablePeripheralProvider
         BatteryState ChargeState,
         string Transport);
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> LastTriggerModeByDevice =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public string Name => ProviderName;
 
     public bool CanHandleDevice(string deviceId)
@@ -169,6 +172,8 @@ public sealed class FlydigiProvider : ITunablePeripheralProvider
                     new(3, "机枪后坐震动", "按压触发脉冲式震动反馈"),
                     new(4, "微动快速锁死", "短行程瞬间触发微动式急停（适合 FPS 急停开镜）"),
                 ];
+                if (LastTriggerModeByDevice.TryGetValue(deviceId, out int cachedMode))
+                    caps.CurrentPerformanceMode = Math.Clamp(cachedMode, 0, 4);
             }
 
             caps.StatusMessage = $"已连接「{info.ModelName}」（{info.Transport}）· 支持 1~4 号板载配置实时切换" +
@@ -215,6 +220,8 @@ public sealed class FlydigiProvider : ITunablePeripheralProvider
                 _ = ch.Read(100);
                 if (!okL || !okR)
                     errors.Add("力反馈扳机模式写入失败");
+                else
+                    LastTriggerModeByDevice[deviceId] = Math.Clamp(triggerMode, 0, 4);
             }
 
             Thread.Sleep(50);

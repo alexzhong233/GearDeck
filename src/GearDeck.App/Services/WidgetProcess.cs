@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using GearDeck.Core.Models;
+using GearDeck.Core.Services;
 
 namespace GearDeck.App.Services;
 
@@ -8,6 +9,7 @@ namespace GearDeck.App.Services;
 public static class WidgetProcess
 {
     private static Process? _process;
+    private static string? _lastWrittenJson;
 
     private static string ExePath => Path.Combine(AppContext.BaseDirectory, "widget", "GearDeck.Widget.exe");
     private static string StatePath => Path.Combine(
@@ -89,7 +91,7 @@ public static class WidgetProcess
         {
             var members = MembersOf(cfg.GroupId, devices);
             var def = members.FirstOrDefault(d => d.Id == cfg.DefaultDeviceId)
-                      ?? members.FirstOrDefault(d => d.BatteryPercent != null)
+                      ?? members.FirstOrDefault(d => d.BatteryPercent != null || d.LeftEarPercent != null || d.RightEarPercent != null)
                       ?? members.FirstOrDefault();
             string label = cfg.GroupId switch
             {
@@ -101,32 +103,58 @@ public static class WidgetProcess
             };
             string glyph = GroupIconCatalog.ResolveEffectiveGlyph(cfg, members);
             string iconPath = GroupIconCatalog.ResolveValidIconPath(cfg) ?? "";
-            string text;
-            if (def?.FormatDualEarSummary(compact: true) is { } dualText)
+
+            string text = "--";
+            string textTop = "";
+            string textBottom = "";
+            int? effPct = null;
+            bool usedHist = false;
+            bool isLow = false;
+            if (def != null)
             {
-                text = dualText;
+                var cached = App.Settings.GetLastKnownBattery(def.Id);
+                var chipRes = BatteryHistoryHelper.BuildChipText(def, label: "", showPct: true, cached);
+                text = chipRes.Text;
+                textTop = chipRes.TextTop;
+                textBottom = chipRes.TextBottom;
+                effPct = chipRes.EffectivePercent;
+                usedHist = chipRes.UsedHistoricalFallback;
+
+                int? livePct = def.BatteryPercent
+                               ?? (def.LeftEarPercent.HasValue || def.RightEarPercent.HasValue ? chipRes.EffectivePercent : null);
+                isLow = livePct is { } bp && App.Settings.IsDeviceLowBattery(def.Id, bp);
             }
-            else
-            {
-                text = def?.BatteryPercent is { } p ? $"{p}%" : "--";
-                if (def?.State == BatteryState.Charging) text += " \u26A1";
-            }
+
             string tip = label + "\n" + (members.Count == 0
                 ? "（无设备）"
                 : string.Join("\n", members.Select(m =>
                 {
+                    var mc = App.Settings.GetLastKnownBattery(m.Id);
                     if (m.FormatDualEarSummary(compact: false) is { } dualTip)
                         return $"{m.Name}: {dualTip}";
-                    return $"{m.Name}: {(m.BatteryPercent is { } mp ? mp + "%" : "未读到")}";
+                    if (mc != null && (mc.LeftEarPercent.HasValue || mc.RightEarPercent.HasValue))
+                    {
+                        string lt = mc.LeftEarPercent is { } lv ? $"{lv}%" : "--";
+                        string rt = mc.RightEarPercent is { } rv ? $"{rv}%" : "--";
+                        return $"{m.Name}: {(m.IsSleeping ? "休眠 · 上次 " : "上次 ")}L {lt} / R {rt}";
+                    }
+                    if (m.BatteryPercent is { } mp)
+                        return $"{m.Name}: {mp}%{(m.State == BatteryState.Charging ? " ⚡" : "")}";
+                    if (mc?.BatteryPercent is { } histP)
+                        return $"{m.Name}: {(m.IsSleeping ? "休眠 · 上次电量" : "上次电量")} {histP}%";
+                    return $"{m.Name}: 未读到";
                 })));
+
             groups.Add(new WidgetChipOut
             {
                 Glyph = glyph,
                 IconPath = iconPath,
                 Text = text,
+                TextTop = textTop,
+                TextBottom = textBottom,
                 Tip = tip,
-                Low = def?.BatteryPercent is { } bp && App.Settings.IsDeviceLowBattery(def.Id, bp),
-                Dim = def == null || def.BatteryPercent == null,
+                Low = isLow,
+                Dim = def == null || def.IsSleeping || usedHist || effPct == null,
                 GroupId = cfg.GroupId,
             });
         }
@@ -147,11 +175,16 @@ public static class WidgetProcess
             BlockWidth = settings.WidgetBlockWidth,
             Groups = groups,
         };
+        string json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+        if (string.Equals(json, _lastWrittenJson, StringComparison.Ordinal) && File.Exists(StatePath))
+            return;
+
         var dir = Path.GetDirectoryName(StatePath)!;
         Directory.CreateDirectory(dir);
         var tmpPath = StatePath + ".tmp";
-        File.WriteAllText(tmpPath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(tmpPath, json);
         File.Move(tmpPath, StatePath, overwrite: true);
+        _lastWrittenJson = json;
     }
 
     private static List<PeripheralDevice> MembersOf(string groupId, IReadOnlyList<PeripheralDevice> devices)
@@ -190,6 +223,8 @@ public static class WidgetProcess
         public string Glyph { get; set; } = "";
         public string IconPath { get; set; } = "";
         public string Text { get; set; } = "";
+        public string TextTop { get; set; } = "";
+        public string TextBottom { get; set; } = "";
         public string Tip { get; set; } = "";
         public bool Low { get; set; }
         public bool Dim { get; set; }

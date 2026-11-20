@@ -35,43 +35,83 @@ public sealed class AtkProvider : ITunablePeripheralProvider
 
                 (byte Level, bool Charging)? hit = null;
                 (byte Cid, byte Mid)? cidMid = null;
-                var batteryIfaces = g
+                var detectedFamily = AtkProtocolFamily.Unknown;
+
+                var compxIfaces = g
                     .Where(d => HidSafe.PrimaryUsage(d).UsagePage != 0xFF60)
                     .Where(d => HidSafe.MaxOutputLen(d) >= 17 || HidSafe.MaxFeatureLen(d) >= 17)
-                    .OrderByDescending(d => HidSafe.PrimaryUsage(d).UsagePage == 0xFF02 && HidSafe.MaxOutputLen(d) == 17 && HidSafe.MaxInputLen(d) == 17 ? 3 : 0)
-                    .ThenByDescending(d => HidSafe.PrimaryUsage(d).UsagePage is 0xFF02 or 0xFF04 ? 2 : 0)
+                    .OrderByDescending(d =>
+                    {
+                        var u = HidSafe.PrimaryUsage(d);
+                        if (u.UsagePage == 0xFF04 && u.Usage == 2) return 4;
+                        if (u.UsagePage == 0xFF02 && HidSafe.MaxOutputLen(d) == 17 && HidSafe.MaxInputLen(d) == 17) return 3;
+                        if (u.UsagePage is 0xFF02 or 0xFF04) return 2;
+                        return 0;
+                    })
                     .ThenBy(HidSafe.MaxOutputLen)
                     .ToList();
 
-                foreach (var iface in batteryIfaces)
+                foreach (var iface in compxIfaces)
                 {
                     using var ch = HidChannel.TryOpen(iface);
                     if (ch == null) continue;
                     hit = Compx08Protocol.QueryBattery(ch, 0x08, 650);
                     if (hit != null)
                     {
-                        cidMid ??= Compx08Protocol.QueryCidMid(ch, 0x08, 250);
+                        detectedFamily = AtkProtocolFamily.Compx;
+                        cidMid ??= Compx08Protocol.QueryCidMid(ch, 0x08, 250)
+                                   ?? Compx08Protocol.QueryDonglePairedCidMid(ch, 0x08, 250);
                         break;
+                    }
+                }
+
+                // 即使鼠标处于无线休眠状态，也尝试向接收器询问已配对鼠标的 CID/MID（如 373B:1303 -> ATK A9 Mini）
+                if (hit == null && cidMid == null)
+                {
+                    foreach (var iface in compxIfaces.Take(2))
+                    {
+                        using var ch = HidChannel.TryOpen(iface);
+                        if (ch == null) continue;
+                        cidMid = Compx08Protocol.QueryDonglePairedCidMid(ch, 0x08, 220)
+                                 ?? Compx08Protocol.QueryCidMid(ch, 0x08, 220);
+                        if (cidMid != null)
+                        {
+                            detectedFamily = AtkProtocolFamily.Compx;
+                            break;
+                        }
                     }
                 }
 
                 if (hit == null)
                 {
-                    foreach (var iface in g.Where(d => HidSafe.MaxOutputLen(d) >= 64 && HidSafe.MaxInputLen(d) >= 8)
-                                           .OrderByDescending(HidSafe.MaxOutputLen))
+                    foreach (var iface in g.Where(d => HidSafe.PrimaryUsage(d).UsagePage != 0xFF60)
+                                           .Where(d => (HidSafe.PrimaryUsage(d).UsagePage == 0xFF05 || HidSafe.MaxOutputLen(d) >= 48) && HidSafe.MaxInputLen(d) >= 8)
+                                           .OrderByDescending(d => HidSafe.PrimaryUsage(d).UsagePage == 0xFF05 ? 2 : 0)
+                                           .ThenByDescending(HidSafe.MaxOutputLen))
                     {
                         using var ch = HidChannel.TryOpen(iface);
                         if (ch == null) continue;
                         hit = BitmouseProtocol.QueryBattery(ch, wireless);
-                        if (hit != null) break;
+                        if (hit != null)
+                        {
+                            detectedFamily = AtkProtocolFamily.Bitmouse;
+                            cidMid ??= BitmouseProtocol.QueryCidMid(ch, wireless);
+                            break;
+                        }
+                        if (cidMid == null)
+                        {
+                            cidMid = BitmouseProtocol.QueryCidMid(ch, wireless);
+                            if (cidMid != null) detectedFamily = AtkProtocolFamily.Bitmouse;
+                        }
                     }
                 }
 
                 hit ??= QueryViaKeyboard(g);
 
-                string cleanName = AtkModelCatalog.ResolveModelName(vid, pid, cidMid, rawName)
+                string cleanName = AtkModelCatalog.ResolveModelName(vid, pid, cidMid, rawName, detectedFamily)
                     ?? CleanName(rawName)
                     ?? $"ATK {vid:X4}:{pid:X4}";
+                AtkModelCatalog.TryRememberReceiverModel(vid, pid, cleanName);
                 var kind = InferKind(cleanName, g);
 
                 results.Add(new PeripheralDevice
@@ -116,29 +156,38 @@ public sealed class AtkProvider : ITunablePeripheralProvider
         }
 
         string? rawName = list.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+        string? knownName = AtkModelCatalog.ResolveModelName(vid, pid, null, rawName);
         bool wireless = rawName?.Contains("Wired", StringComparison.OrdinalIgnoreCase) != true;
 
-        var batteryIfaces = list
+        var compxIfaces = list
             .Where(d => HidSafe.PrimaryUsage(d).UsagePage != 0xFF60)
             .Where(d => HidSafe.MaxOutputLen(d) >= 17 || HidSafe.MaxFeatureLen(d) >= 17)
-            .OrderByDescending(d => HidSafe.PrimaryUsage(d).UsagePage == 0xFF02 ? 2 : 0)
+            .OrderByDescending(d =>
+            {
+                var u = HidSafe.PrimaryUsage(d);
+                if (u.UsagePage == 0xFF04 && u.Usage == 2) return 4;
+                if (u.UsagePage is 0xFF02 or 0xFF04) return 2;
+                return 0;
+            })
             .ThenBy(HidSafe.MaxOutputLen);
 
-        foreach (var iface in batteryIfaces)
+        foreach (var iface in compxIfaces)
         {
             using var ch = HidChannel.TryOpen(iface);
             if (ch == null) continue;
-            var res = Compx08Protocol.QueryCapabilities(deviceId, ch, isWireless: wireless, productName: rawName);
+            var res = Compx08Protocol.QueryCapabilities(deviceId, ch, isWireless: wireless, productName: knownName ?? rawName, vid: vid, pid: pid);
             if (res.SupportsDpi || res.SupportedPollingRates.Count > 0)
                 return res;
         }
 
-        foreach (var iface in list.Where(d => HidSafe.MaxOutputLen(d) >= 64 && HidSafe.MaxInputLen(d) >= 8)
-                                  .OrderByDescending(HidSafe.MaxOutputLen))
+        foreach (var iface in list.Where(d => HidSafe.PrimaryUsage(d).UsagePage != 0xFF60)
+                                  .Where(d => (HidSafe.PrimaryUsage(d).UsagePage == 0xFF05 || HidSafe.MaxOutputLen(d) >= 48) && HidSafe.MaxInputLen(d) >= 8)
+                                  .OrderByDescending(d => HidSafe.PrimaryUsage(d).UsagePage == 0xFF05 ? 2 : 0)
+                                  .ThenByDescending(HidSafe.MaxOutputLen))
         {
             using var ch = HidChannel.TryOpen(iface);
             if (ch == null) continue;
-            var res = BitmouseProtocol.QueryCapabilities(deviceId, ch, wireless, rawName);
+            var res = BitmouseProtocol.QueryCapabilities(deviceId, ch, wireless, knownName ?? rawName, vid, pid);
             if (res.IsOnline && (res.SupportsDpi || res.SupportedPollingRates.Count > 0))
                 return res;
         }
@@ -155,24 +204,38 @@ public sealed class AtkProvider : ITunablePeripheralProvider
 
         var list = HidSafe.EnumerateDevices(vid, pid);
         string? rawName = list.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+        string? knownName = AtkModelCatalog.ResolveModelName(vid, pid, null, rawName);
         bool wireless = rawName?.Contains("Wired", StringComparison.OrdinalIgnoreCase) != true;
 
-        foreach (var iface in list.Where(d => HidSafe.MaxOutputLen(d) >= 17 || HidSafe.MaxFeatureLen(d) >= 17)
-                                  .OrderBy(HidSafe.MaxOutputLen))
+        var compxIfaces = list
+            .Where(d => HidSafe.PrimaryUsage(d).UsagePage != 0xFF60)
+            .Where(d => HidSafe.MaxOutputLen(d) >= 17 || HidSafe.MaxFeatureLen(d) >= 17)
+            .OrderByDescending(d =>
+            {
+                var u = HidSafe.PrimaryUsage(d);
+                if (u.UsagePage == 0xFF04 && u.Usage == 2) return 4;
+                if (u.UsagePage is 0xFF02 or 0xFF04) return 2;
+                return 0;
+            })
+            .ThenBy(HidSafe.MaxOutputLen);
+
+        foreach (var iface in compxIfaces)
         {
             using var ch = HidChannel.TryOpen(iface);
             if (ch == null) continue;
-            var res = Compx08Protocol.ApplySettings(deviceId, ch, update, isWireless: wireless, productName: rawName);
+            var res = Compx08Protocol.ApplySettings(deviceId, ch, update, isWireless: wireless, productName: knownName ?? rawName, vid: vid, pid: pid);
             if (res.Success) return res;
         }
 
-        foreach (var iface in list.Where(d => HidSafe.MaxOutputLen(d) >= 64 && HidSafe.MaxInputLen(d) >= 8)
-                                  .OrderByDescending(HidSafe.MaxOutputLen))
+        foreach (var iface in list.Where(d => HidSafe.PrimaryUsage(d).UsagePage != 0xFF60)
+                                  .Where(d => (HidSafe.PrimaryUsage(d).UsagePage == 0xFF05 || HidSafe.MaxOutputLen(d) >= 48) && HidSafe.MaxInputLen(d) >= 8)
+                                  .OrderByDescending(d => HidSafe.PrimaryUsage(d).UsagePage == 0xFF05 ? 2 : 0)
+                                  .ThenByDescending(HidSafe.MaxOutputLen))
         {
             using var ch = HidChannel.TryOpen(iface);
             if (ch == null) continue;
             if (BitmouseProtocol.QueryBattery(ch, wireless) != null)
-                return BitmouseProtocol.ApplySettings(deviceId, ch, wireless, rawName, update);
+                return BitmouseProtocol.ApplySettings(deviceId, ch, wireless, knownName ?? rawName, update, vid, pid);
         }
 
         return new DeviceTuningResult(false, "ATK/VXE 鼠标未响应控制指令（可能处于深度休眠状态）。");
