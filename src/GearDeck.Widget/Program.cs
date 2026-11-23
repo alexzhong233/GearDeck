@@ -254,6 +254,7 @@ internal sealed class WidgetState
     public string MonitorTop { get; set; } = "CPU";
     public string MonitorBottom { get; set; } = "RAM";
     public List<WidgetChip> Groups { get; set; } = [];
+    public long Seq { get; set; }
 }
 
 internal sealed class WidgetChip
@@ -739,6 +740,8 @@ internal sealed class TaskbarForm : Form
     private bool _appliedTopMost;
 
     private DateTime _lastStateWriteUtc = DateTime.MinValue;
+    private long _lastStateLength = -1;
+    private long _lastStateSeq = -1;
     private long _lastStatsTick;
     private SystemMetricsSnapshot _metrics = new();
     private bool _lastLight = true;
@@ -877,23 +880,46 @@ internal sealed class TaskbarForm : Form
     {
         try
         {
-            if (!File.Exists(StatePath)) return false;
-            var writeUtc = File.GetLastWriteTimeUtc(StatePath);
-            if (writeUtc == _lastStateWriteUtc) return false;
-            var json = File.ReadAllText(StatePath);
-            var parsed = JsonSerializer.Deserialize<WidgetState>(json);
-            if (parsed == null) return false;
-            _lastStateWriteUtc = writeUtc;
-
-            if (Environment.TickCount64 < _localPositionOverrideUntil)
+            for (int attempt = 0; attempt < 2; attempt++)
             {
-                parsed.Align = _state.Align;
-                parsed.Offset = _state.Offset;
-                parsed.FloatX = _state.FloatX;
-                parsed.FloatY = _state.FloatY;
+                try
+                {
+                    var fi = new FileInfo(StatePath);
+                    if (!fi.Exists) return false;
+                    var writeUtc = fi.LastWriteTimeUtc;
+                    long len = fi.Length;
+
+                    if (writeUtc == _lastStateWriteUtc && len == _lastStateLength)
+                        return false;
+
+                    var json = File.ReadAllText(StatePath);
+                    var parsed = JsonSerializer.Deserialize<WidgetState>(json);
+                    if (parsed == null) return false;
+
+                    if (parsed.Seq != 0 && parsed.Seq == _lastStateSeq &&
+                        writeUtc == _lastStateWriteUtc && len == _lastStateLength)
+                        return false;
+
+                    _lastStateWriteUtc = writeUtc;
+                    _lastStateLength = len;
+                    _lastStateSeq = parsed.Seq;
+
+                    if (Environment.TickCount64 < _localPositionOverrideUntil)
+                    {
+                        parsed.Align = _state.Align;
+                        parsed.Offset = _state.Offset;
+                        parsed.FloatX = _state.FloatX;
+                        parsed.FloatY = _state.FloatY;
+                    }
+                    _state = parsed;
+                    return true;
+                }
+                catch (IOException) when (attempt == 0)
+                {
+                    Thread.Sleep(25);
+                }
             }
-            _state = parsed;
-            return true;
+            return false;
         }
         catch
         {
@@ -1504,7 +1530,9 @@ internal sealed class TaskbarForm : Form
 
             IntPtr fg = GetForegroundWindow();
             if (fg == IntPtr.Zero || fg == tray || fg == Handle) return false;
-            if (!GetWindowRect(fg, out var fgRect)) return false;
+            RECT fgRect;
+            int dwmBounds = DwmGetWindowAttribute(fg, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, out fgRect, Marshal.SizeOf<RECT>());
+            if (dwmBounds != 0 && !GetWindowRect(fg, out fgRect)) return false;
 
             var sb = new StringBuilder(128);
             int len = GetClassName(fg, sb, sb.Capacity);
@@ -1522,7 +1550,8 @@ internal sealed class TaskbarForm : Form
             return WidgetLayoutRules.ShouldTreatAsFullscreen(
                 className, sameProcessAsTray, style, exStyle, isVisible, isCloaked,
                 fgRect.Left, fgRect.Top, fgRect.Right, fgRect.Bottom,
-                mi.rcMonitor.Left, mi.rcMonitor.Top, mi.rcMonitor.Right, mi.rcMonitor.Bottom);
+                mi.rcMonitor.Left, mi.rcMonitor.Top, mi.rcMonitor.Right, mi.rcMonitor.Bottom,
+                isMaximized: IsZoomed(fg));
         }
         catch { return false; }
     }
@@ -1554,6 +1583,7 @@ internal sealed class TaskbarForm : Form
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string? title);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hwnd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder lpClassName, int nMaxCount);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint lpdwProcessId);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
@@ -1571,6 +1601,7 @@ internal sealed class TaskbarForm : Form
     [DllImport("user32.dll")] private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
     [DllImport("user32.dll")] private static extern bool UnhookWinEvent(IntPtr hWinEventHook);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hwnd, ref POINT lpPoint);
     [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hwnd);

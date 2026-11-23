@@ -18,6 +18,11 @@ public sealed class WidgetGroupWindow : Window
     private readonly IntPtr _hwnd;
     private readonly double _scale;
     private readonly RectInt32? _anchor;
+    private readonly bool _dark;
+    private readonly StackPanel _devicesStack;
+    private readonly Grid _headerGrid;
+    private readonly Border _panel;
+    private double _currentDip;
     private bool _entered;
 
     public string GroupId { get; }
@@ -32,8 +37,10 @@ public sealed class WidgetGroupWindow : Window
         Closed += (_, _) =>
         {
             IsClosed = true;
+            App.Devices.DevicesUpdated -= OnDevicesUpdated;
             _dismissTimer?.Stop();
         };
+        App.Devices.DevicesUpdated += OnDevicesUpdated;
 
         try
         {
@@ -51,10 +58,10 @@ public sealed class WidgetGroupWindow : Window
         }
         AppWindow.IsShownInSwitchers = false;
 
-        bool dark = App.Current.RequestedTheme == ApplicationTheme.Dark;
+        _dark = App.Current.RequestedTheme == ApplicationTheme.Dark;
         var panel = new Border
         {
-            Background = new SolidColorBrush(dark
+            Background = new SolidColorBrush(_dark
                 ? Windows.UI.Color.FromArgb(245, 32, 32, 32)
                 : Windows.UI.Color.FromArgb(250, 249, 249, 249)),
             BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(36, 128, 128, 128)),
@@ -63,6 +70,7 @@ public sealed class WidgetGroupWindow : Window
             Padding = new Thickness(12),
         };
         panel.PointerEntered += (_, _) => _entered = true;
+        _panel = panel;
 
         var layoutGrid = new Grid { RowSpacing = 8 };
         layoutGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -71,6 +79,7 @@ public sealed class WidgetGroupWindow : Window
         var headerGrid = new Grid { Margin = new Thickness(4, 0, 0, 0) };
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _headerGrid = headerGrid;
 
         var headerLeft = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         if (!string.IsNullOrWhiteSpace(groupIconPath) && File.Exists(groupIconPath))
@@ -126,14 +135,61 @@ public sealed class WidgetGroupWindow : Window
         layoutGrid.Children.Add(headerGrid);
 
         var devicesStack = new StackPanel { Spacing = 8 };
+        _devicesStack = devicesStack;
+        RebuildDeviceCards(devices);
+
+        var devicesScroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = devicesStack,
+        };
+        Grid.SetRow(devicesScroll, 1);
+        layoutGrid.Children.Add(devicesScroll);
+        panel.Child = layoutGrid;
+        Content = panel;
+
+        _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        uint dpi = GetDpiForWindow(_hwnd);
+        _scale = (dpi == 0 ? 96u : dpi) / 96.0;
+
+        _currentDip = Math.Clamp(72 + Math.Max(1, devices.Count) * 60, 124, 480);
+        ResizeAndPosition(_currentDip);
+
+        bool sizedOnLoad = false;
+        panel.Loaded += (_, _) =>
+        {
+            if (sizedOnLoad || IsClosed) return;
+            sizedOnLoad = true;
+            AdjustFlyoutHeight();
+        };
+
+        try { AppWindow.Show(false); } catch { }
+        SetWindowPos(_hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+
+        var dq = DispatcherQueue.GetForCurrentThread();
+        if (dq != null)
+        {
+            _dismissTimer = dq.CreateTimer();
+            _dismissTimer.Interval = TimeSpan.FromMilliseconds(100);
+            _dismissTimer.IsRepeating = true;
+            _dismissTimer.Tick += OnDismissTick;
+            _dismissTimer.Start();
+        }
+    }
+
+    /// <summary>按组规则重建设备卡片列表（保留空状态、双耳历史电量与点击打开详情逻辑）。</summary>
+    private void RebuildDeviceCards(IReadOnlyList<PeripheralDevice> devices)
+    {
+        _devicesStack.Children.Clear();
         if (devices.Count == 0)
         {
-            devicesStack.Children.Add(new TextBlock
+            _devicesStack.Children.Add(new TextBlock
             {
                 Text = "无设备",
                 FontSize = 13,
                 Margin = new Thickness(8, 12, 8, 12),
-                Foreground = new SolidColorBrush(dark ? Microsoft.UI.Colors.LightGray : Microsoft.UI.Colors.DimGray),
+                Foreground = new SolidColorBrush(_dark ? Microsoft.UI.Colors.LightGray : Microsoft.UI.Colors.DimGray),
             });
         }
 
@@ -141,7 +197,7 @@ public sealed class WidgetGroupWindow : Window
         {
             var card = new Border
             {
-                Background = new SolidColorBrush(dark ? Windows.UI.Color.FromArgb(28, 255, 255, 255) : Windows.UI.Color.FromArgb(16, 0, 0, 0)),
+                Background = new SolidColorBrush(_dark ? Windows.UI.Color.FromArgb(28, 255, 255, 255) : Windows.UI.Color.FromArgb(16, 0, 0, 0)),
                 CornerRadius = new CornerRadius(9),
                 Padding = new Thickness(10, 8, 10, 8),
             };
@@ -158,7 +214,7 @@ public sealed class WidgetGroupWindow : Window
             {
                 Text = d.IsSleeping ? $"{d.Provider} · 休眠" : $"{d.Provider} · {d.Transport}",
                 FontSize = 11,
-                Foreground = new SolidColorBrush(dark ? Microsoft.UI.Colors.LightGray : Microsoft.UI.Colors.DimGray),
+                Foreground = new SolidColorBrush(_dark ? Microsoft.UI.Colors.LightGray : Microsoft.UI.Colors.DimGray),
             });
             Grid.SetColumn(info, 1);
             row.Children.Add(info);
@@ -206,91 +262,82 @@ public sealed class WidgetGroupWindow : Window
                 MainWindow.Instance?.OpenDevice(d.Id);
                 Close();
             };
-            devicesStack.Children.Add(card);
+            _devicesStack.Children.Add(card);
         }
+    }
 
-        var devicesScroll = new ScrollViewer
+    /// <summary>根据高度（DIP）缩放并定位弹窗。</summary>
+    private void ResizeAndPosition(double heightDip)
+    {
+        int flyoutW = (int)Math.Round(328 * _scale);
+        int flyoutH = Math.Clamp(
+            (int)Math.Round(heightDip * _scale),
+            (int)Math.Round(116 * _scale),
+            (int)Math.Round(480 * _scale));
+        AppWindow.Resize(new SizeInt32(flyoutW, flyoutH));
+
+        int gap = (int)Math.Round(8 * _scale);
+        if (_anchor is { Width: > 0 } a)
         {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Content = devicesStack,
-        };
-        Grid.SetRow(devicesScroll, 1);
-        layoutGrid.Children.Add(devicesScroll);
-        panel.Child = layoutGrid;
-        Content = panel;
-
-        _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        uint dpi = GetDpiForWindow(_hwnd);
-        _scale = (dpi == 0 ? 96u : dpi) / 96.0;
-
-        void ResizeAndPosition(double heightDip)
-        {
-            int flyoutW = (int)Math.Round(328 * _scale);
-            int flyoutH = Math.Clamp(
-                (int)Math.Round(heightDip * _scale),
-                (int)Math.Round(116 * _scale),
-                (int)Math.Round(480 * _scale));
-            AppWindow.Resize(new SizeInt32(flyoutW, flyoutH));
-
-            int gap = (int)Math.Round(8 * _scale);
-            if (anchor is { Width: > 0 } a)
-            {
-                var display = DisplayArea.GetFromPoint(new PointInt32(a.X + a.Width / 2, a.Y), DisplayAreaFallback.Primary);
-                var bounds = display.OuterBounds;
-                int x = Math.Clamp(a.X + (a.Width - flyoutW) / 2, bounds.X + gap, Math.Max(bounds.X + gap, bounds.X + bounds.Width - flyoutW - gap));
-                bool taskbarAtTop = a.Y < bounds.Y + bounds.Height / 3;
-                int y = taskbarAtTop
-                    ? a.Y + a.Height + gap
-                    : a.Y - flyoutH - gap;
-                y = Math.Clamp(y, bounds.Y + gap, Math.Max(bounds.Y + gap, bounds.Y + bounds.Height - flyoutH - gap));
-                AppWindow.Move(new PointInt32(x, y));
-            }
-            else
-            {
-                var area = DisplayArea.Primary.WorkArea;
-                AppWindow.Move(new PointInt32(
-                    area.X + area.Width - flyoutW - (int)Math.Round(20 * _scale),
-                    area.Y + area.Height - flyoutH - (int)Math.Round(12 * _scale)));
-            }
+            var display = DisplayArea.GetFromPoint(new PointInt32(a.X + a.Width / 2, a.Y), DisplayAreaFallback.Primary);
+            var bounds = display.OuterBounds;
+            int x = Math.Clamp(a.X + (a.Width - flyoutW) / 2, bounds.X + gap, Math.Max(bounds.X + gap, bounds.X + bounds.Width - flyoutW - gap));
+            bool taskbarAtTop = a.Y < bounds.Y + bounds.Height / 3;
+            int y = taskbarAtTop
+                ? a.Y + a.Height + gap
+                : a.Y - flyoutH - gap;
+            y = Math.Clamp(y, bounds.Y + gap, Math.Max(bounds.Y + gap, bounds.Y + bounds.Height - flyoutH - gap));
+            AppWindow.Move(new PointInt32(x, y));
         }
-
-        double currentDip = Math.Clamp(72 + Math.Max(1, devices.Count) * 60, 124, 480);
-        ResizeAndPosition(currentDip);
-
-        bool sizedOnLoad = false;
-        panel.Loaded += (_, _) =>
+        else
         {
-            if (sizedOnLoad || IsClosed) return;
-            sizedOnLoad = true;
-            panel.UpdateLayout();
-            double rawDip = headerGrid.ActualHeight + devicesStack.ActualHeight + 36;
-            if (rawDip > 480)
-            {
-                devicesStack.Padding = new Thickness(0, 0, 12, 0);
-                panel.UpdateLayout();
-                rawDip = headerGrid.ActualHeight + devicesStack.ActualHeight + 36;
-            }
-            double targetDip = Math.Clamp(rawDip, 116, 480);
-            if (Math.Abs(targetDip - currentDip) > 2)
-            {
-                currentDip = targetDip;
-                ResizeAndPosition(targetDip);
-            }
-        };
-
-        try { AppWindow.Show(false); } catch { }
-        SetWindowPos(_hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
-
-        var dq = DispatcherQueue.GetForCurrentThread();
-        if (dq != null)
-        {
-            _dismissTimer = dq.CreateTimer();
-            _dismissTimer.Interval = TimeSpan.FromMilliseconds(100);
-            _dismissTimer.IsRepeating = true;
-            _dismissTimer.Tick += OnDismissTick;
-            _dismissTimer.Start();
+            var area = DisplayArea.Primary.WorkArea;
+            AppWindow.Move(new PointInt32(
+                area.X + area.Width - flyoutW - (int)Math.Round(20 * _scale),
+                area.Y + area.Height - flyoutH - (int)Math.Round(12 * _scale)));
         }
+    }
+
+    /// <summary>按当前卡片内容自动贴合弹窗高度。</summary>
+    private void AdjustFlyoutHeight()
+    {
+        if (IsClosed) return;
+        _devicesStack.Padding = new Thickness(0);
+        _panel.UpdateLayout();
+        double rawDip = _headerGrid.ActualHeight + _devicesStack.ActualHeight + 36;
+        if (rawDip > 480)
+        {
+            _devicesStack.Padding = new Thickness(0, 0, 12, 0);
+            _panel.UpdateLayout();
+            rawDip = _headerGrid.ActualHeight + _devicesStack.ActualHeight + 36;
+        }
+        double targetDip = Math.Clamp(rawDip, 116, 480);
+        if (Math.Abs(targetDip - _currentDip) > 2)
+        {
+            _currentDip = targetDip;
+            ResizeAndPosition(targetDip);
+        }
+    }
+
+    /// <summary>设备轮询更新时按组过滤最新成员并刷新弹窗，无需打开主界面。</summary>
+    private void OnDevicesUpdated(IReadOnlyList<PeripheralDevice> devices)
+    {
+        if (IsClosed) return;
+        App.UiQueue?.TryEnqueue(() =>
+        {
+            if (IsClosed) return;
+            var members = GroupId switch
+            {
+                "builtin:mouse" => devices.Where(d => d.Kind == DeviceKind.Mouse).ToList(),
+                "builtin:keyboard" => devices.Where(d => d.Kind == DeviceKind.Keyboard).ToList(),
+                "builtin:headset" => devices.Where(d => d.Kind == DeviceKind.Headset).ToList(),
+                "builtin:controller" => devices.Where(d => d.Kind == DeviceKind.Controller).ToList(),
+                _ => devices.Where(d => App.Settings.Current.CustomGroups
+                    .FirstOrDefault(g => g.Id == GroupId)?.MemberIds.Contains(d.Id) == true).ToList(),
+            };
+            RebuildDeviceCards(members);
+            AdjustFlyoutHeight();
+        });
     }
 
     private void OnDismissTick(DispatcherQueueTimer sender, object args)

@@ -10,6 +10,8 @@ public static class WidgetProcess
 {
     private static Process? _process;
     private static string? _lastWrittenJson;
+    private static readonly object SyncLock = new();
+    private static long _stateSeq;
 
     private static string ExePath => Path.Combine(AppContext.BaseDirectory, "widget", "GearDeck.Widget.exe");
     private static string StatePath => Path.Combine(
@@ -17,40 +19,46 @@ public static class WidgetProcess
 
     public static void Refresh()
     {
-        try
+        lock (SyncLock)
         {
-            WriteState();
-            if (!File.Exists(ExePath)) return;
-            if (_process == null || _process.HasExited)
+            try
             {
-                KillStrayProcesses();
-                _process = Process.Start(new ProcessStartInfo(ExePath)
+                WriteState();
+                if (!File.Exists(ExePath)) return;
+                if (_process == null || _process.HasExited)
                 {
-                    Arguments = "--widget-bg",
-                    UseShellExecute = false,
-                    WorkingDirectory = Path.GetDirectoryName(ExePath)!,
-                });
+                    KillStrayProcesses();
+                    _process = Process.Start(new ProcessStartInfo(ExePath)
+                    {
+                        Arguments = "--widget-bg",
+                        UseShellExecute = false,
+                        WorkingDirectory = Path.GetDirectoryName(ExePath)!,
+                    });
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            Core.Diag.Log($"贴片进程启动失败: {ex.Message}");
+            catch (Exception ex)
+            {
+                Core.Diag.Log($"贴片进程启动失败: {ex.Message}");
+            }
         }
     }
 
     public static void Stop()
     {
-        try
+        lock (SyncLock)
         {
-            if (_process is { HasExited: false })
+            try
             {
-                _process.Kill(entireProcessTree: true);
-                _process.WaitForExit(1000);
+                if (_process is { HasExited: false })
+                {
+                    _process.Kill(entireProcessTree: true);
+                    _process.WaitForExit(1000);
+                }
             }
+            catch { }
+            finally { _process = null; }
+            KillStrayProcesses();
         }
-        catch { }
-        finally { _process = null; }
-        KillStrayProcesses();
     }
 
     private static void KillStrayProcesses()
@@ -82,109 +90,128 @@ public static class WidgetProcess
 
     private static void WriteState()
     {
-        var settings = App.Settings.Current;
-        var devices = App.LastDevices;
-        App.Settings.EnsureDefaults();
-
-        var groups = new List<WidgetChipOut>();
-        foreach (var cfg in settings.TaskbarGroups.Where(g => g.Visible))
+        lock (SyncLock)
         {
-            var members = MembersOf(cfg.GroupId, devices);
-            var def = members.FirstOrDefault(d => d.Id == cfg.DefaultDeviceId)
-                      ?? members.FirstOrDefault(d => d.BatteryPercent != null || d.LeftEarPercent != null || d.RightEarPercent != null)
-                      ?? members.FirstOrDefault();
-            string label = cfg.GroupId switch
+            try
             {
-                "builtin:mouse" => "鼠标",
-                "builtin:keyboard" => "键盘",
-                "builtin:headset" => "耳机",
-                "builtin:controller" => "手柄",
-                _ => settings.CustomGroups.FirstOrDefault(c => c.Id == cfg.GroupId)?.DisplayName ?? "组",
-            };
-            string glyph = GroupIconCatalog.ResolveEffectiveGlyph(cfg, members);
-            string iconPath = GroupIconCatalog.ResolveValidIconPath(cfg) ?? "";
+                var settings = App.Settings.Current;
+                var devices = App.LastDevices;
+                App.Settings.EnsureDefaults();
 
-            string text = "--";
-            string textTop = "";
-            string textBottom = "";
-            int? effPct = null;
-            bool usedHist = false;
-            bool isLow = false;
-            if (def != null)
-            {
-                var cached = App.Settings.GetLastKnownBattery(def.Id);
-                var chipRes = BatteryHistoryHelper.BuildChipText(def, label: "", showPct: true, cached);
-                text = chipRes.Text;
-                textTop = chipRes.TextTop;
-                textBottom = chipRes.TextBottom;
-                effPct = chipRes.EffectivePercent;
-                usedHist = chipRes.UsedHistoricalFallback;
-
-                int? livePct = def.BatteryPercent
-                               ?? (def.LeftEarPercent.HasValue || def.RightEarPercent.HasValue ? chipRes.EffectivePercent : null);
-                isLow = livePct is { } bp && App.Settings.IsDeviceLowBattery(def.Id, bp);
-            }
-
-            string tip = label + "\n" + (members.Count == 0
-                ? "（无设备）"
-                : string.Join("\n", members.Select(m =>
+                var groups = new List<WidgetChipOut>();
+                foreach (var cfg in settings.TaskbarGroups.Where(g => g.Visible))
                 {
-                    var mc = App.Settings.GetLastKnownBattery(m.Id);
-                    if (m.FormatDualEarSummary(compact: false) is { } dualTip)
-                        return $"{m.Name}: {dualTip}";
-                    if (mc != null && (mc.LeftEarPercent.HasValue || mc.RightEarPercent.HasValue))
+                    var members = MembersOf(cfg.GroupId, devices);
+                    var def = BatteryHistoryHelper.SelectGroupDisplayDevice(members, cfg.DefaultDeviceId);
+                    string label = cfg.GroupId switch
                     {
-                        string lt = mc.LeftEarPercent is { } lv ? $"{lv}%" : "--";
-                        string rt = mc.RightEarPercent is { } rv ? $"{rv}%" : "--";
-                        return $"{m.Name}: {(m.IsSleeping ? "休眠 · 上次 " : "上次 ")}L {lt} / R {rt}";
+                        "builtin:mouse" => "鼠标",
+                        "builtin:keyboard" => "键盘",
+                        "builtin:headset" => "耳机",
+                        "builtin:controller" => "手柄",
+                        _ => settings.CustomGroups.FirstOrDefault(c => c.Id == cfg.GroupId)?.DisplayName ?? "组",
+                    };
+                    string glyph = GroupIconCatalog.ResolveEffectiveGlyph(cfg, members);
+                    string iconPath = GroupIconCatalog.ResolveValidIconPath(cfg) ?? "";
+
+                    string text = "--";
+                    string textTop = "";
+                    string textBottom = "";
+                    int? effPct = null;
+                    bool usedHist = false;
+                    bool isLow = false;
+                    if (def != null)
+                    {
+                        var cached = App.Settings.GetLastKnownBattery(def.Id);
+                        var chipRes = BatteryHistoryHelper.BuildChipText(def, label: "", showPct: true, cached);
+                        text = chipRes.Text;
+                        textTop = chipRes.TextTop;
+                        textBottom = chipRes.TextBottom;
+                        effPct = chipRes.EffectivePercent;
+                        usedHist = chipRes.UsedHistoricalFallback;
+
+                        int? livePct = def.BatteryPercent
+                                       ?? (def.LeftEarPercent.HasValue || def.RightEarPercent.HasValue ? chipRes.EffectivePercent : null);
+                        isLow = livePct is { } bp && App.Settings.IsDeviceLowBattery(def.Id, bp);
                     }
-                    if (m.BatteryPercent is { } mp)
-                        return $"{m.Name}: {mp}%{(m.State == BatteryState.Charging ? " ⚡" : "")}";
-                    if (mc?.BatteryPercent is { } histP)
-                        return $"{m.Name}: {(m.IsSleeping ? "休眠 · 上次电量" : "上次电量")} {histP}%";
-                    return $"{m.Name}: 未读到";
-                })));
 
-            groups.Add(new WidgetChipOut
+                    string tip = label + "\n" + (members.Count == 0
+                        ? "（无设备）"
+                        : string.Join("\n", members.Select(m =>
+                        {
+                            var mc = App.Settings.GetLastKnownBattery(m.Id);
+                            if (m.FormatDualEarSummary(compact: false) is { } dualTip)
+                                return $"{m.Name}: {dualTip}";
+                            if (mc != null && (mc.LeftEarPercent.HasValue || mc.RightEarPercent.HasValue))
+                            {
+                                string lt = mc.LeftEarPercent is { } lv ? $"{lv}%" : "--";
+                                string rt = mc.RightEarPercent is { } rv ? $"{rv}%" : "--";
+                                return $"{m.Name}: {(m.IsSleeping ? "休眠 · 上次 " : "上次 ")}L {lt} / R {rt}";
+                            }
+                            if (m.BatteryPercent is { } mp)
+                                return $"{m.Name}: {mp}%{(m.State == BatteryState.Charging ? " ⚡" : "")}";
+                            if (mc?.BatteryPercent is { } histP)
+                                return $"{m.Name}: {(m.IsSleeping ? "休眠 · 上次电量" : "上次电量")} {histP}%";
+                            return $"{m.Name}: 未读到";
+                        })));
+
+                    groups.Add(new WidgetChipOut
+                    {
+                        Glyph = glyph,
+                        IconPath = iconPath,
+                        Text = text,
+                        TextTop = textTop,
+                        TextBottom = textBottom,
+                        Tip = tip,
+                        Low = isLow,
+                        Dim = def == null || def.IsSleeping || usedHist || effPct == null,
+                        GroupId = cfg.GroupId,
+                    });
+                }
+
+                var state = new WidgetStateOut
+                {
+                    MainExe = Environment.ProcessPath ?? "",
+                    Embedded = settings.WidgetEmbedded,
+                    Align = settings.WidgetAlignment,
+                    Offset = settings.WidgetOffsetX,
+                    FloatX = settings.WidgetFloatX,
+                    FloatY = settings.WidgetFloatY,
+                    Monitor = settings.MonitorEnabled,
+                    MonitorTop = settings.MonitorTopMetric,
+                    MonitorBottom = settings.MonitorBottomMetric,
+                    Height = settings.WidgetHeight,
+                    FontSize = settings.WidgetFontSize,
+                    BlockWidth = settings.WidgetBlockWidth,
+                    Groups = groups,
+                };
+
+                var jsonOptions = new JsonSerializerOptions { WriteIndented = true };
+                // 先以固定 Seq=0 序列化出比较串；内容未变化且状态文件仍在时跳过写盘
+                state.Seq = 0;
+                string compareJson = JsonSerializer.Serialize(state, jsonOptions);
+                if (string.Equals(compareJson, _lastWrittenJson, StringComparison.Ordinal) && File.Exists(StatePath))
+                {
+                    _lastWrittenJson = compareJson;
+                    return;
+                }
+
+                // 内容发生变化：自增序号后重新序列化，并用线程唯一临时文件原子替换目标文件
+                state.Seq = Interlocked.Increment(ref _stateSeq);
+                string json = JsonSerializer.Serialize(state, jsonOptions);
+
+                var dir = Path.GetDirectoryName(StatePath)!;
+                Directory.CreateDirectory(dir);
+                var tmpPath = $"{StatePath}.{Environment.ProcessId}.{Environment.CurrentManagedThreadId}.tmp";
+                File.WriteAllText(tmpPath, json);
+                File.Move(tmpPath, StatePath, overwrite: true);
+                _lastWrittenJson = compareJson;
+            }
+            catch (Exception ex)
             {
-                Glyph = glyph,
-                IconPath = iconPath,
-                Text = text,
-                TextTop = textTop,
-                TextBottom = textBottom,
-                Tip = tip,
-                Low = isLow,
-                Dim = def == null || def.IsSleeping || usedHist || effPct == null,
-                GroupId = cfg.GroupId,
-            });
+                Core.Diag.Log($"写入贴片状态失败: {ex.Message}");
+            }
         }
-
-        var state = new WidgetStateOut
-        {
-            MainExe = Environment.ProcessPath ?? "",
-            Embedded = settings.WidgetEmbedded,
-            Align = settings.WidgetAlignment,
-            Offset = settings.WidgetOffsetX,
-            FloatX = settings.WidgetFloatX,
-            FloatY = settings.WidgetFloatY,
-            Monitor = settings.MonitorEnabled,
-            MonitorTop = settings.MonitorTopMetric,
-            MonitorBottom = settings.MonitorBottomMetric,
-            Height = settings.WidgetHeight,
-            FontSize = settings.WidgetFontSize,
-            BlockWidth = settings.WidgetBlockWidth,
-            Groups = groups,
-        };
-        string json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
-        if (string.Equals(json, _lastWrittenJson, StringComparison.Ordinal) && File.Exists(StatePath))
-            return;
-
-        var dir = Path.GetDirectoryName(StatePath)!;
-        Directory.CreateDirectory(dir);
-        var tmpPath = StatePath + ".tmp";
-        File.WriteAllText(tmpPath, json);
-        File.Move(tmpPath, StatePath, overwrite: true);
-        _lastWrittenJson = json;
     }
 
     private static List<PeripheralDevice> MembersOf(string groupId, IReadOnlyList<PeripheralDevice> devices)
@@ -215,6 +242,7 @@ public static class WidgetProcess
         public int Height { get; set; } = 40;
         public int FontSize { get; set; } = 13;
         public int BlockWidth { get; set; } = 92;
+        public long Seq { get; set; }
         public List<WidgetChipOut> Groups { get; set; } = [];
     }
 

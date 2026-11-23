@@ -24,6 +24,9 @@ public sealed class DeviceManager : IDisposable
     public event Action<IReadOnlyList<PeripheralDevice>>? DevicesUpdated;
     public event Action? ScanCompleted;
 
+    /// <summary>最近一次扫描完成（ScanCompleted 触发）的 UTC 时间，用于按需防抖刷新。</summary>
+    public DateTimeOffset LastScanCompletedUtc { get; private set; } = DateTimeOffset.MinValue;
+
     public DeviceManager(IEnumerable<IPeripheralProvider> providers)
     {
         _providers = providers.ToList();
@@ -87,6 +90,13 @@ public sealed class DeviceManager : IDisposable
         }
     }
 
+    /// <summary>距上次扫描完成超过 minAge 时才触发一次后台刷新，供任务栏分组点击等场景按需调用。</summary>
+    public void RequestRefreshIfStale(TimeSpan minAge)
+    {
+        if (DateTimeOffset.UtcNow - LastScanCompletedUtc >= minAge)
+            _ = RefreshAsync();
+    }
+
     public Task RefreshAsync(bool bypassCoexistenceGuard = false, bool isHotplug = false)
     {
         if (!bypassCoexistenceGuard && ExternalConfiguratorGuard.IsBackgroundYieldActive(out string? yieldReason))
@@ -96,6 +106,7 @@ public sealed class DeviceManager : IDisposable
                 if (_lastKnown.Count > 0)
                 {
                     Diag.Log($"[Coexistence] 跳过本轮后台 HID 轮询: {yieldReason}");
+                    LastScanCompletedUtc = DateTimeOffset.UtcNow;
                     ScanCompleted?.Invoke();
                     return Task.CompletedTask;
                 }
@@ -158,6 +169,7 @@ public sealed class DeviceManager : IDisposable
 
                     var list = _lastKnown.Values.OrderBy(d => d.Kind).ThenBy(d => d.Name).ToList();
                     DevicesUpdated?.Invoke(list);
+                    LastScanCompletedUtc = DateTimeOffset.UtcNow;
                     ScanCompleted?.Invoke();
                 }
             }

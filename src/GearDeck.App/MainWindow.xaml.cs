@@ -496,6 +496,7 @@ public sealed partial class MainWindow : Window
             _groupWindow = null;
             return;
         }
+        App.Devices?.RequestRefreshIfStale(TimeSpan.FromSeconds(3));
         var devices = App.LastDevices;
         string title = groupId switch
         {

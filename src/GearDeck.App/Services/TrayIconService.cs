@@ -13,7 +13,10 @@ public sealed class TrayIconService : IDisposable
     private const uint WmTrayIcon = WmUser + 0x101;
     private const uint WmRetryTray = WmUser + 0x102;
     private const uint WmCommand = 0x0111;
+    private const uint WmPowerBroadcast = 0x0218;
     private const uint WmDestroy = 0x0002;
+    private static readonly IntPtr PbtApmResumeSuspend = new(0x0007);
+    private static readonly IntPtr PbtApmResumeAutomatic = new(0x0012);
     private const uint WmNull = 0x0000;
     private const uint WmLButtonUp = 0x0202;
     private const uint WmLButtonDblClk = 0x0203;
@@ -42,6 +45,7 @@ public sealed class TrayIconService : IDisposable
     private readonly Action _onToggleWidget;
     private readonly Action _onRefreshDevices;
     private readonly Action _onExit;
+    private readonly Action? _onSystemResume;
 
     private readonly ManualResetEventSlim _ready = new();
     private Thread? _thread;
@@ -59,7 +63,8 @@ public sealed class TrayIconService : IDisposable
         Action onOpenMacros,
         Action onToggleWidget,
         Action onRefreshDevices,
-        Action onExit)
+        Action onExit,
+        Action? onSystemResume = null)
     {
         _onOpenMain = onOpenMain;
         _onOpenGames = onOpenGames;
@@ -67,6 +72,7 @@ public sealed class TrayIconService : IDisposable
         _onToggleWidget = onToggleWidget;
         _onRefreshDevices = onRefreshDevices;
         _onExit = onExit;
+        _onSystemResume = onSystemResume;
 
         _thread = new Thread(RunMessageLoop)
         {
@@ -181,6 +187,21 @@ public sealed class TrayIconService : IDisposable
             return;
         }
 
+        // NIM_ADD 失败时图标可能仍残留（Explorer 重启/同名同 ID），先用 NIM_MODIFY 接管
+        if (Shell_NotifyIconW(NimModify, ref nid))
+        {
+            _trayAdded = true;
+            return;
+        }
+
+        // MODIFY 也失败则清理可能残留的同名/同 ID 图标，再重试一次 ADD
+        Shell_NotifyIconW(NimDelete, ref nid);
+        if (Shell_NotifyIconW(NimAdd, ref nid))
+        {
+            _trayAdded = true;
+            return;
+        }
+
         _trayAdded = false;
         int err = Marshal.GetLastWin32Error();
         Diag.Log($"Shell_NotifyIconW(NIM_ADD) 失败 err={err}");
@@ -246,6 +267,12 @@ public sealed class TrayIconService : IDisposable
                 case CmdExit: SafeInvoke(_onExit); break;
             }
             return IntPtr.Zero;
+        }
+        else if (msg == WmPowerBroadcast && (wParam == PbtApmResumeAutomatic || wParam == PbtApmResumeSuspend))
+        {
+            if (_onSystemResume != null)
+                SafeInvoke(_onSystemResume);
+            return (IntPtr)1;
         }
         else if (msg == WmDestroy)
         {

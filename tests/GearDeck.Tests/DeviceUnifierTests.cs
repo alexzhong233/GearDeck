@@ -405,4 +405,118 @@ public class DeviceUnifierTests
         Assert.Equal("2.4G", snap4[0].Transport);
         Assert.Equal("logi:C54F:01", mgr.ResolveActiveDeviceId("logi:C54F:01"));
     }
+
+    [Fact]
+    public void SelectGroupDisplayDevice_PrefersAwakeOrChargingOverSleepingDefault_AndRestoresWhenDefaultWakes()
+    {
+        // 默认设备休眠中但仍保留 73% 历史电量；同组另一台鼠标已唤醒且正在充电
+        var sleepingDefault = new PeripheralDevice
+        {
+            Id = "logi:C54F:01",
+            Name = "Logitech PRO X3 SUPERSTRIKE",
+            Kind = DeviceKind.Mouse,
+            Provider = "Logitech",
+            Connected = true,
+            IsSleeping = true,
+            BatteryPercent = 73,
+            State = BatteryState.Unknown,
+            Transport = "2.4G",
+        };
+        var awakeCharging = new PeripheralDevice
+        {
+            Id = "logi:C0A9:FF",
+            Name = "Logitech PRO X3 SUPERSTRIKE (USB)",
+            Kind = DeviceKind.Mouse,
+            Provider = "Logitech",
+            Connected = true,
+            IsSleeping = false,
+            BatteryPercent = 52,
+            State = BatteryState.Charging,
+            Transport = "USB",
+        };
+        var members = new List<PeripheralDevice> { sleepingDefault, awakeCharging };
+
+        // 1. 默认设备休眠中：不卡在 "73% 休眠"，自动展示唤醒/充电中的设备
+        var picked = BatteryHistoryHelper.SelectGroupDisplayDevice(members, sleepingDefault.Id);
+        Assert.NotNull(picked);
+        Assert.Equal(awakeCharging.Id, picked.Id);
+        Assert.Equal(BatteryState.Charging, picked.State);
+        Assert.Equal(52, picked.BatteryPercent);
+
+        // 2. 默认设备唤醒后：立即切回展示默认设备
+        sleepingDefault.IsSleeping = false;
+        picked = BatteryHistoryHelper.SelectGroupDisplayDevice(members, sleepingDefault.Id);
+        Assert.NotNull(picked);
+        Assert.Equal(sleepingDefault.Id, picked.Id);
+        Assert.Equal(73, picked.BatteryPercent);
+
+        // 3. 全员休眠：按默认设备优先回退历史电量
+        sleepingDefault.IsSleeping = true;
+        awakeCharging.IsSleeping = true;
+        picked = BatteryHistoryHelper.SelectGroupDisplayDevice(members, sleepingDefault.Id);
+        Assert.NotNull(picked);
+        Assert.Equal(sleepingDefault.Id, picked.Id);
+        Assert.Equal(73, picked.BatteryPercent);
+    }
+
+    [Fact]
+    public async Task DeviceManager_RequestRefreshIfStale_RespectsMinAgeAndUpdatesLastScanCompletedUtc()
+    {
+        bool prevAutoYield = ExternalConfiguratorGuard.AutoYieldEnabled;
+        ExternalConfiguratorGuard.AutoYieldEnabled = false;
+        try
+        {
+            int enumerateCount = 0;
+            var provider = new MockTunableProvider("MockRefresh", "mock:")
+            {
+                EnumerateFunc = () =>
+                {
+                    Interlocked.Increment(ref enumerateCount);
+                    return
+                    [
+                        new PeripheralDevice
+                        {
+                            Id = "mock:0001",
+                            Name = "Refresh Probe",
+                            Kind = DeviceKind.Mouse,
+                            Provider = "Mock",
+                            Connected = true,
+                            BatteryPercent = 80,
+                            State = BatteryState.Normal,
+                        },
+                    ];
+                },
+            };
+
+            using var mgr = new DeviceManager([provider]);
+
+            // 1. 初始未扫描：时间戳为 MinValue
+            Assert.Equal(DateTimeOffset.MinValue, mgr.LastScanCompletedUtc);
+
+            // 2. 显式刷新后更新时间戳
+            await mgr.RefreshAsync(bypassCoexistenceGuard: true);
+            var firstScanUtc = mgr.LastScanCompletedUtc;
+            Assert.True(firstScanUtc > DateTimeOffset.MinValue);
+            Assert.Equal(1, Volatile.Read(ref enumerateCount));
+
+            // 3. minAge 很大：距上次扫描远小于该值，跳过刷新
+            mgr.RequestRefreshIfStale(TimeSpan.FromHours(1));
+            Assert.Equal(1, Volatile.Read(ref enumerateCount));
+            Assert.Equal(firstScanUtc, mgr.LastScanCompletedUtc);
+
+            // 4. TimeSpan.Zero：必定触发一次后台刷新
+            mgr.RequestRefreshIfStale(TimeSpan.Zero);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while ((Volatile.Read(ref enumerateCount) < 2 || mgr.LastScanCompletedUtc <= firstScanUtc)
+                   && DateTime.UtcNow < deadline)
+                await Task.Delay(20);
+
+            Assert.True(Volatile.Read(ref enumerateCount) >= 2, "TimeSpan.Zero 应触发一次后台刷新");
+            Assert.True(mgr.LastScanCompletedUtc > firstScanUtc, "刷新完成后应更新 LastScanCompletedUtc");
+        }
+        finally
+        {
+            ExternalConfiguratorGuard.AutoYieldEnabled = prevAutoYield;
+        }
+    }
 }

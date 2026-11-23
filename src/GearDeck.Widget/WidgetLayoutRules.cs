@@ -3,6 +3,7 @@ namespace GearDeck.Widget;
 internal static class WidgetLayoutRules
 {
     private const int WsCaption = 0x00C00000;
+    private const int WsThickFrame = 0x00040000;
     private const int WsExTransparent = 0x00000020;
     private const int WsExToolWindow = 0x00000080;
     private const int WsExNoActivate = 0x08000000;
@@ -79,7 +80,8 @@ internal static class WidgetLayoutRules
         bool isVisible,
         bool isCloaked,
         int fgLeft, int fgTop, int fgRight, int fgBottom,
-        int monLeft, int monTop, int monRight, int monBottom)
+        int monLeft, int monTop, int monRight, int monBottom,
+        bool isMaximized = false)
     {
         if (!isVisible || isCloaked || sameProcessAsTray)
             return false;
@@ -91,6 +93,9 @@ internal static class WidgetLayoutRules
             return false;
 
         if ((style & WsCaption) == WsCaption)
+            return false;
+
+        if ((style & WsThickFrame) != 0 || isMaximized)
             return false;
 
         return fgLeft <= monLeft && fgTop <= monTop && fgRight >= monRight && fgBottom >= monBottom;

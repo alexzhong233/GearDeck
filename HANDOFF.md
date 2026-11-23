@@ -27,14 +27,13 @@
   - 低电量提醒与总览页排布：删掉设置页全局阈值输入框（固定默认阈值 `20%`），设置页保留 `全局设备低电量通知提醒` 开关；`DevicesPage` 将「换图」与「固定贴片」固定放第二行保证多设备排版整齐，单设备低电量提醒设置在对应设备的 `DeviceDetailPage` 硬件状态概览下方独立调节。
   - `GamesPage` & `GameProfileAutoService` / `FullscreenWindowClassifier`：改为左右分栏 + 顶部三标签设计，单款游戏配置默认关闭且在总览卡片直接显示开关，已开启的单游戏配置严格优先并覆盖「全屏策略」；新增 `FullscreenWindowClassifier` 排除桌面/壳层/壁纸/截图/浮层及 `WS_THICKFRAME`/最大化无边框软件误触发，切回本程序或关闭全屏/退出 F11 时自动解除锁存并严格区分板载槽位与 Host 快照进行回退与重试。
   - **CI (`ci-release.yml`)**：对 WinUI 3 `GearDeck.App` 拆分独立的 `/t:Restore` 与 `/t:Build`，保证新 runner 上先生成 `.nuget.g.props`/`.targets` 再触发 `MarkupCompilePass1` / XAML 编译。
-  - 任务栏贴片与分组弹窗 (`WidgetProcess`, `BatteryHistoryHelper`, `WidgetGroupWindow`, `GearDeck.Widget`)：分体双耳耳机（如 `Sony INZONE Buds`）在任务栏上下两行显示 `L xx%` / `R yy%⚡`；已观测过真实电量的设备在休眠时回退显示 `LastKnownBatteries` 历史值（从未读到电量的设备仍显示 `--`）；分组弹窗将头部（含设置齿轮按钮）固定于独立首行并动态重测高度与右侧内边距，杜绝滚动条遮挡；移除 `EVENT_OBJECT_REORDER` 风暴钩子、采用无激活 `AppWindow.Show(false)`、状态去重写盘与节流 Z 序检测，消除任务栏闪烁、点击秒退与卡死。
-  - 开机自启 (`SettingsService`, `SettingsPage`, `App`, `TrayIconService`)：设置页开关即时落盘与写入注册表（`CreateSubKey` + 同步清除/重置 `StartupApproved\Run` 禁用位），`OnLaunched` 校准工作目录至 `AppContext.BaseDirectory`，系统托盘 `NIM_ADD` 在开机桌面未就绪时自动退避重试。
-
-  - `DeviceManager` & `DeviceUnifier`：监听 `HidSharp.DeviceList.Local.Changed`（750ms 防抖 + 并发挂起合并）实现实时 USB/HID 热插拔扫描；各 Provider 扫描成功时即时剔除已断开设备（单 Provider 异常/超时则保留原快照防误删）；跨品牌显式双模 PID 表与严格型号键将“USB 充电端 + 2.4G 接收器端”合并为单张卡片（保留 2.4G 主 ID，标注 `USB 充电中`/`USB 已充满`/`USB 有线`，并将调参读写透明路由至活跃有线端）。
+  - 任务栏贴片与分组弹窗 (`WidgetProcess`, `BatteryHistoryHelper`, `WidgetGroupWindow`, `GearDeck.Widget`)：分体双耳耳机（如 `Sony INZONE Buds`）在任务栏上下两行显示 `L xx%` / `R yy%⚡`；已观测过真实电量的设备在休眠时回退显示 `LastKnownBatteries` 历史值（从未读到电量的设备仍显示 `--`）；同组存在清醒或充电设备时任务栏自动优先切换展示该设备而非卡在休眠默认设备；点击任务栏贴片按需触发防抖刷新，弹窗订阅 `DevicesUpdated` 实时刷新卡片且头部固定不遮挡滚动条；`WidgetProcess` 带线程锁与内容去重 `Seq` 递增序号，配合 `GearDeck.Widget` 文件长度+序号+`IOException` 重试及 `WS_THICKFRAME`/`IsZoomed`/`DWMWA_EXTENDED_FRAME_BOUNDS` 防误隐藏，彻底消除不打开主界面时状态停滞。
+  - 开机自启与托盘消息 (`SettingsService`, `SettingsPage`, `App`, `TrayIconService`)：设置页开关即时落盘与写入注册表（`CreateSubKey` + 同步清除/重置 `StartupApproved\Run` 禁用位），`OnLaunched` 校准工作目录至 `AppContext.BaseDirectory`，系统托盘 `NIM_ADD` 增加 `NIM_MODIFY`/`NIM_DELETE` 清理容错与开机延迟重试、监听 `WM_POWERBROADCAST` 睡眠唤醒 1.5s 后主动重扫，并随设备扫描实时更新托盘悬停电量摘要。
+  - `DeviceManager` & `DeviceUnifier`：监听 `HidSharp.DeviceList.Local.Changed`（750ms 防抖 + 并发挂起合并）实现实时 USB/HID 热插拔扫描并记录 `LastScanCompletedUtc`（支持 `RequestRefreshIfStale`）；各 Provider 扫描成功时即时剔除已断开设备（单 Provider 异常/超时则保留原快照防误删）；跨品牌显式双模 PID 表与严格型号键将“USB 充电端 + 2.4G 接收器端”合并为单张卡片（保留 2.4G 主 ID，标注 `USB 充电中`/`USB 已充满`/`USB 有线`，并将调参读写透明路由至活跃有线端）。
 
 ## 二、验证基线（2026-11-23）
 
-- **单元测试**：`dotnet test tests\GearDeck.Tests\GearDeck.Tests.csproj -c Release` — **97/97 全部通过**（0 失败，0 跳过；含 `DeviceUnifierTests`、`V102UpgradeTests`、`XamlSafetyTests`、`GameProfileMatcherTests`、`NewFeaturesAndDevicesTests`、`OpenMouseProtocolTests`、`ProtocolTests`、`HardwareProtocolTests`、`WidgetLayoutTests`、`UpdateClientTests`）。
+- **单元测试**：`dotnet test tests\GearDeck.Tests\GearDeck.Tests.csproj -c Release` — **101/101 全部通过**（0 失败，0 跳过；含 `DeviceUnifierTests`、`V102UpgradeTests`、`XamlSafetyTests`、`GameProfileMatcherTests`、`NewFeaturesAndDevicesTests`、`OpenMouseProtocolTests`、`ProtocolTests`、`HardwareProtocolTests`、`WidgetLayoutTests`、`UpdateClientTests`）。
 - **构建与贴片自检**：`MSBuild.exe` 编译 `GearDeck.Widget.csproj`（`Debug|x64`、`Release|x64`）与 `GearDeck.App.csproj`（`Debug|x64`、`Release|x64`）0 编译错误；`GearDeck.Widget.exe --render-test`（含双行上下叠排像素断言）与 `--window-test` 均返回退出码 `0`。
 - **发布归档**：`scripts/package-release.ps1 -Version 1.0.3` 生成便携包 `GearDeck-v1.0.3-win-x64.zip`、补丁包 `GearDeck-patch-v1.0.3-win-x64.zip` 与 `latest.json`（`.exe` 安装包由 GitHub Actions Windows runner 自动调用 Inno Setup 6 编译发布）。
 

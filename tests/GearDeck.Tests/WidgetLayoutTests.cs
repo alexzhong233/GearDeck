@@ -72,4 +72,18 @@ public class WidgetLayoutTests
         Assert.False(WidgetLayoutRules.IsTrayAutoHidden(0, 1368, 2560, 1440, 0, 0, 2560, 1440));
         Assert.True(WidgetLayoutRules.IsTrayAutoHidden(0, 1438, 2560, 1510, 0, 0, 2560, 1440));
     }
+
+    [Theory]
+    [InlineData(0x00040000, false)] // WS_THICKFRAME：普通可调整大小窗口
+    [InlineData(0, true)]           // isMaximized：最大化窗口
+    public void ShouldTreatAsFullscreen_ExcludesThickFramedAndMaximizedWindows(int style, bool isMaximized)
+    {
+        // 前台矩形完全覆盖显示器，仅靠 style / isMaximized 将其排除
+        bool actual = WidgetLayoutRules.ShouldTreatAsFullscreen(
+            "UnityWndClass", false, style, 0, true, false,
+            0, 0, 2560, 1440,
+            0, 0, 2560, 1440,
+            isMaximized);
+        Assert.False(actual);
+    }
 }

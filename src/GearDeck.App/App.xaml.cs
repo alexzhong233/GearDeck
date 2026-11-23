@@ -32,6 +32,7 @@ public partial class App : Application
     private static long _lastCommandSeq;
     private static long _lastPositionSeq;
     private static long _startedAt;
+    private static long _lastResumeRefreshTicks;
 
     private static string StateDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GearDeck");
@@ -143,7 +144,8 @@ public partial class App : Application
             onOpenMacros: () => UiQueue?.TryEnqueue(() => MainWindow.Instance?.OpenMacrosPage()),
             onToggleWidget: () => UiQueue?.TryEnqueue(ToggleWidget),
             onRefreshDevices: () => _ = Devices.RefreshAsync(),
-            onExit: () => UiQueue?.TryEnqueue(ExitApplication));
+            onExit: () => UiQueue?.TryEnqueue(ExitApplication),
+            onSystemResume: ScheduleResumeRefresh);
 
         GameAuto = new GameProfileAutoService();
         GameAuto.Start();
@@ -366,6 +368,50 @@ public partial class App : Application
         catch { }
     }
 
+    private static void ScheduleResumeRefresh()
+    {
+        if (IsExiting) return;
+        long now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _lastResumeRefreshTicks) < 3000)
+            return;
+        Interlocked.Exchange(ref _lastResumeRefreshTicks, now);
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(1500);
+            if (!IsExiting)
+                await Devices.RefreshAsync();
+        });
+    }
+
+    private static void UpdateTrayTooltip(IReadOnlyList<PeripheralDevice> devices)
+    {
+        const string fallback = "GearDeck · 外设调节与游戏配置";
+        var parts = new List<string>(3);
+        foreach (var d in devices)
+        {
+            if (d.IsSleeping) continue;
+
+            string? percentText;
+            if (d.LeftEarPercent is >= 0 and <= 100 || d.RightEarPercent is >= 0 and <= 100)
+                percentText = d.FormatDualEarSummary(compact: true);
+            else if (d.BatteryPercent is >= 0 and <= 100)
+                percentText = $"{d.BatteryPercent.Value}%" + (d.State == BatteryState.Charging ? "⚡" : "");
+            else
+                continue;
+
+            if (string.IsNullOrEmpty(percentText)) continue;
+            string name = string.IsNullOrWhiteSpace(d.Name) ? d.Kind.ToString() : d.Name;
+            parts.Add($"{name}: {percentText}");
+            if (parts.Count >= 3) break;
+        }
+
+        string tip = parts.Count > 0 ? string.Join(" | ", parts) : fallback;
+        if (tip.Length > 120)
+            tip = tip[..120];
+        TrayIcon?.UpdateTooltip(tip);
+    }
+
     private static void OnDevicesUpdated(IReadOnlyList<PeripheralDevice> devices)
     {
         LastDevices = devices;
@@ -389,6 +435,7 @@ public partial class App : Application
 
         NativeNotificationService.CheckAndNotifyLowBattery(devices);
         _ = DeviceImageService.EnsureAutoCloudImagesAsync(devices);
+        UpdateTrayTooltip(devices);
         if (Settings.Current.WidgetVisible)
             WidgetProcess.Refresh();
     }
