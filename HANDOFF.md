@@ -3,7 +3,7 @@
 > 更新时间：2026-11-23
 > 本地项目路径：`D:\projects\GearDeck`
 > GitHub 仓库：https://github.com/alexzhong233/GearDeck
-> 状态：**已发布 v1.0.3（怒喵 RACE 原生调校、ATK A9 Mini 全链路识别与 PAW3950Ultra/3955MASTER DPI 修正、左侧硬件状态 + 右上独立配置文件快切栏、实时 RT 按压力度条、0.1mm LOD 滑块、ROG UWP 奥创启动与飞智网页空间站、双耳两行贴片与历史电量回退、任务栏防闪烁防卡死、开机自启与全屏检测/回退修复）**
+> 状态：**已发布 v1.0.3（怒喵 RACE 原生调校、ATK A9 Mini 全链路识别与 PAW3950Ultra/3955MASTER DPI 修正、左侧硬件状态 + 右上独立配置文件快切栏、实时 RT 按压力度条、0.1mm LOD 滑块、ROG UWP 奥创启动与飞智网页空间站、双耳两行贴片与历史电量回退、任务栏防闪烁防卡死、开机自启与全屏检测/回退修复、USB/HID 实时热插拔与双模充电设备归一）**
 
 ## 一、项目结构与产物
 
@@ -13,7 +13,7 @@
 - **硬件协议栈 (`src/GearDeck.Core`)**：
   - `AngryMiaoRaceProtocol` & `AngryMiaoProvider`：怒喵 `AM Infinity .97` (`0E8D:0703`) 完整 Airoha RACE 协议电量、DPI 档位、回报率、LOD (`0.7..2.0 mm`)、防抖、Motion Sync / 直线修正 / 波纹控制读写，官方网页驱动更新为 `https://ammaster.angrymiao.com/mouse/devices`，产品图切换为单鼠标高清图 (`device-images.json` v4)。
   - `AtkModelCatalog`、`Compx08Protocol`、`BitmouseProtocol` & `AtkProvider`：对齐 `ATK HUB 3.2.33` 拆分 CompX (176 项) 与 Bitmouse (63 项) 独立 `(Cid, Mid)` 模型及传感器表（覆盖 `ATK A9 Mini` / `A9 Mini +` / `PAW3950Ultra` / `PAW3955MASTER`），支持 49B `0xFF04`/`0xFF05` 通道与休眠接收器配对 CID/MID 查询 (`0x01` / `137`)，修正 CompX EEPROM `[2]=StageCount` 与 `[4]=ActiveStageIndex` 偏移，新增 `PAW3955MASTER` `0x1B00` 6 字节 DPI 档位、`0.7..1.7 mm` `0.1 mm` 步进 LOD 与 `KnownReceiverModels` 跨会话记忆。
-  - `LogitechProvider`：HID++ `0x1004/0x1000`、`0x2202/0x2201`、`0x8061/0x8060`、`0x8100` Host/Onboard 切换、`0x1B0C` HITS 电磁微动触发点 (`1..10`) / Rapid Trigger (`1..5`) / 点击触感 (`0..5`) 与 `046D:C54F` (`PRO X3 SUPERSTRIKE`) 休眠保留。
+  - `LogitechProvider`：HID++ `0x1004/0x1000`（兼容 charging 状态 1/2/4 与 full 3）、`0x2202/0x2201`、`0x8061/0x8060`、`0x8100` Host/Onboard 切换、`0x1B0C` HITS 电磁微动触发点 (`1..10`) / Rapid Trigger (`1..5`) / 点击触感 (`0..5`)、区分 USB (`idx=0xFF` 非 bth) 与蓝牙传输，以及 `046D:C54F`/`046D:C0A9` (`PRO X3 SUPERSTRIKE`) 休眠保留与 `device-images.json` 映射。
   - `AulaFfa8Protocol` & `AulaProvider`：狼蛛 `0xFFA8` (`0x81`, `0xA0`, `0x85/0x86`, `0x9A/0x9B`, `0xA1/0xA2` SSHS 2.0 电磁微动与 Rapid Trigger `2=ON/1=OFF`)，覆盖 `昆仑 L5 Ultra (38A6:2F1A/2F0C)` 等机型。
   - `RazerProvider`：DPI/多档位、125–8000 Hz、`0x0B/0x85` + `0x0B/0x8B`（`1.0/1.5/2.0 mm` 与 `0.1 mm` 步进非对称抬起/着陆高度）、休眠、低电量阈值、`0x02/0x8C`/`0x02/0x0C`（`tid=0x10`）原生改键。
   - `CompXProvider` & `MchoseProvider`：65B CompX（万灵 WLmouse、兰族 Lamzu、Endgame Gear、Pulsar、Finalmouse、Keychron、Glorious、Rapoo 等）与迈从 V2/V3 协议（含 `3837`）。
@@ -30,9 +30,11 @@
   - 任务栏贴片与分组弹窗 (`WidgetProcess`, `BatteryHistoryHelper`, `WidgetGroupWindow`, `GearDeck.Widget`)：分体双耳耳机（如 `Sony INZONE Buds`）在任务栏上下两行显示 `L xx%` / `R yy%⚡`；已观测过真实电量的设备在休眠时回退显示 `LastKnownBatteries` 历史值（从未读到电量的设备仍显示 `--`）；分组弹窗将头部（含设置齿轮按钮）固定于独立首行并动态重测高度与右侧内边距，杜绝滚动条遮挡；移除 `EVENT_OBJECT_REORDER` 风暴钩子、采用无激活 `AppWindow.Show(false)`、状态去重写盘与节流 Z 序检测，消除任务栏闪烁、点击秒退与卡死。
   - 开机自启 (`SettingsService`, `SettingsPage`, `App`, `TrayIconService`)：设置页开关即时落盘与写入注册表（`CreateSubKey` + 同步清除/重置 `StartupApproved\Run` 禁用位），`OnLaunched` 校准工作目录至 `AppContext.BaseDirectory`，系统托盘 `NIM_ADD` 在开机桌面未就绪时自动退避重试。
 
+  - `DeviceManager` & `DeviceUnifier`：监听 `HidSharp.DeviceList.Local.Changed`（750ms 防抖 + 并发挂起合并）实现实时 USB/HID 热插拔扫描；各 Provider 扫描成功时即时剔除已断开设备（单 Provider 异常/超时则保留原快照防误删）；跨品牌显式双模 PID 表与严格型号键将“USB 充电端 + 2.4G 接收器端”合并为单张卡片（保留 2.4G 主 ID，标注 `USB 充电中`/`USB 已充满`/`USB 有线`，并将调参读写透明路由至活跃有线端）。
+
 ## 二、验证基线（2026-11-23）
 
-- **单元测试**：`dotnet test tests\GearDeck.Tests\GearDeck.Tests.csproj -c Release` — **93/93 全部通过**（0 失败，0 跳过；含 `V102UpgradeTests`、`XamlSafetyTests`、`GameProfileMatcherTests`、`NewFeaturesAndDevicesTests`、`OpenMouseProtocolTests`、`ProtocolTests`、`HardwareProtocolTests`、`WidgetLayoutTests`、`UpdateClientTests`）。
+- **单元测试**：`dotnet test tests\GearDeck.Tests\GearDeck.Tests.csproj -c Release` — **97/97 全部通过**（0 失败，0 跳过；含 `DeviceUnifierTests`、`V102UpgradeTests`、`XamlSafetyTests`、`GameProfileMatcherTests`、`NewFeaturesAndDevicesTests`、`OpenMouseProtocolTests`、`ProtocolTests`、`HardwareProtocolTests`、`WidgetLayoutTests`、`UpdateClientTests`）。
 - **构建与贴片自检**：`MSBuild.exe` 编译 `GearDeck.Widget.csproj`（`Debug|x64`、`Release|x64`）与 `GearDeck.App.csproj`（`Debug|x64`、`Release|x64`）0 编译错误；`GearDeck.Widget.exe --render-test`（含双行上下叠排像素断言）与 `--window-test` 均返回退出码 `0`。
 - **发布归档**：`scripts/package-release.ps1 -Version 1.0.3` 生成便携包 `GearDeck-v1.0.3-win-x64.zip`、补丁包 `GearDeck-patch-v1.0.3-win-x64.zip` 与 `latest.json`（`.exe` 安装包由 GitHub Actions Windows runner 自动调用 Inno Setup 6 编译发布）。
 

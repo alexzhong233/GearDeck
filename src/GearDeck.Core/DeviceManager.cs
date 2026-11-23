@@ -1,16 +1,23 @@
+using HidSharp;
 using GearDeck.Core.Models;
 using GearDeck.Core.Providers;
 using GearDeck.Core.Services;
 
 namespace GearDeck.Core;
 
-/// <summary>聚合所有品牌提供器并行轮询电量与参数调节；通过互斥锁序列化底层 HID 读写，避免 UI 卡顿或通道冲突。</summary>
+/// <summary>聚合所有品牌提供器并行轮询电量与参数调节，监听 USB/HID 热插拔实时刷新，并将双模有线充电与 2.4G 端自动归一。</summary>
 public sealed class DeviceManager : IDisposable
 {
     private readonly List<IPeripheralProvider> _providers;
     private readonly Dictionary<string, PeripheralDevice> _lastKnown = new();
+    private readonly Dictionary<IPeripheralProvider, List<PeripheralDevice>> _lastRawByProvider = new();
+    private readonly Dictionary<string, string> _activeTransportRouting = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _hidLock = new(1, 1);
     private Timer? _timer;
+    private Timer? _hotplugDebounceTimer;
+    private bool _hotplugSubscribed;
+    private int _pendingHotplugRefresh;
+    private bool _disposed;
     private readonly object _gate = new();
     private int _running;
 
@@ -24,13 +31,63 @@ public sealed class DeviceManager : IDisposable
 
     public void Start(int intervalSeconds = 30)
     {
-        Stop();
-        _timer = new Timer(_ => RefreshAsync(), null, TimeSpan.Zero, TimeSpan.FromSeconds(Math.Max(5, intervalSeconds)));
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _timer?.Dispose();
+            _timer = new Timer(_ => _ = RefreshAsync(), null, TimeSpan.Zero, TimeSpan.FromSeconds(Math.Max(5, intervalSeconds)));
+            if (!_hotplugSubscribed)
+            {
+                try
+                {
+                    DeviceList.Local.Changed += OnHidDeviceListChanged;
+                    _hotplugSubscribed = true;
+                }
+                catch (Exception ex)
+                {
+                    Diag.Log($"HID 热插拔监听订阅失败: {ex.Message}");
+                }
+            }
+        }
     }
 
-    public void Stop() => _timer?.Dispose();
+    public void Stop()
+    {
+        lock (_gate)
+        {
+            _timer?.Dispose();
+            _timer = null;
+            _hotplugDebounceTimer?.Dispose();
+            _hotplugDebounceTimer = null;
+            if (_hotplugSubscribed)
+            {
+                try { DeviceList.Local.Changed -= OnHidDeviceListChanged; } catch { }
+                _hotplugSubscribed = false;
+            }
+        }
+    }
 
-    public Task RefreshAsync(bool bypassCoexistenceGuard = false)
+    private void OnHidDeviceListChanged(object? sender, DeviceListChangedEventArgs e)
+    {
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _hotplugDebounceTimer ??= new Timer(_ => _ = RefreshAsync(isHotplug: true), null, Timeout.Infinite, Timeout.Infinite);
+            _hotplugDebounceTimer.Change(750, Timeout.Infinite);
+        }
+    }
+
+    public string ResolveActiveDeviceId(string deviceId)
+    {
+        lock (_gate)
+        {
+            return _activeTransportRouting.TryGetValue(deviceId, out string? activeId) && !string.IsNullOrWhiteSpace(activeId)
+                ? activeId
+                : deviceId;
+        }
+    }
+
+    public Task RefreshAsync(bool bypassCoexistenceGuard = false, bool isHotplug = false)
     {
         if (!bypassCoexistenceGuard && ExternalConfiguratorGuard.IsBackgroundYieldActive(out string? yieldReason))
         {
@@ -46,7 +103,12 @@ public sealed class DeviceManager : IDisposable
         }
 
         if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
+        {
+            if (isHotplug)
+                Interlocked.Exchange(ref _pendingHotplugRefresh, 1);
             return Task.CompletedTask;
+        }
+
         return Task.Run(async () =>
         {
             bool acquired = false;
@@ -55,46 +117,44 @@ public sealed class DeviceManager : IDisposable
                 acquired = await _hidLock.WaitAsync(TimeSpan.FromSeconds(8));
                 if (!acquired) return;
 
-                var snapshots = new List<PeripheralDevice>();
                 foreach (var line in Diag.DumpHidInventory())
                     Diag.Log(line);
 
                 // 每个品牌并行扫（品牌内部自行顺序探测接口），总超时 6 秒
                 var tasks = _providers.Select(async p =>
                 {
-                    var items = await Task.Run(() =>
+                    try
                     {
-                        try { return p.Enumerate(); }
-                        catch (Exception ex)
-                        {
-                            Diag.Log($"{p.Name} 扫描异常: {ex.Message}");
-                            return (IReadOnlyList<PeripheralDevice>)Array.Empty<PeripheralDevice>();
-                        }
-                    });
-                    Diag.Log($"{p.Name}: {items.Count} 台");
-                    return items;
+                        var items = await Task.Run(() => p.Enumerate());
+                        Diag.Log($"{p.Name}: {items.Count} 台");
+                        return (Provider: p, Succeeded: true, Items: (IReadOnlyList<PeripheralDevice>)items);
+                    }
+                    catch (Exception ex)
+                    {
+                        Diag.Log($"{p.Name} 扫描异常: {ex.Message}");
+                        return (Provider: p, Succeeded: false, Items: (IReadOnlyList<PeripheralDevice>)Array.Empty<PeripheralDevice>());
+                    }
                 }).ToArray();
                 Task.WaitAll(tasks, TimeSpan.FromSeconds(6));
-                foreach (var t in tasks)
-                    if (t.IsCompletedSuccessfully)
-                        snapshots.AddRange(t.Result);
 
                 lock (_gate)
                 {
-                    var seen = new HashSet<string>();
-                    foreach (var s in snapshots)
+                    foreach (var t in tasks)
                     {
-                        seen.Add(s.Id);
+                        if (t.IsCompletedSuccessfully && t.Result.Succeeded)
+                            _lastRawByProvider[t.Result.Provider] = t.Result.Items.ToList();
+                    }
+
+                    var allRaw = _lastRawByProvider.Values.SelectMany(x => x).ToList();
+                    var unified = DeviceUnifier.Unify(allRaw);
+
+                    _lastKnown.Clear();
+                    foreach (var s in unified.Devices)
                         _lastKnown[s.Id] = s;
-                    }
-                    foreach (var kv in _lastKnown.ToList())
-                    {
-                        if (!seen.Contains(kv.Key))
-                        {
-                            kv.Value.Connected = false;
-                            kv.Value.Note ??= "休眠或未连接";
-                        }
-                    }
+
+                    _activeTransportRouting.Clear();
+                    foreach (var kv in unified.ActiveTransportRouting)
+                        _activeTransportRouting[kv.Key] = kv.Value;
 
                     var list = _lastKnown.Values.OrderBy(d => d.Kind).ThenBy(d => d.Name).ToList();
                     DevicesUpdated?.Invoke(list);
@@ -109,13 +169,22 @@ public sealed class DeviceManager : IDisposable
             {
                 if (acquired) _hidLock.Release();
                 Interlocked.Exchange(ref _running, 0);
+                if (!_disposed && Interlocked.Exchange(ref _pendingHotplugRefresh, 0) == 1)
+                    _ = RefreshAsync(bypassCoexistenceGuard: false, isHotplug: false);
             }
         });
     }
 
     public async Task<DeviceTuningCapabilities> QueryCapabilitiesAsync(string deviceId)
     {
-        var provider = _providers.OfType<ITunablePeripheralProvider>().FirstOrDefault(p => p.CanHandleDevice(deviceId));
+        string effectiveId = ResolveActiveDeviceId(deviceId);
+        var provider = _providers.OfType<ITunablePeripheralProvider>().FirstOrDefault(p => p.CanHandleDevice(effectiveId));
+        if (provider == null && !string.Equals(effectiveId, deviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            effectiveId = deviceId;
+            provider = _providers.OfType<ITunablePeripheralProvider>().FirstOrDefault(p => p.CanHandleDevice(deviceId));
+        }
+
         if (provider == null)
         {
             return new DeviceTuningCapabilities
@@ -129,7 +198,9 @@ public sealed class DeviceManager : IDisposable
         await _hidLock.WaitAsync();
         try
         {
-            return await Task.Run(() => provider.QueryCapabilities(deviceId));
+            var caps = await Task.Run(() => provider.QueryCapabilities(effectiveId));
+            caps.DeviceId = deviceId;
+            return caps;
         }
         catch (Exception ex)
         {
@@ -149,14 +220,24 @@ public sealed class DeviceManager : IDisposable
 
     public async Task<DeviceTuningResult> ApplySettingsAsync(string deviceId, DeviceTuningUpdate update)
     {
-        var provider = _providers.OfType<ITunablePeripheralProvider>().FirstOrDefault(p => p.CanHandleDevice(deviceId));
+        string effectiveId = ResolveActiveDeviceId(deviceId);
+        var provider = _providers.OfType<ITunablePeripheralProvider>().FirstOrDefault(p => p.CanHandleDevice(effectiveId));
+        if (provider == null && !string.Equals(effectiveId, deviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            effectiveId = deviceId;
+            provider = _providers.OfType<ITunablePeripheralProvider>().FirstOrDefault(p => p.CanHandleDevice(deviceId));
+        }
+
         if (provider == null)
             return new DeviceTuningResult(false, "该设备暂不支持写入硬件参数。");
 
         await _hidLock.WaitAsync();
         try
         {
-            return await Task.Run(() => provider.ApplySettings(deviceId, update));
+            var res = await Task.Run(() => provider.ApplySettings(effectiveId, update));
+            if (res.Capabilities != null)
+                res.Capabilities.DeviceId = deviceId;
+            return res;
         }
         catch (Exception ex)
         {
@@ -177,6 +258,7 @@ public sealed class DeviceManager : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         Stop();
         _hidLock.Dispose();
     }

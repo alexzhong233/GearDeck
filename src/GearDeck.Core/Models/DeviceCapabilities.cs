@@ -26,7 +26,7 @@ public sealed record AnalogSwitchUpdate(
 
 public sealed class DeviceTuningCapabilities
 {
-    public required string DeviceId { get; init; }
+    public required string DeviceId { get; set; }
 
     public bool IsOnline { get; set; }
 

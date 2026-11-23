@@ -89,6 +89,7 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                     }
 
                     var meta = ResolveMeta(h, pid, idx, product);
+                    bool isBluetooth = anyDevice.DevicePath.Contains("bth", StringComparison.OrdinalIgnoreCase);
                     results.Add(new PeripheralDevice
                     {
                         Id = $"logi:{pid:X4}:{idx:X2}",
@@ -98,12 +99,12 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                         Kind = meta.Kind,
                         Provider = ProviderName,
                         Connected = true,
-                        Transport = idx == 0xFF ? "USB/BT" : "2.4G",
+                        Transport = idx == 0xFF ? (isBluetooth ? "Bluetooth" : "USB") : "2.4G",
                         BatteryPercent = battery,
                         State = chargeStatus switch
                         {
-                            1 => BatteryState.Charging,
-                            2 => BatteryState.FullyCharged,
+                            1 or 2 or 4 => BatteryState.Charging,
+                            3 => BatteryState.FullyCharged,
                             _ => BatteryState.Normal,
                         },
                         LastUpdated = DateTimeOffset.Now,
@@ -630,6 +631,12 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
 
         string finalName = resolvedName
                            ?? (string.IsNullOrWhiteSpace(usbProductName) ? $"Logitech {pid:X4}" : usbProductName.Trim());
+        if (pid == 0xC0A9 &&
+            finalName.Contains("X3 SUPERSTRIKE", StringComparison.OrdinalIgnoreCase) &&
+            !finalName.Contains("Logitech", StringComparison.OrdinalIgnoreCase))
+        {
+            finalName = "Logitech PRO X3 SUPERSTRIKE";
+        }
         var result = (finalName, kind);
         MetaCache[(pid, idx)] = result;
         return result;

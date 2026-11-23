@@ -9,6 +9,13 @@
       "cloudUrl": "https://resource.logitech.com/w_692,c_lpad,ar_4:3,q_auto,f_auto,dpr_1.0/d_transparent.gif/content/dam/gaming/en/products/pro-x-superlight-2/gallery-1-pro-x-superlight-2-gaming-mouse-black.png"
     },
     {
+      "id": "logi_pro_x3_superstrike_wired",
+      "name": "Logitech PRO X3 SUPERSTRIKE (Wired)",
+      "vidPid": "046d:c0a9",
+      "preset": "logitech_gpx",
+      "cloudUrl": "https://resource.logitech.com/w_692,c_lpad,ar_4:3,q_auto,f_auto,dpr_1.0/d_transparent.gif/content/dam/gaming/en/products/pro-x-superlight-2/gallery-1-pro-x-superlight-2-gaming-mouse-black.png"
+    },
+    {
       "id": "logi_gpx_superlight",
       "name": "Logitech G PRO X Superlight",
       "vidPid": "046d:c094",
