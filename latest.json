@@ -1,16 +1,16 @@
 {
-    "version":  "1.0.3",
-    "tag":  "v1.0.3",
-    "publishedAt":  "2026-11-23T12:12:28Z",
-    "htmlUrl":  "https://github.com/alexzhong233/GearDeck/releases/tag/v1.0.3",
-    "downloadUrl":  "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.3/GearDeck-v1.0.3-win-x64.zip",
-    "fullSha256":  "744C54B5268FB19249B09E5B866DEB55A4782EC493A8D4C20B779B2435B8D48B",
-    "fullSize":  32272591,
-    "patchUrl":  "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.3/GearDeck-patch-v1.0.3-win-x64.zip",
-    "patchSha256":  "5E1003B3C018849202017F780E0FA9FC4370818AC15FD93E863ECADD91A66DAD",
-    "patchSize":  1574476,
+    "version":  "1.0.4",
+    "tag":  "v1.0.4",
+    "publishedAt":  "2026-11-23T14:09:32Z",
+    "htmlUrl":  "https://github.com/alexzhong233/GearDeck/releases/tag/v1.0.4",
+    "downloadUrl":  "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.4/GearDeck-v1.0.4-win-x64.zip",
+    "fullSha256":  "C91BD4E4C962AA541E9E2F4F2D93E43BEB44EAEEAD6999006921042D6496D068",
+    "fullSize":  32272594,
+    "patchUrl":  "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.4/GearDeck-patch-v1.0.4-win-x64.zip",
+    "patchSha256":  "54A7D8004D7EFB8F74DF00670A19B99356A5ECF5D6597D3EE25BAE270B4DD349",
+    "patchSize":  1574479,
     "installerUrl":  "",
     "installerSha256":  "",
     "installerSize":  0,
-    "notes":  ""
+    "notes":  "任务栏活跃设备优先与按需/唤醒刷新、USB热插拔与双模充电归一、弹窗防遮挡、开机自启与全屏策略优化、分栏游戏配置与单设备低电量设置"
 }
