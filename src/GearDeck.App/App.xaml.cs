@@ -96,6 +96,7 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        try { Environment.CurrentDirectory = AppContext.BaseDirectory; } catch { }
         _startedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         Settings = new SettingsService();
         AtkModelCatalog.SeedPersistentReceiverModels(Settings.Current.KnownReceiverModels);

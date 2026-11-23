@@ -64,8 +64,11 @@ public sealed class WidgetGroupWindow : Window
         };
         panel.PointerEntered += (_, _) => _entered = true;
 
-        var root = new StackPanel { Spacing = 8 };
-        var headerGrid = new Grid { Margin = new Thickness(4, 0, 0, 2) };
+        var layoutGrid = new Grid { RowSpacing = 8 };
+        layoutGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        layoutGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var headerGrid = new Grid { Margin = new Thickness(4, 0, 0, 0) };
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -103,7 +106,12 @@ public sealed class WidgetGroupWindow : Window
             Content = new FontIcon { Glyph = "\uE713", FontSize = 13 },
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(6, 4, 6, 4),
+            Width = 28,
+            Height = 28,
+            MinWidth = 0,
+            MinHeight = 0,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(6),
             VerticalAlignment = VerticalAlignment.Center,
         };
         ToolTipService.SetToolTip(settingsBtn, "跳转到任务栏贴片设置");
@@ -115,11 +123,12 @@ public sealed class WidgetGroupWindow : Window
         Grid.SetColumn(settingsBtn, 1);
         headerGrid.Children.Add(settingsBtn);
 
-        root.Children.Add(headerGrid);
+        layoutGrid.Children.Add(headerGrid);
 
+        var devicesStack = new StackPanel { Spacing = 8 };
         if (devices.Count == 0)
         {
-            root.Children.Add(new TextBlock
+            devicesStack.Children.Add(new TextBlock
             {
                 Text = "无设备",
                 FontSize = 13,
@@ -197,46 +206,78 @@ public sealed class WidgetGroupWindow : Window
                 MainWindow.Instance?.OpenDevice(d.Id);
                 Close();
             };
-            root.Children.Add(card);
+            devicesStack.Children.Add(card);
         }
 
-        panel.Child = new ScrollViewer
+        var devicesScroll = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Content = root,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = devicesStack,
         };
+        Grid.SetRow(devicesScroll, 1);
+        layoutGrid.Children.Add(devicesScroll);
+        panel.Child = layoutGrid;
         Content = panel;
 
         _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         uint dpi = GetDpiForWindow(_hwnd);
         _scale = (dpi == 0 ? 96u : dpi) / 96.0;
-        int flyoutW = (int)Math.Round(328 * _scale);
-        int flyoutH = Math.Clamp(
-            (int)Math.Round((56 + Math.Max(1, devices.Count) * 56) * _scale),
-            (int)Math.Round(108 * _scale),
-            (int)Math.Round(480 * _scale));
-        AppWindow.Resize(new SizeInt32(flyoutW, flyoutH));
 
-        int gap = (int)Math.Round(8 * _scale);
-        if (anchor is { Width: > 0 } a)
+        void ResizeAndPosition(double heightDip)
         {
-            var display = DisplayArea.GetFromPoint(new PointInt32(a.X + a.Width / 2, a.Y), DisplayAreaFallback.Primary);
-            var bounds = display.OuterBounds;
-            int x = Math.Clamp(a.X + (a.Width - flyoutW) / 2, bounds.X + gap, Math.Max(bounds.X + gap, bounds.X + bounds.Width - flyoutW - gap));
-            bool taskbarAtTop = a.Y < bounds.Y + bounds.Height / 3;
-            int y = taskbarAtTop
-                ? a.Y + a.Height + gap
-                : a.Y - flyoutH - gap;
-            y = Math.Clamp(y, bounds.Y + gap, Math.Max(bounds.Y + gap, bounds.Y + bounds.Height - flyoutH - gap));
-            AppWindow.Move(new PointInt32(x, y));
+            int flyoutW = (int)Math.Round(328 * _scale);
+            int flyoutH = Math.Clamp(
+                (int)Math.Round(heightDip * _scale),
+                (int)Math.Round(116 * _scale),
+                (int)Math.Round(480 * _scale));
+            AppWindow.Resize(new SizeInt32(flyoutW, flyoutH));
+
+            int gap = (int)Math.Round(8 * _scale);
+            if (anchor is { Width: > 0 } a)
+            {
+                var display = DisplayArea.GetFromPoint(new PointInt32(a.X + a.Width / 2, a.Y), DisplayAreaFallback.Primary);
+                var bounds = display.OuterBounds;
+                int x = Math.Clamp(a.X + (a.Width - flyoutW) / 2, bounds.X + gap, Math.Max(bounds.X + gap, bounds.X + bounds.Width - flyoutW - gap));
+                bool taskbarAtTop = a.Y < bounds.Y + bounds.Height / 3;
+                int y = taskbarAtTop
+                    ? a.Y + a.Height + gap
+                    : a.Y - flyoutH - gap;
+                y = Math.Clamp(y, bounds.Y + gap, Math.Max(bounds.Y + gap, bounds.Y + bounds.Height - flyoutH - gap));
+                AppWindow.Move(new PointInt32(x, y));
+            }
+            else
+            {
+                var area = DisplayArea.Primary.WorkArea;
+                AppWindow.Move(new PointInt32(
+                    area.X + area.Width - flyoutW - (int)Math.Round(20 * _scale),
+                    area.Y + area.Height - flyoutH - (int)Math.Round(12 * _scale)));
+            }
         }
-        else
+
+        double currentDip = Math.Clamp(72 + Math.Max(1, devices.Count) * 60, 124, 480);
+        ResizeAndPosition(currentDip);
+
+        bool sizedOnLoad = false;
+        panel.Loaded += (_, _) =>
         {
-            var area = DisplayArea.Primary.WorkArea;
-            AppWindow.Move(new PointInt32(
-                area.X + area.Width - flyoutW - (int)Math.Round(20 * _scale),
-                area.Y + area.Height - flyoutH - (int)Math.Round(12 * _scale)));
-        }
+            if (sizedOnLoad || IsClosed) return;
+            sizedOnLoad = true;
+            panel.UpdateLayout();
+            double rawDip = headerGrid.ActualHeight + devicesStack.ActualHeight + 36;
+            if (rawDip > 480)
+            {
+                devicesStack.Padding = new Thickness(0, 0, 12, 0);
+                panel.UpdateLayout();
+                rawDip = headerGrid.ActualHeight + devicesStack.ActualHeight + 36;
+            }
+            double targetDip = Math.Clamp(rawDip, 116, 480);
+            if (Math.Abs(targetDip - currentDip) > 2)
+            {
+                currentDip = targetDip;
+                ResizeAndPosition(targetDip);
+            }
+        };
 
         try { AppWindow.Show(false); } catch { }
         SetWindowPos(_hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);

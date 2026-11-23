@@ -213,6 +213,41 @@ public sealed partial class SettingsPage : Page
         }
     }
 
+    private void OnCloseToTrayToggled(object sender, RoutedEventArgs e)
+    {
+        if (_binding) return;
+        App.Settings.Current.CloseToTray = CloseToTraySwitch.IsOn;
+        App.Settings.Save();
+    }
+
+    private void OnNotifyToggled(object sender, RoutedEventArgs e)
+    {
+        if (_binding) return;
+        App.Settings.Current.NotifyOnProfileSwitch = NotifySwitch.IsOn;
+        App.Settings.Save();
+    }
+
+    private void OnStartupToggled(object sender, RoutedEventArgs e)
+    {
+        if (_binding) return;
+        bool enable = StartupSwitch.IsOn;
+        var (ok, detail) = SettingsService.ApplyStartupRegistry(enable);
+        if (!ok)
+        {
+            _binding = true;
+            StartupSwitch.IsOn = !enable;
+            _binding = false;
+            SavedHintText.Text = $"设置开机自启失败：{detail}";
+            return;
+        }
+
+        App.Settings.Current.LaunchOnStartup = enable;
+        App.Settings.Save();
+        SavedHintText.Text = enable
+            ? $"已开启开机自启 ({DateTime.Now:HH:mm:ss})"
+            : $"已关闭开机自启 ({DateTime.Now:HH:mm:ss})";
+    }
+
     private void OnDebugToggled(object sender, RoutedEventArgs e)
     {
         if (_binding) return;
@@ -239,11 +274,13 @@ public sealed partial class SettingsPage : Page
         App.Settings.Current.CheckUpdateOnStartup = AutoCheckUpdateSwitch.IsOn;
         App.Settings.Current.GitHubMirrorUrl = GitHubMirrorBox.Text?.Trim() ?? "";
         App.Settings.Save();
-        SettingsService.ApplyStartupRegistry(StartupSwitch.IsOn);
+        var (startupOk, startupDetail) = SettingsService.ApplyStartupRegistry(StartupSwitch.IsOn);
         MainWindow.Instance?.UpdateDebugVisibility();
         App.Devices.Start(App.Settings.Current.PollIntervalSeconds);
         App.RefreshWidget();
-        SavedHintText.Text = $"已保存 ({DateTime.Now:HH:mm:ss})";
+        SavedHintText.Text = startupOk
+            ? $"已保存 ({DateTime.Now:HH:mm:ss})"
+            : $"设置已保存，但开机自启写入失败：{startupDetail}";
     }
 
     private void OnOpenLocalImageManifest(object sender, RoutedEventArgs e)

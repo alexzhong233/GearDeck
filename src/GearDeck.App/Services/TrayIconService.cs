@@ -11,6 +11,7 @@ public sealed class TrayIconService : IDisposable
 {
     private const int WmUser = 0x0400;
     private const uint WmTrayIcon = WmUser + 0x101;
+    private const uint WmRetryTray = WmUser + 0x102;
     private const uint WmCommand = 0x0111;
     private const uint WmDestroy = 0x0002;
     private const uint WmNull = 0x0000;
@@ -50,6 +51,7 @@ public sealed class TrayIconService : IDisposable
     private uint _taskbarCreatedMsg;
     private WndProcDelegate? _wndProc;
     private volatile bool _disposed;
+    private volatile bool _trayAdded;
 
     public TrayIconService(
         Action onOpenMain,
@@ -169,19 +171,51 @@ public sealed class TrayIconService : IDisposable
         szInfoTitle = "",
     };
 
-    private void AddOrRestoreTrayIcon()
+    private void AddOrRestoreTrayIcon(bool scheduleRetry = true)
     {
-        if (_hwnd == IntPtr.Zero) return;
+        if (_hwnd == IntPtr.Zero || _disposed) return;
         var nid = CreateIconData();
-        if (!Shell_NotifyIconW(NimAdd, ref nid))
-            Diag.Log($"Shell_NotifyIconW(NIM_ADD) 失败 err={Marshal.GetLastWin32Error()}");
+        if (Shell_NotifyIconW(NimAdd, ref nid))
+        {
+            _trayAdded = true;
+            return;
+        }
+
+        _trayAdded = false;
+        int err = Marshal.GetLastWin32Error();
+        Diag.Log($"Shell_NotifyIconW(NIM_ADD) 失败 err={err}");
+        if (scheduleRetry)
+            ScheduleTrayRetry();
+    }
+
+    private void ScheduleTrayRetry()
+    {
+        var hwnd = _hwnd;
+        if (hwnd == IntPtr.Zero || _disposed) return;
+        _ = Task.Run(async () =>
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                await Task.Delay(1500);
+                if (_disposed || _trayAdded) return;
+                PostMessageW(hwnd, WmRetryTray, IntPtr.Zero, IntPtr.Zero);
+            }
+        });
     }
 
     private IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         if (_taskbarCreatedMsg != 0 && msg == _taskbarCreatedMsg)
         {
-            AddOrRestoreTrayIcon();
+            _trayAdded = false;
+            AddOrRestoreTrayIcon(scheduleRetry: true);
+            return IntPtr.Zero;
+        }
+
+        if (msg == WmRetryTray)
+        {
+            if (!_trayAdded)
+                AddOrRestoreTrayIcon(scheduleRetry: false);
             return IntPtr.Zero;
         }
 

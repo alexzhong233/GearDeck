@@ -158,4 +158,63 @@ public class GameProfileMatcherTests
         Assert.Equal(ActiveSwitchReason.ProcessRule, keepWinsFs.Reason);
         Assert.Equal(GameProfileRuleMatcher.KeepCurrentTargetId, keepWinsFs.PerMouseTargets["razer:00C1"]);
     }
+
+    [Fact]
+    public void FullscreenWindowClassifier_RejectsDesktopShellAndMaximizedApps_AndUnlatchesOnExit()
+    {
+        static WindowFullscreenProbe MakeProbe(
+            string proc = "cs2.exe",
+            string cls = "SDL_app",
+            bool visible = true,
+            bool cloaked = false,
+            bool minimized = false,
+            bool maximized = false,
+            int style = unchecked((int)0x96000000),
+            int exStyle = 0,
+            (int L, int T, int R, int B)? winRect = null,
+            bool quns = false)
+        {
+            var r = winRect ?? (0, 0, 2560, 1440);
+            return new WindowFullscreenProbe(
+                proc, cls, visible, cloaked, minimized, maximized,
+                style, exStyle, r.L, r.T, r.R, r.B,
+                0, 0, 2560, 1440, quns);
+        }
+
+        // 1. Excluded desktop / organizer / overlay processes never trigger fullscreen even when full-monitor or QUNS
+        foreach (string excluded in new[] { "explorer.exe", "Coodesker.exe", "Snipaste.exe", "GameBar.exe", "NVIDIA Overlay.exe" })
+        {
+            Assert.False(FullscreenWindowClassifier.IsFullscreen(MakeProbe(proc: excluded, quns: true), onlyTrueExclusiveFullscreen: false));
+        }
+
+        // 2. Maximized / resizable (WS_THICKFRAME) borderless desktop app covering monitor without taskbar must NOT trigger fullscreen
+        Assert.False(FullscreenWindowClassifier.IsFullscreen(
+            MakeProbe(proc: "chrome.exe", maximized: true, style: unchecked((int)0x96000000) | FullscreenWindowClassifier.WsThickFrame),
+            onlyTrueExclusiveFullscreen: false));
+        Assert.False(FullscreenWindowClassifier.IsFullscreen(
+            MakeProbe(proc: "Code.exe", maximized: false, style: unchecked((int)0x96000000) | FullscreenWindowClassifier.WsThickFrame),
+            onlyTrueExclusiveFullscreen: false));
+        Assert.False(FullscreenWindowClassifier.IsFullscreen(
+            MakeProbe(proc: "notepad.exe", maximized: true),
+            onlyTrueExclusiveFullscreen: false));
+
+        // 3. True borderless fullscreen game works when onlyTrueExclusiveFullscreen == false, rejected when true
+        var borderlessGame = MakeProbe(proc: "r5apex.exe", cls: "Respawn001");
+        Assert.True(FullscreenWindowClassifier.IsFullscreen(borderlessGame, onlyTrueExclusiveFullscreen: false));
+        Assert.False(FullscreenWindowClassifier.IsFullscreen(borderlessGame, onlyTrueExclusiveFullscreen: true));
+
+        // 4. DX9/DX11 QUNS exclusive fullscreen triggers in both modes even with WS_CAPTION
+        var dx9Exclusive = MakeProbe(proc: "dota2.exe", style: FullscreenWindowClassifier.WsCaption, quns: true);
+        Assert.True(FullscreenWindowClassifier.IsFullscreen(dx9Exclusive, onlyTrueExclusiveFullscreen: true));
+        Assert.True(FullscreenWindowClassifier.IsFullscreen(dx9Exclusive, onlyTrueExclusiveFullscreen: false));
+
+        // 5. Latch retention: Alt+Tab keep alive (minimized D3D or background fullscreen), but unlatch immediately on hide/cloak/windowed/close
+        Assert.True(FullscreenWindowClassifier.IsExclusiveFullscreenLatchAlive(true, true, MakeProbe(minimized: true), false));
+        Assert.True(FullscreenWindowClassifier.IsExclusiveFullscreenLatchAlive(true, true, borderlessGame, false));
+        Assert.False(FullscreenWindowClassifier.IsExclusiveFullscreenLatchAlive(true, true, MakeProbe(visible: false), false));
+        Assert.False(FullscreenWindowClassifier.IsExclusiveFullscreenLatchAlive(true, true, MakeProbe(cloaked: true), false));
+        Assert.False(FullscreenWindowClassifier.IsExclusiveFullscreenLatchAlive(true, true, MakeProbe(winRect: (100, 100, 1920, 1080)), false));
+        Assert.False(FullscreenWindowClassifier.IsExclusiveFullscreenLatchAlive(false, true, borderlessGame, false));
+        Assert.False(FullscreenWindowClassifier.IsExclusiveFullscreenLatchAlive(true, false, borderlessGame, false));
+    }
 }

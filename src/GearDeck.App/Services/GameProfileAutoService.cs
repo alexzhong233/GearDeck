@@ -23,18 +23,8 @@ public sealed class GameProfileAutoService : IDisposable
     private const uint MonitorDefaultToNearest = 2;
     private const int GwlStyle = -16;
     private const int GwlExStyle = -20;
-    private const int WsCaption = 0x00C00000;
-    private const int WsExToolWindow = 0x00000080;
-    private const int WsExTransparent = 0x00000020;
-    private const int WsExNoActivate = 0x08000000;
+    private const int DwmwaExtendedFrameBounds = 9;
     private const int DwmwaCloaked = 14;
-
-    private static readonly HashSet<string> ExcludedFullscreenClasses = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd",
-        "Windows.UI.Core.CoreWindow", "XamlExplorerHostIslandWindow",
-        "TopLevelWindowForOverflowXamlIsland", "ForegroundStaging", "NotifyIconOverflowWindow",
-    };
 
     private static readonly HashSet<string> IgnoredPickerProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -47,7 +37,7 @@ public sealed class GameProfileAutoService : IDisposable
     private readonly SemaphoreSlim _applyLock = new(1, 1);
     private readonly Dictionary<string, string> _lastAppliedByDevice = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _lastOutcomeByDevice = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, (int? OnboardSlot, MouseHardwarePreset? Preset)> _preEntrySnapshots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (int? OnboardSlot, bool? WasHostMode, MouseHardwarePreset? Preset, bool SwitchedViaOnboardSlot)> _preEntrySnapshots = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _lastAwakeMouseIds = new(StringComparer.OrdinalIgnoreCase);
     private Timer? _timer;
     private int _ticking;
@@ -57,6 +47,8 @@ public sealed class GameProfileAutoService : IDisposable
     private long _pendingSinceMs;
     private GameProfileResolution? _pendingResolution;
     private GameProfileResolution? _lastResolution;
+    private long _lastRollbackRetryMs;
+    private int _rollbackRetryCount;
 
     private IntPtr _latchedHwnd;
     private uint _latchedPid;
@@ -92,6 +84,7 @@ public sealed class GameProfileAutoService : IDisposable
         _latchedResolution = null;
         _latchedHwnd = IntPtr.Zero;
         _latchedPid = 0;
+        _rollbackRetryCount = 0;
         await PollAsync(force: true);
     }
 
@@ -156,7 +149,23 @@ public sealed class GameProfileAutoService : IDisposable
                 return;
             }
 
-            if (isSelf && !force)
+            if (!settings.EnableExclusiveFullscreenFallback &&
+                _latchedResolution?.Reason == ActiveSwitchReason.ExclusiveFullscreen)
+            {
+                _latchedResolution = null;
+                _latchedHwnd = IntPtr.Zero;
+                _latchedPid = 0;
+            }
+
+            bool latchedDiedWhileSelf = isSelf && _latchedResolution != null && !IsLatchedSessionStillAlive();
+            bool pendingRollbackRetryWhileSelf = isSelf && _preEntrySnapshots.Count > 0 && ActiveReason == ActiveSwitchReason.DesktopDefault;
+            if (latchedDiedWhileSelf)
+            {
+                LastIsFullscreen = false;
+                LastForegroundProcess = "";
+                LastForegroundTitle = "";
+            }
+            if (isSelf && !force && !latchedDiedWhileSelf && !pendingRollbackRetryWhileSelf)
                 return;
 
             if (!force && ExternalConfiguratorGuard.IsBackgroundYieldActive(out var yieldReason))
@@ -217,6 +226,20 @@ public sealed class GameProfileAutoService : IDisposable
                     ActiveRuleLabel = displayLabel;
 
                 _pendingRuleKey = null;
+
+                if (resolution.Reason == ActiveSwitchReason.DesktopDefault
+                    && _preEntrySnapshots.Count > 0
+                    && _rollbackRetryCount < 6
+                    && Environment.TickCount64 - _lastRollbackRetryMs >= 2500)
+                {
+                    _rollbackRetryCount++;
+                    _lastRollbackRetryMs = Environment.TickCount64;
+                    await ApplyResolutionAsync(resolution, forceAll: false, hwnd, pid, LastForegroundProcess, []);
+                    if (_preEntrySnapshots.Count == 0)
+                        _rollbackRetryCount = 0;
+                    return;
+                }
+
                 StatusChanged?.Invoke();
                 return;
             }
@@ -230,9 +253,13 @@ public sealed class GameProfileAutoService : IDisposable
                 return;
             }
 
-            int requiredDebounceMs = resolution.Reason is ActiveSwitchReason.ProcessRule or ActiveSwitchReason.ExclusiveFullscreen
-                ? 250
-                : 1500;
+            int requiredDebounceMs = resolution.Reason switch
+            {
+                ActiveSwitchReason.ProcessRule => 300,
+                ActiveSwitchReason.ExclusiveFullscreen => 600,
+                ActiveSwitchReason.DesktopDefault when settings.KeepProfileUntilWindowExits => 500,
+                _ => 1500,
+            };
             if (now - _pendingSinceMs >= requiredDebounceMs && _pendingResolution != null)
             {
                 var toApply = _pendingResolution;
@@ -274,6 +301,7 @@ public sealed class GameProfileAutoService : IDisposable
             if (resolution.Reason is ActiveSwitchReason.ProcessRule or ActiveSwitchReason.ExclusiveFullscreen)
             {
                 _latchedResolution = resolution;
+                _rollbackRetryCount = 0;
                 if (hwnd != IntPtr.Zero) _latchedHwnd = hwnd;
                 if (pid != 0) _latchedPid = pid;
                 if (!string.IsNullOrWhiteSpace(procName)) _latchedProcName = procName;
@@ -343,17 +371,22 @@ public sealed class GameProfileAutoService : IDisposable
                         if (!_preEntrySnapshots.TryGetValue(deviceId, out var snap))
                             continue;
 
-                        update = snap.Preset?.ToUpdate();
-                        if (update == null && snap.OnboardSlot is { } prevSlot)
+                        if (snap.SwitchedViaOnboardSlot && snap.OnboardSlot is { } prevSlot)
                         {
                             update = new DeviceTuningUpdate { ActiveOnboardProfile = prevSlot };
                             desc = $"开启前板载槽位 {prevSlot + 1}";
                         }
-                        else if (update != null)
+                        else if (snap.Preset != null)
                         {
-                            if (snap.OnboardSlot is { } s && !update.ActiveOnboardProfile.HasValue)
-                                update.ActiveOnboardProfile = s;
+                            update = snap.Preset.ToUpdate();
+                            if (snap.WasHostMode == true)
+                                update.SetHostMode = true;
                             desc = "开启前配置";
+                        }
+                        else if (snap.OnboardSlot is { } fallbackSlot)
+                        {
+                            update = new DeviceTuningUpdate { ActiveOnboardProfile = fallbackSlot };
+                            desc = $"开启前板载槽位 {fallbackSlot + 1}";
                         }
                     }
                     else if (parsed.OnboardSlot is { } slot)
@@ -430,11 +463,27 @@ public sealed class GameProfileAutoService : IDisposable
                         try
                         {
                             var curCaps = await App.Devices.QueryCapabilitiesAsync(deviceId);
+                            if (!curCaps.IsOnline)
+                            {
+                                await Task.Delay(150);
+                                curCaps = await App.Devices.QueryCapabilitiesAsync(deviceId);
+                            }
+
                             if (curCaps.IsOnline)
                             {
                                 int? onboardSlot = curCaps.OnboardProfileCount > 0 ? curCaps.ActiveOnboardProfile : null;
+                                bool? wasHostMode = curCaps.SupportsHostModeSwitch ? curCaps.IsHostMode : null;
+                                bool inOnboardMode = !curCaps.SupportsHostModeSwitch || !curCaps.IsHostMode;
+                                bool switchedViaSlot = parsed.OnboardSlot.HasValue && curCaps.OnboardProfileCount > 0 && inOnboardMode;
                                 var snapPreset = MouseHardwarePreset.CaptureFrom("开启前快照", deviceId, dev.Name, curCaps);
-                                _preEntrySnapshots[deviceId] = (onboardSlot, snapPreset);
+                                _preEntrySnapshots[deviceId] = (onboardSlot, wasHostMode, snapPreset, switchedViaSlot);
+                            }
+                            else if (parsed.OnboardSlot.HasValue &&
+                                     App.Settings.Current.DeviceOnboardManifests.TryGetValue(deviceId, out var manifest) &&
+                                     manifest.SlotCount > 0)
+                            {
+                                int fallbackSlot = Math.Clamp(manifest.ActiveSlot, 0, manifest.SlotCount - 1);
+                                _preEntrySnapshots[deviceId] = (fallbackSlot, null, null, true);
                             }
                         }
                         catch { }
@@ -456,6 +505,9 @@ public sealed class GameProfileAutoService : IDisposable
                 }
             }
 
+            if (resolution.Reason == ActiveSwitchReason.DesktopDefault && _preEntrySnapshots.Count == 0)
+                _rollbackRetryCount = 0;
+
             if (switchedNotifications.Count > 0)
                 NativeNotificationService.NotifyProfileSwitch(resolution.RuleLabel, switchedNotifications);
 
@@ -474,9 +526,16 @@ public sealed class GameProfileAutoService : IDisposable
 
         if (_latchedResolution.Reason == ActiveSwitchReason.ExclusiveFullscreen)
         {
-            if (_latchedHwnd != IntPtr.Zero && IsWindow(_latchedHwnd) && IsProcessAlive(_latchedPid))
-                return true;
-            return false;
+            bool winAlive = _latchedHwnd != IntPtr.Zero && IsWindow(_latchedHwnd);
+            bool procAlive = _latchedPid != 0 && IsProcessAlive(_latchedPid);
+            if (!winAlive || !procAlive)
+                return false;
+
+            bool isQunsForLatched = GetForegroundWindow() == _latchedHwnd
+                && SHQueryUserNotificationState(out int qns) == 0 && qns == 3;
+            var probe = ProbeWindow(_latchedHwnd, _latchedPid, _latchedProcName, isQunsForLatched);
+            bool onlyNative = App.Settings?.Current.OnlyTrueExclusiveFullscreen == true;
+            return FullscreenWindowClassifier.IsExclusiveFullscreenLatchAlive(winAlive, procAlive, probe, onlyNative);
         }
 
         if (_latchedResolution.Reason == ActiveSwitchReason.ProcessRule)
@@ -570,40 +629,60 @@ public sealed class GameProfileAutoService : IDisposable
 
         bool exclusiveQuns = SHQueryUserNotificationState(out int qns) == 0 && qns == 3;
         bool onlyNative = App.Settings?.Current.OnlyTrueExclusiveFullscreen == true;
-        bool borderlessFs = !onlyNative && IsFullscreenWindow(hwnd);
-        return (hwnd, pid, procName, title, exclusiveQuns || borderlessFs, false);
+        var probe = ProbeWindow(hwnd, pid, procName, exclusiveQuns);
+        bool isFullscreen = probe != null && FullscreenWindowClassifier.IsFullscreen(probe, onlyNative);
+        return (hwnd, pid, procName, title, isFullscreen, false);
     }
 
-    private static bool IsFullscreenWindow(IntPtr hwnd)
+    private static WindowFullscreenProbe? ProbeWindow(IntPtr hwnd, uint pid, string procName, bool isQunsD3d)
     {
-        if (!IsWindowVisible(hwnd)) return false;
+        if (hwnd == IntPtr.Zero) return null;
+        bool visible = IsWindowVisible(hwnd);
 
         int cloaked = 0;
-        if (DwmGetWindowAttribute(hwnd, DwmwaCloaked, out cloaked, sizeof(int)) == 0 && cloaked != 0)
-            return false;
+        bool isCloaked = DwmGetWindowAttribute(hwnd, DwmwaCloaked, out cloaked, sizeof(int)) == 0 && cloaked != 0;
 
         var clsSb = new StringBuilder(128);
         GetClassNameW(hwnd, clsSb, clsSb.Capacity);
         string cls = clsSb.ToString();
-        if (!string.IsNullOrEmpty(cls) && ExcludedFullscreenClasses.Contains(cls))
-            return false;
 
-        int exStyle = GetWindowLongW(hwnd, GwlExStyle);
-        if ((exStyle & (WsExToolWindow | WsExTransparent | WsExNoActivate)) != 0)
-            return false;
-
+        bool minimized = IsIconic(hwnd);
+        bool maximized = IsZoomed(hwnd);
         int style = GetWindowLongW(hwnd, GwlStyle);
-        if ((style & WsCaption) == WsCaption)
-            return false;
+        int exStyle = GetWindowLongW(hwnd, GwlExStyle);
 
-        if (!GetWindowRect(hwnd, out RECT rc)) return false;
+        if (DwmGetWindowAttribute(hwnd, DwmwaExtendedFrameBounds, out RECT rc, Marshal.SizeOf<RECT>()) != 0
+            && !GetWindowRect(hwnd, out rc))
+        {
+            return null;
+        }
+
         IntPtr mon = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
-        if (mon == IntPtr.Zero) return false;
+        if (mon == IntPtr.Zero) return null;
         var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-        if (!GetMonitorInfoW(mon, ref mi)) return false;
+        if (!GetMonitorInfoW(mon, ref mi)) return null;
 
-        return rc.Left <= mi.rcMonitor.Left && rc.Top <= mi.rcMonitor.Top &&
-               rc.Right >= mi.rcMonitor.Right && rc.Bottom >= mi.rcMonitor.Bottom;
+        if (string.IsNullOrWhiteSpace(procName) && pid != 0)
+            procName = ResolveProcessName(pid);
+
+        return new WindowFullscreenProbe(
+            ProcessName: procName,
+            ClassName: cls,
+            IsVisible: visible,
+            IsCloaked: isCloaked,
+            IsMinimized: minimized,
+            IsMaximized: maximized,
+            Style: style,
+            ExStyle: exStyle,
+            WindowLeft: rc.Left,
+            WindowTop: rc.Top,
+            WindowRight: rc.Right,
+            WindowBottom: rc.Bottom,
+            MonitorLeft: mi.rcMonitor.Left,
+            MonitorTop: mi.rcMonitor.Top,
+            MonitorRight: mi.rcMonitor.Right,
+            MonitorBottom: mi.rcMonitor.Bottom,
+            IsQunsD3dFullscreen: isQunsD3d);
     }
 
     private static string ResolveProcessName(uint pid)
@@ -676,6 +755,12 @@ public sealed class GameProfileAutoService : IDisposable
     [DllImport("user32.dll")]
     private static extern bool IsWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsZoomed(IntPtr hWnd);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetClassNameW(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
 
@@ -699,6 +784,9 @@ public sealed class GameProfileAutoService : IDisposable
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
 
     [DllImport("shell32.dll")]
     private static extern int SHQueryUserNotificationState(out int pquns);

@@ -495,27 +495,84 @@ public sealed class SettingsService
         return Current.DeviceOnboardManifests.GetValueOrDefault(deviceId);
     }
 
-    public static void ApplyStartupRegistry(bool enable)
+    public static (bool Success, string Detail) ApplyStartupRegistry(bool enable)
     {
+        const string runKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        const string approvedKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+        const string valueName = "GearDeck";
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
-            if (key == null) return;
+            using var key = Registry.CurrentUser.CreateSubKey(runKeyPath, writable: true);
+            if (key == null)
+            {
+                Diag.Log("ApplyStartupRegistry 失败：无法打开/创建 HKCU Run 键");
+                return (false, "无法打开注册表启动项");
+            }
+
             key.DeleteValue("PeripheralHub", throwOnMissingValue: false);
-            const string valueName = "GearDeck";
             if (enable)
             {
-                string? exePath = Process.GetCurrentProcess().MainModule?.FileName;
-                if (string.IsNullOrWhiteSpace(exePath))
+                string? exePath = Environment.ProcessPath;
+                if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+                    exePath = Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
                     exePath = Path.Combine(AppContext.BaseDirectory, "GearDeck.App.exe");
-                key.SetValue(valueName, $"\"{exePath}\" --minimized");
+
+                string cmd = $"\"{exePath}\" --minimized";
+                key.SetValue(valueName, cmd, RegistryValueKind.String);
+
+                // 若曾在任务管理器“启动应用”中禁用过，则将 StartupApproved 恢复为启用 (0x02)
+                try
+                {
+                    using var approvedKey = Registry.CurrentUser.OpenSubKey(approvedKeyPath, writable: true);
+                    if (approvedKey?.GetValue(valueName) is byte[] state && state.Length > 0 && state[0] != 0x02)
+                    {
+                        approvedKey.SetValue(
+                            valueName,
+                            new byte[] { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+                            RegistryValueKind.Binary);
+                    }
+                }
+                catch { }
+
+                string? verified = key.GetValue(valueName) as string;
+                bool ok = !string.IsNullOrWhiteSpace(verified);
+                Diag.Log($"ApplyStartupRegistry(true): ok={ok} cmd={cmd}");
+                return ok ? (true, cmd) : (false, "写入后回读校验为空");
             }
             else
             {
                 key.DeleteValue(valueName, throwOnMissingValue: false);
+                Diag.Log("ApplyStartupRegistry(false): 已移除开机自启项");
+                return (true, "");
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Diag.Log($"ApplyStartupRegistry({enable}) 异常: {ex.Message}");
+            return (false, ex.Message);
+        }
+    }
+
+    public static bool IsStartupRegistryEnabled()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: false);
+            string? val = key?.GetValue("GearDeck") as string;
+            if (string.IsNullOrWhiteSpace(val))
+                return false;
+
+            using var approvedKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", writable: false);
+            if (approvedKey?.GetValue("GearDeck") is byte[] state && state.Length > 0 && state[0] != 0x02)
+                return false;
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public void Save()
