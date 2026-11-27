@@ -48,8 +48,9 @@ public static class GameProfileRuleMatcher
         return file.Trim().ToLowerInvariant();
     }
 
-    public static bool ProcessMatches(GameAutoRule rule, string foregroundProcess)
+    public static bool ProcessMatches(GameAutoRule? rule, string foregroundProcess)
     {
+        if (rule?.ProcessNames == null) return false;
         string fg = NormalizeProcessName(foregroundProcess);
         if (string.IsNullOrEmpty(fg)) return false;
 
@@ -64,23 +65,26 @@ public static class GameProfileRuleMatcher
 
     public static GameProfileResolution Resolve(
         GameProfileMatchContext ctx,
-        IReadOnlyList<GameAutoRule> rules,
-        IReadOnlyDictionary<string, string> fullscreenFallbackTargets,
+        IReadOnlyList<GameAutoRule>? rules,
+        IReadOnlyDictionary<string, string>? fullscreenFallbackTargets,
         bool enableFullscreenFallback,
-        IReadOnlyDictionary<string, string> desktopDefaultTargets,
+        IReadOnlyDictionary<string, string>? desktopDefaultTargets,
         bool restoreDesktopOnExit)
     {
-        foreach (var rule in rules)
+        if (rules != null)
         {
-            if (!rule.Enabled || !HasAnyTarget(rule.PerMouseTargets)) continue;
-            if (!ProcessMatches(rule, ctx.ProcessName)) continue;
-            if (rule.RequireFullscreen && !ctx.IsExclusiveFullscreen) continue;
+            foreach (var rule in rules)
+            {
+                if (rule == null || !rule.Enabled || !HasAnyTarget(rule.PerMouseTargets)) continue;
+                if (!ProcessMatches(rule, ctx.ProcessName)) continue;
+                if (rule.RequireFullscreen && !ctx.IsExclusiveFullscreen) continue;
 
-            return new GameProfileResolution(
-                ActiveSwitchReason.ProcessRule,
-                $"rule:{rule.Id}",
-                rule.Name,
-                rule.PerMouseTargets);
+                return new GameProfileResolution(
+                    ActiveSwitchReason.ProcessRule,
+                    $"rule:{rule.Id}",
+                    rule.Name,
+                    rule.PerMouseTargets ?? new Dictionary<string, string>());
+            }
         }
 
         if (enableFullscreenFallback && ctx.IsExclusiveFullscreen && HasAnyTarget(fullscreenFallbackTargets))
@@ -89,7 +93,7 @@ public static class GameProfileRuleMatcher
                 ActiveSwitchReason.ExclusiveFullscreen,
                 "__fullscreen__",
                 "独占全屏通用配置",
-                fullscreenFallbackTargets);
+                fullscreenFallbackTargets!);
         }
 
         if (restoreDesktopOnExit)
@@ -98,7 +102,7 @@ public static class GameProfileRuleMatcher
                 ActiveSwitchReason.DesktopDefault,
                 "__desktop__",
                 HasAnyTarget(desktopDefaultTargets) ? "桌面默认配置" : "回退开启前的模式",
-                desktopDefaultTargets);
+                desktopDefaultTargets ?? new Dictionary<string, string>());
         }
 
         return new GameProfileResolution(
@@ -157,8 +161,9 @@ public static class GameProfileRuleMatcher
         return new ParsedMouseTarget(null, null);
     }
 
-    private static bool HasAnyTarget(IReadOnlyDictionary<string, string> targets)
+    private static bool HasAnyTarget(IReadOnlyDictionary<string, string>? targets)
     {
+        if (targets == null) return false;
         foreach (var kv in targets)
         {
             if (!ParseTarget(kv.Value).IsEmpty)

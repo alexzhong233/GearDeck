@@ -1,0 +1,145 @@
+name: Sync Device Assets
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: write
+
+jobs:
+  sync-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install image dependencies
+        run: |
+          pip install --quiet pillow cairosvg requests
+
+      - name: Pre-render and compress device images
+        run: |
+          python - << 'PY'
+          import hashlib
+          import io
+          import json
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          import requests
+          import cairosvg
+          from PIL import Image
+
+          PIPER_BASE = "https://cdn.jsdelivr.net/gh/libratbag/piper@master/data/svgs/"
+          MANIFEST_PATH = Path("src/GearDeck.Desktop/Assets/device-images.json")
+          OUT_DIR = Path("dist-assets")
+          IMG_DIR = OUT_DIR / "images"
+          IMG_DIR.mkdir(parents=True, exist_ok=True)
+
+          data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+          session = requests.Session()
+          session.headers["User-Agent"] = "GearDeck-AssetSync/1.0"
+
+          out_rules = []
+          out_gallery = []
+          url_cache = {}
+          failures = []
+
+          def sanitize_piper_svg(raw_svg: bytes) -> bytes:
+              try:
+                  root = ET.fromstring(raw_svg)
+                  def clean(parent):
+                      for child in list(parent):
+                          eid = child.attrib.get("id", "")
+                          eid_lower = eid.lower()
+                          if eid_lower in ("buttons", "leds") or eid_lower.endswith("-path") or eid_lower.endswith("-leader"):
+                              parent.remove(child)
+                          else:
+                              clean(child)
+                  clean(root)
+                  return ET.tostring(root, encoding="utf-8")
+              except Exception:
+                  return raw_svg
+
+          def fetch_to_png(url: str, is_piper_svg: bool = False) -> str | None:
+              if url in url_cache:
+                  return url_cache[url]
+              key = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+              filename = f"{key}.png"
+              dest = IMG_DIR / filename
+              if dest.exists() and dest.stat().st_size > 100:
+                  url_cache[url] = filename
+                  return filename
+              try:
+                  resp = session.get(url, timeout=20)
+                  resp.raise_for_status()
+                  raw = resp.content
+                  ct = (resp.headers.get("content-type") or "").lower()
+                  if url.lower().endswith(".svg") or "svg" in ct:
+                      svg_bytes = sanitize_piper_svg(raw) if is_piper_svg else raw
+                      png_bytes = cairosvg.svg2png(bytestring=svg_bytes, output_width=256, output_height=256)
+                      im = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+                  else:
+                      im = Image.open(io.BytesIO(raw)).convert("RGBA")
+                  im.thumbnail((256, 256), Image.Resampling.LANCZOS)
+                  canvas = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+                  ox = (256 - im.width) // 2
+                  oy = (256 - im.height) // 2
+                  canvas.paste(im, (ox, oy), im)
+                  canvas.save(dest, format="PNG", optimize=True)
+                  url_cache[url] = filename
+                  return filename
+              except Exception as exc:
+                  failures.append(f"{url}: {exc}")
+                  return None
+
+          for rule in data.get("rules", []):
+              is_piper = bool(not rule.get("cloudUrl") and rule.get("piperSvg"))
+              src = rule.get("cloudUrl") or (PIPER_BASE + rule["piperSvg"] if rule.get("piperSvg") else None)
+              if not src:
+                  continue
+              png_file = fetch_to_png(src, is_piper_svg=is_piper)
+              if png_file:
+                  cloned = dict(rule)
+                  cloned["assetFile"] = f"images/{png_file}"
+                  out_rules.append(cloned)
+
+          for entry in data.get("gallery", []):
+              src = entry.get("imageUrl")
+              if not src:
+                  continue
+              is_piper = bool(entry.get("isPiperSvg")) or src.startswith(PIPER_BASE)
+              png_file = fetch_to_png(src, is_piper_svg=is_piper)
+              if png_file:
+                  cloned = dict(entry)
+                  cloned["assetFile"] = f"images/{png_file}"
+                  out_gallery.append(cloned)
+
+          manifest_out = {
+              "version": data.get("version", 1),
+              "syncedCount": len(out_rules) + len(out_gallery),
+              "failureCount": len(failures),
+              "rules": out_rules,
+              "gallery": out_gallery,
+          }
+          (OUT_DIR / "manifest.json").write_text(json.dumps(manifest_out, indent=2, ensure_ascii=False), encoding="utf-8")
+          print(f"Synced {len(out_rules)} rules and {len(out_gallery)} gallery images, {len(failures)} failures")
+          PY
+
+      - name: Publish to assets branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cd dist-assets
+          git init -b assets
+          git add .
+          git commit -m "chore: sync pre-rendered 256px device assets"
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push --force origin assets

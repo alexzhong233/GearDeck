@@ -44,6 +44,7 @@ public sealed class RazerProvider : ITunablePeripheralProvider
 
                 byte? battery = null;
                 bool offline = false;
+                bool wiredNoBattery = false;
                 byte usedTid = 0;
                 foreach (byte tid in Tids)
                 {
@@ -56,9 +57,19 @@ public sealed class RazerProvider : ITunablePeripheralProvider
                     }
                     if (status == 0x04)
                         offline = true;
+                    if (status == 0x05)
+                    {
+                        var (dpiSt, _) = Command(raw, tid, 0x04, 0x85, 0x07, [0x01]);
+                        if (dpiSt == 0x02)
+                        {
+                            wiredNoBattery = true;
+                            usedTid = tid;
+                            break;
+                        }
+                    }
                 }
 
-                if (battery == null && !offline)
+                if (battery == null && !offline && !wiredNoBattery)
                 {
                     Diag.Log($"Razer {(ushort)g.Key.ProductID:X4}: no battery reply");
                     continue;
@@ -72,13 +83,15 @@ public sealed class RazerProvider : ITunablePeripheralProvider
                         batState = cArgs[1] == 1 ? BatteryState.Charging : BatteryState.Normal;
                 }
 
-                bool dormantZero = battery == 0 && batState != BatteryState.Charging;
+                bool dormantZero = !wiredNoBattery && battery == 0 && batState != BatteryState.Charging;
                 int? pct = battery is { } b && !dormantZero ? (b * 100 + 127) / 255 : null;
-                string? note = offline
-                    ? "鼠标休眠或未开启电源"
-                    : dormantZero
-                        ? "休眠中（晃动鼠标唤醒后可读取电量和调节参数）"
-                        : null;
+                string? note = wiredNoBattery
+                    ? "USB 有线设备（无内置电池，支持硬件调参）"
+                    : offline
+                        ? "鼠标休眠或未开启电源"
+                        : dormantZero
+                            ? "休眠中（晃动鼠标唤醒后可读取电量和调节参数）"
+                            : null;
 
                 string rawName = HidSafe.ProductName(control);
                 string cleanName = CleanName(rawName) ?? $"Razer {(ushort)g.Key.ProductID:X4}";
@@ -93,8 +106,8 @@ public sealed class RazerProvider : ITunablePeripheralProvider
                     Kind = kind,
                     Provider = ProviderName,
                     Connected = true,
-                    IsSleeping = offline || dormantZero,
-                    Transport = rawName.Contains("Wired", StringComparison.OrdinalIgnoreCase) ? "USB" : "2.4G",
+                    IsSleeping = !wiredNoBattery && (offline || dormantZero),
+                    Transport = wiredNoBattery || rawName.Contains("Wired", StringComparison.OrdinalIgnoreCase) ? "USB" : "2.4G",
                     BatteryPercent = pct,
                     State = batState,
                     Note = note,
@@ -170,8 +183,8 @@ public sealed class RazerProvider : ITunablePeripheralProvider
 
         if (update.Dpi is { } dpi)
         {
-            int x = Math.Clamp(dpi.X, 100, 35000);
-            int y = Math.Clamp(dpi.Y, 100, 35000);
+            int x = Math.Clamp(dpi.X, 100, 45000);
+            int y = Math.Clamp(dpi.Y, 100, 45000);
             bool dpiOk = TryWriteDpi(raw, tid, x, y);
             if (!dpiOk)
                 errors.Add("DPI 写入被拒绝");
@@ -283,7 +296,7 @@ public sealed class RazerProvider : ITunablePeripheralProvider
                 caps.SupportsDpi = true;
                 caps.SupportsIndependentXY = true;
                 caps.MinDpi = 100;
-                caps.MaxDpi = 35000;
+                caps.MaxDpi = 45000;
                 caps.DpiStep = 50;
                 caps.CurrentDpiX = dpi.X;
                 caps.CurrentDpiY = dpi.Y;
@@ -308,7 +321,7 @@ public sealed class RazerProvider : ITunablePeripheralProvider
             int? clHz = clSt == 0x02 ? ParseClassicPollingReply(clArgs) : null;
             if (clHz != null)
             {
-                caps.SupportedPollingRates = [125, 500, 1000];
+                caps.SupportedPollingRates = [125, 250, 500, 1000];
                 caps.CurrentPollingRate = clHz.Value;
             }
         }
@@ -633,8 +646,8 @@ public sealed class RazerProvider : ITunablePeripheralProvider
         for (int i = 0; i < count; i++)
         {
             int off = 3 + i * 7;
-            int x = Math.Clamp(stages[i].X, 100, 35000);
-            int y = Math.Clamp(stages[i].Y, 100, 35000);
+            int x = Math.Clamp(stages[i].X, 100, 45000);
+            int y = Math.Clamp(stages[i].Y, 100, 45000);
             args[off] = (byte)(i + 1);
             args[off + 1] = (byte)(x >> 8);
             args[off + 2] = (byte)(x & 0xFF);

@@ -19,6 +19,7 @@ using FluentAvalonia.UI.Controls;
 using GearDeck.Core;
 using GearDeck.Core.Models;
 using GearDeck.Core.Services;
+using GearDeck.Desktop.Controls;
 using GearDeck.Desktop.Services;
 
 namespace GearDeck.Desktop.Views;
@@ -81,7 +82,7 @@ public partial class DeviceDetailView : UserControl
         _debounceTimer.Tick += (_, _) => FlushDebouncedUpdate();
 
         if (OperatingSystem.IsMacOS())
-            PinTaskbarBtn.Content = "固定到菜单栏";
+            ToolTip.SetTip(PinTaskbarBtn, "固定到菜单栏");
 
         WireEvents();
     }
@@ -122,6 +123,7 @@ public partial class DeviceDetailView : UserControl
         _debouncedPending = null;
         _queuedUpdate = null;
         _analogPressTimer?.Stop();
+        MainWindow.HideToast();
         base.OnDetachedFromVisualTree(e);
     }
 
@@ -207,7 +209,7 @@ public partial class DeviceDetailView : UserControl
 
         UpdateAnalogPressTimerState();
         if (_caps is { IsOnline: false } && FallbackCard.IsVisible)
-            StatusInfoBar.IsOpen = false;
+            MainWindow.HideToast();
     }
 
     private static void SetActiveButton(Button button, bool active)
@@ -226,9 +228,10 @@ public partial class DeviceDetailView : UserControl
 
     private void ShowStatus(string message, InfoBarSeverity severity)
     {
-        StatusInfoBar.Severity = severity;
-        StatusInfoBar.Message = message;
-        StatusInfoBar.IsOpen = !string.IsNullOrWhiteSpace(message);
+        if (string.IsNullOrWhiteSpace(message))
+            MainWindow.HideToast();
+        else
+            MainWindow.ShowToast(message, severity);
     }
 
     private void UpdateCoexistenceBanner()
@@ -302,6 +305,7 @@ public partial class DeviceDetailView : UserControl
                 OverviewProtocolText.Text = "--";
                 LocalDriverBtn.IsVisible = false;
                 WebDriverBtn.IsVisible = false;
+                DriverButtonsPanel.IsVisible = false;
                 AvatarHost.Children.Clear();
                 return;
             }
@@ -311,17 +315,51 @@ public partial class DeviceDetailView : UserControl
 
             var cached = App.Settings.GetLastKnownBattery(d.Id);
             var chip = BatteryHistoryHelper.BuildChipText(d, string.Empty, true, cached);
-            BatteryText.Text = chip.Text + (chip.UsedHistoricalFallback ? "（历史）" : "");
-            OverviewBatteryText.Text = BatteryText.Text;
+            string batText = !string.IsNullOrEmpty(chip.TextTop) && !string.IsNullOrEmpty(chip.TextBottom)
+                ? $"{chip.TextTop}\n{chip.TextBottom}"
+                : chip.Text;
+
+            bool isTws = d.Kind == DeviceKind.Headset && (
+                d.LeftEarPercent.HasValue || d.RightEarPercent.HasValue
+                || (d.VendorId == 0x054C && d.ProductId == 0x0EC2)
+                || (d.VendorId == 0x1038 && d.ProductId is 0x230A or 0x2317)
+                || (cached != null && (cached.LeftEarPercent.HasValue || cached.RightEarPercent.HasValue)));
+
+            if (isTws)
+            {
+                OverviewBatteryLabel.Text = "双耳 / 耳机盒";
+                int? effL = d.LeftEarPercent ?? cached?.LeftEarPercent;
+                int? effR = d.RightEarPercent ?? cached?.RightEarPercent;
+                int? effCase = d.CaseBatteryPercent ?? cached?.CaseBatteryPercent;
+                string earLine = $"L {(effL.HasValue ? $"{effL}%" : "--")}{(d.LeftEarCharging ? "⚡" : "")} · R {(effR.HasValue ? $"{effR}%" : "--")}{(d.RightEarCharging ? "⚡" : "")}";
+                string caseLine = $"盒 {(effCase.HasValue ? $"{effCase}%" : "--")}{(d.CaseCharging ? "⚡" : "")}";
+                OverviewBatteryText.Text = $"{earLine}\n{caseLine}";
+                BatteryText.Text = effCase.HasValue ? $"{earLine}\n{caseLine}" : batText;
+            }
+            else if (d.CaseBatteryPercent.HasValue || cached?.CaseBatteryPercent.HasValue == true ||
+                     d.Id.StartsWith("am:", StringComparison.OrdinalIgnoreCase))
+            {
+                OverviewBatteryLabel.Text = "鼠标 / 备用电池";
+                int? effCase = d.CaseBatteryPercent ?? cached?.CaseBatteryPercent;
+                string chg = d.CaseCharging ? "⚡" : "";
+                OverviewBatteryText.Text = $"鼠标 {batText}\n备电 {(effCase.HasValue ? $"{effCase}%{chg}" : "--")}";
+                BatteryText.Text = effCase.HasValue ? $"{batText}\n备 {effCase.Value}%{chg}" : batText;
+            }
+            else
+            {
+                OverviewBatteryLabel.Text = "电量 / 充电";
+                BatteryText.Text = batText;
+                OverviewBatteryText.Text = batText;
+            }
 
             bool isSleepingState = d.IsSleeping || (_caps is { IsOnline: false } && _caps.DeviceId == d.Id);
             StateText.Text = d.State switch
             {
                 BatteryState.Charging => "● 充电中 ⚡",
                 BatteryState.FullyCharged => "● 已充满",
-                _ => isSleepingState ? "○ 无线休眠中" : (d.Connected ? "● 已连接" : "○ 离线"),
+                _ => isSleepingState ? "○ 接收器已连接 · 休眠" : (d.Connected ? "● 在线" : "○ 离线"),
             };
-            NoteText.Text = d.Note ?? "";
+            NoteText.Text = "";
 
             var links = VendorDriverCatalog.Resolve(d);
             _localDriver = links.Local;
@@ -330,9 +368,10 @@ public partial class DeviceDetailView : UserControl
             if (_localDriver != null) LocalDriverBtnText.Text = _localDriver.DisplayName;
             WebDriverBtn.IsVisible = _webDriver != null;
             if (_webDriver != null) WebDriverBtnText.Text = _webDriver.DisplayName;
+            DriverButtonsPanel.IsVisible = _localDriver != null || _webDriver != null;
 
             AvatarHost.Children.Clear();
-            AvatarHost.Children.Add(CreateHeroDeviceVisual(d, 168));
+            AvatarHost.Children.Add(CreateHeroDeviceVisual(d, 136));
 
             UpdateOverviewKpis(d, _caps);
             UpdateCoexistenceBanner();
@@ -377,6 +416,13 @@ public partial class DeviceDetailView : UserControl
 
     private void UpdateOverviewKpis(PeripheralDevice d, DeviceTuningCapabilities? caps)
     {
+        bool isDpiCapable = caps?.SupportsDpi == true || d.Kind == DeviceKind.Mouse;
+        OverviewPerfLabel.Text = isDpiCapable ? "DPI / 回报率" : "连接方式";
+
+        string vidPid = (d.VendorId, d.ProductId) is ({ } v, { } p) ? $"{v:X4}:{p:X4}" : "HID";
+        string providerPart = string.IsNullOrWhiteSpace(d.Provider) ? "未知协议" : d.Provider;
+        string layered = $"{vidPid} · {d.Kind} · {providerPart}";
+
         if (caps is { IsOnline: true })
         {
             var perfParts = new List<string>();
@@ -388,17 +434,14 @@ public partial class DeviceDetailView : UserControl
                 perfParts.Add($"{caps.CurrentPollingRate} Hz");
             OverviewPerfText.Text = perfParts.Count > 0 ? string.Join(" · ", perfParts) : d.Transport;
 
-            string vidPid = (d.VendorId, d.ProductId) is ({ } v, { } p) ? $"{v:X4}:{p:X4}" : d.Provider;
             OverviewProtocolText.Text = caps.SupportsAnalogSwitchTuning
-                ? $"{vidPid} · {caps.AnalogSwitchTechName}"
-                : $"{vidPid} · {d.Kind}";
+                ? $"{layered} · {caps.AnalogSwitchTechName}"
+                : layered;
         }
         else
         {
-            OverviewPerfText.Text = d.IsSleeping ? "待唤醒读取" : d.Transport;
-            OverviewProtocolText.Text = (d.VendorId, d.ProductId) is ({ } v, { } p)
-                ? $"{v:X4}:{p:X4} · {d.Provider}"
-                : d.Provider;
+            OverviewPerfText.Text = (d.IsSleeping && d.Kind == DeviceKind.Mouse) ? "待唤醒读取" : d.Transport;
+            OverviewProtocolText.Text = layered;
         }
     }
 
@@ -441,8 +484,14 @@ public partial class DeviceDetailView : UserControl
                 DeviceKind.Controller => "builtin:controller",
                 _ => "builtin:mouse",
             };
+            App.Settings.Current.RemovedBuiltinGroups?.RemoveAll(x => string.Equals(x, groupId, StringComparison.OrdinalIgnoreCase));
             App.Settings.EnsureDefaults();
-            var cfg = App.Settings.Current.TaskbarGroups.First(g => g.GroupId == groupId);
+            var cfg = App.Settings.Current.TaskbarGroups.FirstOrDefault(g => g.GroupId == groupId);
+            if (cfg == null)
+            {
+                cfg = new TaskbarGroupConfig { GroupId = groupId, Visible = true };
+                App.Settings.Current.TaskbarGroups.Add(cfg);
+            }
             cfg.Visible = true;
             cfg.DefaultDeviceId = _deviceId;
             App.Settings.Current.WidgetVisible = true;
@@ -453,6 +502,52 @@ public partial class DeviceDetailView : UserControl
         catch (Exception ex)
         {
             ShowStatus(OperatingSystem.IsMacOS() ? $"固定到菜单栏失败：{ex.Message}" : $"固定到任务栏失败：{ex.Message}", InfoBarSeverity.Error);
+        }
+    }
+
+    private async void OnRenameDeviceClick(object? sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_deviceId)) return;
+        var currentDev = App.LastDevices.FirstOrDefault(x =>
+            string.Equals(x.Id, _deviceId, StringComparison.OrdinalIgnoreCase));
+        if (currentDev == null) return;
+
+        var box = new TextBox
+        {
+            Text = currentDev.Name,
+            Watermark = "输入该接收器/设备对应的真实型号，如 LAMZU ORCUS",
+        };
+        var dialog = new ContentDialog
+        {
+            Title = "重命名 / 绑定设备真实型号",
+            Content = box,
+            PrimaryButtonText = "保存",
+            SecondaryButtonText = "恢复默认",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary)
+        {
+            string nextName = (box.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(nextName)) return;
+            App.Settings.Current.DeviceCustomNames[_deviceId] = nextName;
+            ReceiverModelRegistry.SetCustomName(_deviceId, nextName);
+            App.Settings.Save();
+            currentDev.Name = nextName;
+            ShowOverview();
+            App.RefreshWidget();
+            _ = DeviceImageService.EnsureAutoCloudImagesAsync([currentDev], forceRecheck: true);
+            ShowStatus($"已将设备型号保存为「{nextName}」。", InfoBarSeverity.Success);
+        }
+        else if (result == ContentDialogResult.Secondary)
+        {
+            App.Settings.Current.DeviceCustomNames.Remove(_deviceId);
+            ReceiverModelRegistry.SetCustomName(_deviceId, null);
+            App.Settings.Save();
+            App.RequestRefresh();
+            ShowStatus("已清除自定义名称，正在重新读取硬件名称。", InfoBarSeverity.Informational);
         }
     }
 
@@ -468,9 +563,6 @@ public partial class DeviceDetailView : UserControl
             DeviceLowBatEnableChk.IsChecked = policy.Enabled;
             DeviceLowBatNotifyChk.IsChecked = policy.WindowsNotification;
             SafeSetNumberBox(DeviceLowBatThresholdBox, 5, 80, 1, eff);
-            DeviceLowBatStateText.Text = policy.CustomThresholdPercent.HasValue
-                ? $"独立 {eff}%"
-                : $"默认 {SettingsService.DefaultLowBatteryThreshold}%";
         }
         finally
         {
@@ -489,10 +581,6 @@ public partial class DeviceDetailView : UserControl
         };
         App.Settings.Save();
         App.RefreshWidget();
-        int eff = App.Settings.GetEffectiveLowBatteryThreshold(_deviceId);
-        DeviceLowBatStateText.Text = customThreshold.HasValue
-            ? $"独立 {eff}%"
-            : $"默认 {SettingsService.DefaultLowBatteryThreshold}%";
     }
 
     private void OnDeviceLowBatCheckChanged(object? sender, RoutedEventArgs e)
@@ -510,22 +598,6 @@ public partial class DeviceDetailView : UserControl
         int clamped = Math.Clamp((int)Math.Round(raw.Value), 5, 80);
         if (clamped == App.Settings.GetEffectiveLowBatteryThreshold(_deviceId)) return;
         SaveDeviceLowBatteryPolicy(clamped);
-    }
-
-    private void OnDeviceLowBatReset(object? sender, RoutedEventArgs e)
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(_deviceId)) return;
-            App.Settings.Current.DeviceLowBatteryPolicies.Remove(_deviceId);
-            App.Settings.Save();
-            App.RefreshWidget();
-            BindDeviceLowBatteryPolicy();
-        }
-        catch (Exception ex)
-        {
-            ShowStatus($"重置低电量策略失败：{ex.Message}", InfoBarSeverity.Error);
-        }
     }
 
     // ── 能力读取与绑定 ───────────────────────────────────────────────────────────
@@ -608,7 +680,7 @@ public partial class DeviceDetailView : UserControl
 
             HostModeCard.IsVisible = caps.SupportsHostModeSwitch;
             if (caps.SupportsHostModeSwitch)
-                HostModeSwitch.IsChecked = caps.IsHostMode;
+                HostModeSwitch.IsChecked = !caps.IsHostMode;
 
             // ── DPI ──
             DpiCard.IsVisible = caps.SupportsDpi;
@@ -643,7 +715,7 @@ public partial class DeviceDetailView : UserControl
             bool hasSwitches = caps.SupportsMotionSync || caps.SupportsAngleSnapping
                 || caps.SupportsRippleControl || caps.SupportsLongRangeMode;
             _turboModeCode = FindTurboModeCode(caps);
-            ModeCard.IsVisible = hasPerfModes || hasSwitches || _turboModeCode.HasValue;
+            ModeCard.IsVisible = hasPerfModes || hasSwitches;
             PerfModeSection.IsVisible = hasPerfModes;
             if (hasPerfModes)
                 BuildPerformanceModeButtons(caps);
@@ -654,15 +726,12 @@ public partial class DeviceDetailView : UserControl
             if (caps.SupportsAngleSnapping) AngleSnapSwitch.IsChecked = caps.AngleSnapping;
             RippleSwitch.IsVisible = caps.SupportsRippleControl;
             if (caps.SupportsRippleControl) RippleSwitch.IsChecked = caps.RippleControl;
-            LongRangeSwitch.IsVisible = caps.SupportsLongRangeMode || _turboModeCode.HasValue;
+            LongRangeSwitch.IsVisible = caps.SupportsLongRangeMode;
             if (caps.SupportsLongRangeMode)
                 LongRangeSwitch.IsChecked = caps.LongRangeMode;
-            else if (_turboModeCode.HasValue)
-                LongRangeSwitch.IsChecked = caps.SupportedPerformanceModes.Count > 0
-                    && caps.CurrentPerformanceMode == _turboModeCode.Value;
-            WakeOnMoveSwitch.IsVisible = caps.IsOnline;
+            WakeOnMoveSwitch.IsVisible = false;
 
-            // ── 高级：LOD / 防抖 / 休眠 / 灯光 ──
+            // ── 高级：LOD / 防抖 / 休眠（仅展示设备实际支持的能力） ──
             bool hasLod = caps.SupportedLodOptions.Count > 0;
             bool hasAsym = caps.SupportsAsymmetricLod;
             bool hasDebounce = caps.SupportsDebounce;
@@ -671,7 +740,7 @@ public partial class DeviceDetailView : UserControl
             bool hasSliderSleep = caps.SupportsSleepTimeout && caps.SupportedSleepSeconds.Count == 0;
             bool hasLowBat = caps.SupportsLowBatteryWarning;
             AdvancedCard.IsVisible = hasLod || hasAsym || hasDebounce || hasAngle
-                || hasDiscreteSleep || hasSliderSleep || hasLowBat || caps.IsOnline;
+                || hasDiscreteSleep || hasSliderSleep || hasLowBat;
 
             LodSection.IsVisible = hasLod;
             if (hasLod)
@@ -728,16 +797,8 @@ public partial class DeviceDetailView : UserControl
                 LowBatValueText.Text = $"低于 {curWarn}% 提醒";
             }
 
-            // 灯光调节：当前 Core 未提供 HID 灯效写入能力，统一只读展示；LEOBOG 无线明确提示。
-            LightingSection.IsVisible = caps.IsOnline;
-            var lightMatch = Regex.Match(caps.StatusMessage ?? "", @"灯效\s*0x([0-9A-Fa-f]{2})");
-            LightingValueText.Text = lightMatch.Success
-                ? $"灯效 0x{lightMatch.Groups[1].Value}"
-                : "由官方驱动管理";
-            LightingSlider.IsEnabled = false;
-            LightingNoteText.Text = leobogWireless
-                ? "LEOBOG Hi98C Pro 无线模式严格只读；灯效请在 USB-C 有线模式下使用官方驱动调节。"
-                : "当前设备灯效由官方桌面/网页驱动调节；GearDeck 仅展示状态，暂不支持直接写入。";
+            // 灯光调节：当前设备未提供鼠标 HID 写灯能力，默认屏蔽不展示
+            LightingSection.IsVisible = false;
 
             LeobogReadOnlyText.IsVisible = leobogWireless;
             if (leobogWireless)
@@ -749,6 +810,7 @@ public partial class DeviceDetailView : UserControl
             }
             ApplyPowerBtn.IsVisible = (hasSliderSleep || hasLowBat) && !leobogWireless;
 
+            BindHeadsetAudioAndLighting(caps);
             BindAnalogSwitches(caps);
 
             bool showMacroCard = caps.ButtonBindings.Count > 0
@@ -761,7 +823,9 @@ public partial class DeviceDetailView : UserControl
             bool anyControl = caps.SupportsHostModeSwitch || caps.SupportsDpi
                 || caps.SupportedPollingRates.Count > 0 || hasLod || hasAsym || hasDebounce || hasAngle
                 || caps.SupportsSleepTimeout || hasLowBat || hasPerfModes || hasSwitches
-                || caps.ButtonBindings.Count > 0 || caps.SupportsAnalogSwitchTuning || caps.IsOnline;
+                || caps.ButtonBindings.Count > 0 || caps.SupportsAnalogSwitchTuning
+                || caps.SupportsSidetone || caps.SupportsAncMode || caps.SupportsVoicePrompt
+                || caps.SupportsEqualizer || caps.SupportsLighting || !string.IsNullOrWhiteSpace(caps.ChatMixSummary);
             FallbackCard.IsVisible = !anyControl;
             if (!anyControl)
             {
@@ -769,24 +833,21 @@ public partial class DeviceDetailView : UserControl
                 FallbackMessage.Text = caps.StatusMessage ?? "当前设备暂无可调节的公开 HID 参数。";
             }
 
+            bool hasPerfTab = DpiCard.IsVisible || RateCard.IsVisible || ModeCard.IsVisible
+                || HeadsetAudioCard.IsVisible || DeviceLightingCard.IsVisible || FallbackCard.IsVisible;
+            bool hasButtonsTab = AnalogSwitchCard.IsVisible || MacroAndButtonsCard.IsVisible;
+            bool hasAdvTab = AdvancedCard.IsVisible;
+            TabPerfBtn.IsVisible = hasPerfTab;
+            TabButtonsBtn.IsVisible = hasButtonsTab;
+            TabAdvancedBtn.IsVisible = hasAdvTab;
+            TabNavBar.IsVisible = ((hasPerfTab ? 1 : 0) + (hasButtonsTab ? 1 : 0) + (hasAdvTab ? 1 : 0)) > 1;
+            if ((_activeTab == "buttons" && !hasButtonsTab) || (_activeTab == "advanced" && !hasAdvTab))
+                SelectTab("perf");
+
             if (caps.IsOnline)
-            {
                 _autoWakeAttempts = 0;
-                if (caps.SupportsHostModeSwitch && !caps.IsHostMode)
-                    ShowStatus(caps.StatusMessage ?? "当前处于板载内存模式。", InfoBarSeverity.Informational);
-                else if (!string.IsNullOrWhiteSpace(caps.StatusMessage))
-                    ShowStatus(caps.StatusMessage, InfoBarSeverity.Informational);
-                else
-                    StatusInfoBar.IsOpen = false;
-            }
-            else if (!anyControl && FallbackCard.IsVisible)
-            {
-                StatusInfoBar.IsOpen = false;
-            }
-            else
-            {
-                ShowStatus(caps.StatusMessage ?? "设备当前未唤醒。", InfoBarSeverity.Warning);
-            }
+
+            MainWindow.HideToast();
         }
         catch (Exception ex)
         {
@@ -1095,9 +1156,144 @@ public partial class DeviceDetailView : UserControl
     private void OnHostModeToggled(object? sender, RoutedEventArgs e)
     {
         if (_binding || _caps == null || !_caps.SupportsHostModeSwitch || Environment.TickCount64 < _suppressPostBindUntilTick) return;
-        bool target = HostModeSwitch.IsChecked == true;
-        if (target == _caps.IsHostMode) return;
-        _ = ApplyUpdateAsync(new DeviceTuningUpdate { SetHostMode = target });
+        bool targetHostMode = HostModeSwitch.IsChecked != true;
+        if (targetHostMode == _caps.IsHostMode) return;
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { SetHostMode = targetHostMode });
+    }
+
+    private void BindHeadsetAudioAndLighting(DeviceTuningCapabilities caps)
+    {
+        bool hasChatMix = !string.IsNullOrWhiteSpace(caps.ChatMixSummary);
+        bool hasAudio = caps.SupportsSidetone || caps.SupportsAncMode || caps.SupportsVoicePrompt
+            || caps.SupportsEqualizer || hasChatMix;
+        HeadsetAudioCard.IsVisible = hasAudio;
+        if (hasAudio)
+        {
+            ChatMixText.IsVisible = hasChatMix;
+            ChatMixText.Text = caps.ChatMixSummary ?? "";
+
+            SidetoneSection.IsVisible = caps.SupportsSidetone;
+            if (caps.SupportsSidetone)
+            {
+                SidetoneSwitch.IsChecked = caps.SidetoneEnabled;
+                int maxSt = Math.Max(1, caps.MaxSidetoneLevel);
+                int curSt = Math.Clamp(caps.CurrentSidetoneLevel, 0, maxSt);
+                SafeSetSlider(SidetoneSlider, 0, maxSt, 1, curSt);
+                SidetoneValueText.Text = $"{curSt} / {maxSt}";
+            }
+
+            AncSection.IsVisible = caps.SupportsAncMode && caps.SupportedAncModes.Count > 0;
+            if (AncSection.IsVisible)
+            {
+                AncModesPanel.Children.Clear();
+                foreach (var opt in caps.SupportedAncModes)
+                {
+                    int code = opt.Code;
+                    var btn = new Button { Content = opt.Label, Classes = { "pill" } };
+                    if (code == caps.CurrentAncMode) SetActiveButton(btn, true);
+                    btn.Click += (_, _) => _ = ApplyUpdateAsync(new DeviceTuningUpdate { AncMode = code });
+                    AncModesPanel.Children.Add(btn);
+                }
+            }
+
+            EqSection.IsVisible = caps.SupportsEqualizer;
+            if (caps.SupportsEqualizer)
+            {
+                EqEnableSwitch.IsChecked = caps.EqualizerEnabled;
+                EqPresetsPanel.Children.Clear();
+                foreach (var opt in caps.SupportedEqPresets)
+                {
+                    int code = opt.Code;
+                    var btn = new Button { Content = opt.Label, Classes = { "pill" } };
+                    if (caps.EqualizerEnabled && code == caps.CurrentEqPreset) SetActiveButton(btn, true);
+                    btn.Click += (_, _) => _ = ApplyUpdateAsync(new DeviceTuningUpdate { Equalizer = (true, code) });
+                    EqPresetsPanel.Children.Add(btn);
+                }
+                EqPresetsPanel.IsVisible = caps.SupportedEqPresets.Count > 0;
+            }
+
+            VoicePromptSwitch.IsVisible = caps.SupportsVoicePrompt;
+            if (caps.SupportsVoicePrompt)
+                VoicePromptSwitch.IsChecked = caps.VoicePromptEnabled;
+        }
+
+        DeviceLightingCard.IsVisible = caps.SupportsLighting;
+        if (caps.SupportsLighting)
+        {
+            LightingModesPanel.Children.Clear();
+            LightingModesPanel.IsVisible = caps.SupportedLightingModes.Count > 0;
+            foreach (var opt in caps.SupportedLightingModes)
+            {
+                int mode = opt.Code;
+                var btn = new Button { Content = opt.Label, Classes = { "pill" } };
+                if (mode == caps.CurrentLightingMode) SetActiveButton(btn, true);
+                btn.Click += (_, _) => _ = ApplyUpdateAsync(new DeviceTuningUpdate
+                {
+                    Lighting = (mode, (int)Math.Round(LightingBrightnessSlider.Value)),
+                });
+                LightingModesPanel.Children.Add(btn);
+            }
+
+            int maxB = Math.Max(1, caps.MaxLightingBrightness);
+            int curB = Math.Clamp(caps.CurrentLightingBrightness, 0, maxB);
+            SafeSetSlider(LightingBrightnessSlider, 0, maxB, 1, curB);
+            LightingBrightnessText.Text = maxB == 100 ? $"{curB}%" : $"{curB} / {maxB}";
+        }
+    }
+
+    private void OnSidetoneToggled(object? sender, RoutedEventArgs e)
+    {
+        if (_binding || _caps == null || !_caps.SupportsSidetone || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        bool on = SidetoneSwitch.IsChecked == true;
+        int lvl = (int)Math.Round(SidetoneSlider.Value);
+        if (on && lvl == 0) lvl = Math.Max(1, _caps.MaxSidetoneLevel / 2);
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { Sidetone = (on, lvl) });
+    }
+
+    private void OnSidetoneSliderChanged(object? sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_caps == null) return;
+        int maxSt = Math.Max(1, _caps.MaxSidetoneLevel);
+        SidetoneValueText.Text = $"{(int)Math.Round(e.NewValue)} / {maxSt}";
+    }
+
+    private void OnSidetoneSliderReleased(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
+    {
+        if (_binding || _caps == null || !_caps.SupportsSidetone) return;
+        int lvl = (int)Math.Round(SidetoneSlider.Value);
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { Sidetone = (lvl > 0 && SidetoneSwitch.IsChecked != false, lvl) });
+    }
+
+    private void OnAncOrEqChanged() { }
+
+    private void OnEqEnableToggled(object? sender, RoutedEventArgs e)
+    {
+        if (_binding || _caps == null || !_caps.SupportsEqualizer || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        bool on = EqEnableSwitch.IsChecked == true;
+        if (on == _caps.EqualizerEnabled) return;
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { Equalizer = (on, null) });
+    }
+
+    private void OnVoicePromptToggled(object? sender, RoutedEventArgs e)
+    {
+        if (_binding || _caps == null || !_caps.SupportsVoicePrompt || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        bool on = VoicePromptSwitch.IsChecked == true;
+        if (on == _caps.VoicePromptEnabled) return;
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { VoicePromptEnabled = on });
+    }
+
+    private void OnLightingBrightnessChanged(object? sender, RangeBaseValueChangedEventArgs e)
+    {
+        int maxB = _caps != null ? Math.Max(1, _caps.MaxLightingBrightness) : 100;
+        int v = (int)Math.Round(e.NewValue);
+        LightingBrightnessText.Text = maxB == 100 ? $"{v}%" : $"{v} / {maxB}";
+    }
+
+    private void OnLightingBrightnessReleased(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
+    {
+        if (_binding || _caps == null || !_caps.SupportsLighting) return;
+        int v = (int)Math.Round(LightingBrightnessSlider.Value);
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { Lighting = (_caps.CurrentLightingMode, v) });
     }
 
     private void OnMotionSyncToggled(object? sender, RoutedEventArgs e)
@@ -1126,19 +1322,10 @@ public partial class DeviceDetailView : UserControl
 
     private void OnLongRangeToggled(object? sender, RoutedEventArgs e)
     {
-        if (_binding || _caps == null || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        if (_binding || _caps == null || !_caps.SupportsLongRangeMode || Environment.TickCount64 < _suppressPostBindUntilTick) return;
         bool on = LongRangeSwitch.IsChecked == true;
-        if (_caps.SupportsLongRangeMode)
-        {
-            if (on == _caps.LongRangeMode) return;
-            _ = ApplyUpdateAsync(new DeviceTuningUpdate { LongRangeMode = on });
-        }
-        else if (_turboModeCode.HasValue)
-        {
-            int targetMode = on ? _turboModeCode.Value : 0;
-            if (targetMode == _caps.CurrentPerformanceMode) return;
-            _ = ApplyUpdateAsync(new DeviceTuningUpdate { PerformanceMode = targetMode });
-        }
+        if (on == _caps.LongRangeMode) return;
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { LongRangeMode = on });
     }
 
     // ── 高级：LOD / 防抖 / 角度 / 休眠 / 灯光 ──────────────────────────────────────
@@ -1333,9 +1520,13 @@ public partial class DeviceDetailView : UserControl
                 : (cached != null && !string.IsNullOrWhiteSpace(cached.Name) ? cached.Name : $"槽位 {i + 1}");
             var btn = new Button
             {
-                Content = slot == activeSlot ? $"{baseName} ✓" : baseName,
+                Content = baseName,
                 FontSize = 12,
-                Classes = { "pill" },
+                MinWidth = 58,
+                Height = 30,
+                Padding = new Thickness(12, 0),
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
                 IsEnabled = caps.IsOnline,
             };
             string tip = !string.IsNullOrWhiteSpace(cached?.Summary)
@@ -1535,6 +1726,7 @@ public partial class DeviceDetailView : UserControl
                 var ro = new TextBlock
                 {
                     Text = $"{FormatBindingLabel(slot.CurrentAction)}（主键防误触锁定）",
+                    Margin = new Thickness(10, 0, 0, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                     Foreground = ResolveThemeBrush("TextFillColorSecondaryBrush", Color.FromArgb(180, 150, 150, 150)),
                 };
@@ -1547,7 +1739,11 @@ public partial class DeviceDetailView : UserControl
                 if (!options.Contains(slot.CurrentAction))
                     options.Insert(0, slot.CurrentAction);
 
-                var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                var combo = new ComboBox
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Margin = new Thickness(10, 0, 10, 0),
+                };
                 foreach (var act in options)
                     combo.Items.Add(new ComboBoxItem { Content = FormatBindingLabel(act), Tag = act });
                 combo.SelectedIndex = Math.Max(0, options.IndexOf(slot.CurrentAction));
@@ -1561,7 +1757,13 @@ public partial class DeviceDetailView : UserControl
                 Grid.SetColumn(combo, 1);
                 row.Children.Add(combo);
 
-                var kbBtn = new Button { Content = "设组合键...", Classes = { "pill" } };
+                var kbBtn = new Button
+                {
+                    Content = "设组合键...",
+                    Classes = { "pill" },
+                    Margin = new Thickness(0),
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
                 int slotIdx = slot.SlotIndex;
                 string btnName = slot.ButtonName;
                 kbBtn.Click += async (_, _) =>
@@ -1869,12 +2071,21 @@ public partial class DeviceDetailView : UserControl
             Foreground = ResolveThemeBrush("TextFillColorSecondaryBrush", Color.FromArgb(180, 150, 150, 150)),
         });
 
-        var segGrid = new Grid { VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+        var segGrid = new Grid
+        {
+            Margin = new Thickness(10, 0, 12, 0),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
         var segments = new Border[totalSteps];
         for (int i = 0; i < totalSteps; i++)
         {
             segGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            var box = new Border { Height = 8, CornerRadius = new CornerRadius(3) };
+            var box = new Border
+            {
+                Height = 8,
+                CornerRadius = new CornerRadius(3),
+                Margin = new Thickness(2, 0),
+            };
             Grid.SetColumn(box, i);
             segGrid.Children.Add(box);
             segments[i] = box;
@@ -2312,169 +2523,4 @@ public partial class DeviceDetailView : UserControl
 
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int nIndex);
-}
-
-/// <summary>
-/// WinUI DeviceImagePickerDialog 的 Avalonia 对应实现：使用 TopLevel 所在 Window 作为宿主。
-/// </summary>
-internal static class DeviceImagePickerDialog
-{
-    public static async Task<bool> ShowAsync(Window? owner, PeripheralDevice device)
-    {
-        bool changed = false;
-        var preview = new Image
-        {
-            Width = 72,
-            Height = 72,
-            Stretch = Stretch.Uniform,
-            Source = DeviceImageService.LoadImageSource(device, 72),
-        };
-        var status = new TextBlock
-        {
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
-            Text = $"当前识别 ID: {device.Id}，支持本地上传、内置造型与云端图库。",
-        };
-
-        var uploadBtn = new Button { Content = "从本地上传图片..." };
-        uploadBtn.Click += async (_, _) =>
-        {
-            if (!uploadBtn.IsEnabled) return;
-            uploadBtn.IsEnabled = false;
-            try
-            {
-                var sp = (owner ?? MainWindow.Instance)?.StorageProvider;
-                if (sp != null)
-                {
-                    var picked = await sp.OpenFilePickerAsync(new FilePickerOpenOptions
-                    {
-                        Title = "选择设备图片",
-                        AllowMultiple = false,
-                        FileTypeFilter =
-                        [
-                            new FilePickerFileType("图片")
-                            {
-                                Patterns = ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.ico", "*.svg"],
-                            },
-                        ],
-                    });
-                    string? localPath = picked.FirstOrDefault()?.TryGetLocalPath();
-                    if (!string.IsNullOrEmpty(localPath))
-                    {
-                        string saved = DeviceImageService.SaveUserUploadedImage(device.Id, localPath);
-                        preview.Source = DeviceImageService.CreateSourceFromFile(saved, 72);
-                        changed = true;
-                        status.Text = $"已应用本地上传图片：{Path.GetFileName(localPath)}";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                status.Text = $"上传失败：{ex.Message}";
-            }
-            finally
-            {
-                uploadBtn.IsEnabled = true;
-            }
-        };
-
-        var resetBtn = new Button { Content = "恢复 VID:PID 智能匹配" };
-        resetBtn.Click += (_, _) =>
-        {
-            DeviceImageService.ClearOverride(device.Id);
-            preview.Source = DeviceImageService.LoadImageSource(device, 72);
-            changed = true;
-            status.Text = "已恢复为 VID:PID 智能匹配图样。";
-        };
-
-        var root = new StackPanel { Spacing = 12, Width = 560 };
-        var top = new Grid();
-        top.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        top.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
-        top.Children.Add(new Border
-        {
-            Width = 82,
-            Height = 82,
-            CornerRadius = new CornerRadius(12),
-            Background = new SolidColorBrush(Color.FromArgb(24, 128, 128, 128)),
-            Child = preview,
-        });
-        var right = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        var actions = new WrapPanel();
-        actions.Children.Add(uploadBtn);
-        actions.Children.Add(resetBtn);
-        right.Children.Add(actions);
-        right.Children.Add(status);
-        Grid.SetColumn(right, 1);
-        top.Children.Add(right);
-        root.Children.Add(top);
-
-        var presets = DeviceImageService.EnsureBuiltInPresets();
-        if (presets.Count > 0)
-        {
-            root.Children.Add(new TextBlock { Text = "本地预设造型", FontWeight = FontWeight.SemiBold });
-            var grid = new WrapPanel();
-            foreach (var preset in presets.Take(24))
-            {
-                var btn = new Button { Content = preset.Name.Split('(')[0].Trim(), Padding = new Thickness(8, 5) };
-                btn.Click += (_, _) =>
-                {
-                    DeviceImageService.SetPresetOverride(device.Id, preset.Id);
-                    preview.Source = DeviceImageService.CreateSourceFromFile(preset.LocalSvgPath, 72);
-                    changed = true;
-                    status.Text = $"已切换为造型预设：{preset.Name}";
-                };
-                grid.Children.Add(btn);
-            }
-            root.Children.Add(grid);
-        }
-
-        var urlBox = new TextBox { Watermark = "或输入图片直链 URL（.png / .jpg / .svg）" };
-        var urlBtn = new Button { Content = "拉取此 URL" };
-        urlBtn.Click += async (_, _) =>
-        {
-            if (!urlBtn.IsEnabled) return;
-            urlBtn.IsEnabled = false;
-            try
-            {
-                string? cached = await DeviceImageService.DownloadAndCacheUrlAsync(urlBox.Text?.Trim() ?? "");
-                if (cached != null)
-                {
-                    App.Settings.Current.DeviceImageOverrides[device.Id] = cached;
-                    App.Settings.Save();
-                    preview.Source = DeviceImageService.CreateSourceFromFile(cached, 72);
-                    changed = true;
-                    status.Text = "已缓存并应用自定义云端 URL 图片。";
-                }
-                else
-                {
-                    status.Text = "无法从此 URL 下载有效图片。";
-                }
-            }
-            catch (Exception ex)
-            {
-                status.Text = $"拉取失败：{ex.Message}";
-            }
-            finally
-            {
-                urlBtn.IsEnabled = true;
-            }
-        };
-        var urlRow = new Grid();
-        urlRow.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
-        urlRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        urlRow.Children.Add(urlBox);
-        Grid.SetColumn(urlBtn, 1);
-        urlRow.Children.Add(urlBtn);
-        root.Children.Add(urlRow);
-
-        var dialog = new ContentDialog
-        {
-            Title = $"选择「{device.Name}」的展示图片",
-            Content = root,
-            CloseButtonText = "完成",
-        };
-        await dialog.ShowAsync();
-        return changed;
-    }
 }

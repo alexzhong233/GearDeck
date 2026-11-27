@@ -353,9 +353,10 @@ public partial class LeobogHi98View : UserControl
 
     private void ShowStatus(string message, InfoBarSeverity severity)
     {
-        StatusInfoBar.Severity = severity;
-        StatusInfoBar.Message = message;
-        StatusInfoBar.IsOpen = !string.IsNullOrWhiteSpace(message);
+        if (string.IsNullOrWhiteSpace(message))
+            MainWindow.HideToast();
+        else
+            MainWindow.ShowToast(message, severity);
     }
 
     private void AppendLog(string message)

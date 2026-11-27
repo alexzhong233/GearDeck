@@ -28,7 +28,7 @@
                 <TextBlock x:Name="DiskText" Text="DSK --%" Foreground="White" FontSize="13" VerticalAlignment="Center" />
             </StackPanel>
             <Button x:Name="CloseBtn" Grid.Column="1" Content="×" Width="22" Height="22" FontSize="13"
-                    Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                    Margin="10,0,0,0" Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                     Background="Transparent" BorderThickness="0" />
         </Grid>
     </Border>

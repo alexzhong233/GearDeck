@@ -16,6 +16,7 @@ public sealed class DeviceImageRule
     public string? Preset { get; set; }
     public string? CloudUrl { get; set; }
     public string? PiperSvg { get; set; }
+    public string? AssetFile { get; set; }
 }
 
 public sealed class DeviceImageGalleryEntry
@@ -26,6 +27,7 @@ public sealed class DeviceImageGalleryEntry
     public string MatchHint { get; set; } = "";
     public string ImageUrl { get; set; } = "";
     public bool IsPiperSvg { get; set; }
+    public string? AssetFile { get; set; }
 }
 
 public sealed class DeviceImageManifest
@@ -40,7 +42,8 @@ public sealed record DeviceImageMatchResult(
     string PresetId,
     string? CloudUrl,
     string? PiperSvg,
-    bool IsExactModelMatch);
+    bool IsExactModelMatch,
+    string? AssetFile = null);
 
 /// <summary>
 /// 外置 JSON 设备造型匹配引擎（对应 OpenMouse VID:PID 目录与型号正则分层匹配）：
@@ -98,8 +101,39 @@ public static class DeviceImageRuleMatcher
             .Select(r => r.Id.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        var baseById = baseManifest.Rules
+            .Where(r => !string.IsNullOrWhiteSpace(r.Id))
+            .GroupBy(r => r.Id.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
         foreach (var r in overrideManifest.Rules)
-            rules.Add(r);
+        {
+            if (string.IsNullOrWhiteSpace(r.AssetFile) &&
+                !string.IsNullOrWhiteSpace(r.Id) &&
+                baseById.TryGetValue(r.Id.Trim(), out var baseRule) &&
+                !string.IsNullOrWhiteSpace(baseRule.AssetFile) &&
+                string.Equals(r.CloudUrl ?? "", baseRule.CloudUrl ?? "", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(r.PiperSvg ?? "", baseRule.PiperSvg ?? "", StringComparison.OrdinalIgnoreCase))
+            {
+                rules.Add(new DeviceImageRule
+                {
+                    Id = r.Id,
+                    Name = r.Name,
+                    VidPid = r.VidPid,
+                    Vid = r.Vid,
+                    Keywords = r.Keywords,
+                    Kind = r.Kind,
+                    Preset = r.Preset,
+                    CloudUrl = r.CloudUrl,
+                    PiperSvg = r.PiperSvg,
+                    AssetFile = baseRule.AssetFile,
+                });
+            }
+            else
+            {
+                rules.Add(r);
+            }
+        }
 
         foreach (var b in baseManifest.Rules)
         {
@@ -108,12 +142,37 @@ public static class DeviceImageRuleMatcher
             rules.Add(b);
         }
 
+        var galleryByUrl = baseManifest.Gallery
+            .Where(g => !string.IsNullOrWhiteSpace(g.ImageUrl))
+            .GroupBy(g => g.ImageUrl.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(grp => grp.Key, grp => grp.First(), StringComparer.OrdinalIgnoreCase);
+
         var gallery = new List<DeviceImageGalleryEntry>();
         var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var g in overrideManifest.Gallery.Concat(baseManifest.Gallery))
         {
             if (!string.IsNullOrWhiteSpace(g.ImageUrl) && seenUrls.Add(g.ImageUrl.Trim()))
-                gallery.Add(g);
+            {
+                if (string.IsNullOrWhiteSpace(g.AssetFile) &&
+                    galleryByUrl.TryGetValue(g.ImageUrl.Trim(), out var baseGallery) &&
+                    !string.IsNullOrWhiteSpace(baseGallery.AssetFile))
+                {
+                    gallery.Add(new DeviceImageGalleryEntry
+                    {
+                        Id = g.Id,
+                        Name = g.Name,
+                        Brand = g.Brand,
+                        MatchHint = g.MatchHint,
+                        ImageUrl = g.ImageUrl,
+                        IsPiperSvg = g.IsPiperSvg,
+                        AssetFile = baseGallery.AssetFile,
+                    });
+                }
+                else
+                {
+                    gallery.Add(g);
+                }
+            }
         }
 
         return new DeviceImageManifest
@@ -137,6 +196,7 @@ public static class DeviceImageRuleMatcher
         string devName = device.Name.ToLowerInvariant();
         string devId = device.Id.ToLowerInvariant();
         string devProv = device.Provider.ToLowerInvariant();
+        string devFuzzy = NormalizeFuzzyText($"{device.Name} {device.Provider}");
         string devKind = device.Kind.ToString();
 
         DeviceImageRule? bestRule = null;
@@ -170,7 +230,7 @@ public static class DeviceImageRuleMatcher
                 continue;
             }
 
-            int kwHits = CountKeywordHits(rule.Keywords, devName, devId, devProv);
+            int kwHits = CountKeywordHits(rule.Keywords, devName, devId, devProv, devFuzzy);
             bool hasVid = !string.IsNullOrEmpty(rVid);
             bool hasKeywords = rule.Keywords.Count > 0;
 
@@ -238,7 +298,8 @@ public static class DeviceImageRuleMatcher
         string preset = !string.IsNullOrWhiteSpace(bestRule?.Preset) ? bestRule.Preset! : fallbackPreset;
         string? cloudUrl = !string.IsNullOrWhiteSpace(bestRule?.CloudUrl) ? bestRule.CloudUrl : null;
         string? piperSvg = !string.IsNullOrWhiteSpace(bestRule?.PiperSvg) ? bestRule.PiperSvg : null;
-        return new DeviceImageMatchResult(bestRule, preset, cloudUrl, piperSvg, bestExact);
+        string? assetFile = !string.IsNullOrWhiteSpace(bestRule?.AssetFile) ? bestRule.AssetFile : null;
+        return new DeviceImageMatchResult(bestRule, preset, cloudUrl, piperSvg, bestExact, assetFile);
     }
 
     public static bool TryExtractVidPid(PeripheralDevice d, out string vidHex, out string pidHex)
@@ -275,6 +336,7 @@ public static class DeviceImageRuleMatcher
                 "razer" => "1532",
                 "rog" => "0b05",
                 "sony" => "054c",
+                "ps" => "054c",
                 "flydigi" => "37d7",
                 "atk" => "373b",
                 "aula" => "38a6",
@@ -282,6 +344,20 @@ public static class DeviceImageRuleMatcher
                 "lamzu" => "373e",
                 "am" => "0e8d",
                 "mchose" => "24ae",
+                "pulsar" => "3710",
+                "egg" => "3367",
+                "rapoo" => "24ae",
+                "finalmouse" => "361d",
+                "steelseries" => "1038",
+                "corsair" => "1b1c",
+                "hyperx" => "03f0",
+                "wooting" => "31e3",
+                "keychron" => "3434",
+                "monsgeek" => "3151",
+                "drunkdeer" => "352d",
+                "nuphy" => "19f5",
+                "nintendo" => "057e",
+                "8bitdo" => "2dc8",
                 _ => null,
             };
             if (brandVid != null)
@@ -294,16 +370,43 @@ public static class DeviceImageRuleMatcher
         return false;
     }
 
-    private static int CountKeywordHits(List<string> keywords, string devName, string devId, string devProv)
+    private static readonly string[] FuzzyNoiseTokens =
+    [
+        "wireless", "wired", "dongle", "receiver", "usb-c", "usbc", "bluetooth", "2.4ghz", "2.4g",
+        "gaming", "mouse", "keyboard", "headset", "controller", "8k", "4k", "bt", "usb",
+        "无线", "有线", "接收器",
+    ];
+
+    /// <summary>规范化型号文本（移除空格/连接符与 2.4G/8K/Wireless 等后缀词），用于跨命名习惯的模糊匹配。</summary>
+    public static string NormalizeFuzzyText(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return "";
+        string text = raw.ToLowerInvariant();
+        foreach (string noise in FuzzyNoiseTokens)
+            text = text.Replace(noise, "", StringComparison.Ordinal);
+
+        var sb = new System.Text.StringBuilder(text.Length);
+        foreach (char c in text)
+        {
+            if (char.IsLetterOrDigit(c) || (c >= '\u4e00' && c <= '\u9fff'))
+                sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
+    private static int CountKeywordHits(List<string> keywords, string devName, string devId, string devProv, string devFuzzy)
     {
         int hits = 0;
         foreach (string raw in keywords)
         {
             string kw = raw.Trim().ToLowerInvariant();
             if (string.IsNullOrEmpty(kw)) continue;
+            string kwFuzzy = NormalizeFuzzyText(kw);
             if (devName.Contains(kw, StringComparison.Ordinal) ||
                 devId.Contains(kw, StringComparison.Ordinal) ||
-                devProv.Contains(kw, StringComparison.Ordinal))
+                devProv.Contains(kw, StringComparison.Ordinal) ||
+                (!string.IsNullOrEmpty(kwFuzzy) && kwFuzzy.Length >= 3 && devFuzzy.Contains(kwFuzzy, StringComparison.Ordinal)))
             {
                 hits++;
             }

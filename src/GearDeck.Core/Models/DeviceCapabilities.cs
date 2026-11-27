@@ -149,6 +149,46 @@ public sealed class DeviceTuningCapabilities
     public AnalogButtonConfig? LeftAnalogButton { get; set; }
 
     public AnalogButtonConfig? RightAnalogButton { get; set; }
+
+    // ── 耳机音效 / 侧音 / 降噪 / 均衡器 (可选) ────────────────────────────────
+    public bool SupportsSidetone { get; set; }
+
+    public bool SidetoneEnabled { get; set; }
+
+    public int CurrentSidetoneLevel { get; set; }
+
+    public int MaxSidetoneLevel { get; set; } = 20;
+
+    public bool SupportsAncMode { get; set; }
+
+    public List<LodOption> SupportedAncModes { get; set; } = [];
+
+    public int CurrentAncMode { get; set; }
+
+    public bool SupportsVoicePrompt { get; set; }
+
+    public bool VoicePromptEnabled { get; set; }
+
+    public bool SupportsEqualizer { get; set; }
+
+    public bool EqualizerEnabled { get; set; }
+
+    public List<LodOption> SupportedEqPresets { get; set; } = [];
+
+    public int CurrentEqPreset { get; set; }
+
+    public string? ChatMixSummary { get; set; }
+
+    // ── 键盘 / 耳机灯效调节 (可选) ───────────────────────────────────────────
+    public bool SupportsLighting { get; set; }
+
+    public int CurrentLightingBrightness { get; set; } = 100;
+
+    public int MaxLightingBrightness { get; set; } = 100;
+
+    public List<LodOption> SupportedLightingModes { get; set; } = [];
+
+    public int CurrentLightingMode { get; set; }
 }
 
 public sealed class DeviceTuningUpdate
@@ -192,6 +232,16 @@ public sealed class DeviceTuningUpdate
     public (int MacroSlot, int TargetButtonSlot, OnboardMacroDefinition Macro)? UploadMacro { get; set; }
 
     public AnalogSwitchUpdate? AnalogSwitches { get; set; }
+
+    public (bool Enabled, int Level)? Sidetone { get; set; }
+
+    public int? AncMode { get; set; }
+
+    public bool? VoicePromptEnabled { get; set; }
+
+    public (bool Enabled, int? PresetCode)? Equalizer { get; set; }
+
+    public (int Mode, int Brightness)? Lighting { get; set; }
 }
 
 public sealed record DeviceTuningResult(bool Success, string Message, DeviceTuningCapabilities? Capabilities = null);

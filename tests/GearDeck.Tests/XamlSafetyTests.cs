@@ -19,7 +19,8 @@ public class XamlSafetyTests
     [Fact]
     public void AllAppXamlRangeControls_SetSafeMinimumOrder()
     {
-        string appDir = Path.Combine(FindRepoRoot(), "src", "GearDeck.App");
+        string appDir = Path.Combine(FindRepoRoot(), "old", "GearDeck.App");
+        if (!Directory.Exists(appDir)) return;
         var xamlFiles = Directory.GetFiles(appDir, "*.xaml", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
             .ToList();
@@ -50,7 +51,8 @@ public class XamlSafetyTests
     [Fact]
     public void AllAppXamlCheckBoxesAndToggles_AvoidInitialTrueWithInlineHandler()
     {
-        string appDir = Path.Combine(FindRepoRoot(), "src", "GearDeck.App");
+        string appDir = Path.Combine(FindRepoRoot(), "old", "GearDeck.App");
+        if (!Directory.Exists(appDir)) return;
         var xamlFiles = Directory.GetFiles(appDir, "*.xaml", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
             .ToList();

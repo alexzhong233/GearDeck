@@ -34,6 +34,16 @@ public sealed class CompXProvider : ITunablePeripheralProvider
         0x0951, // HyperX (Kingston)
         0xA8A4, // MLOONG Wired
         0xA8A5, // MLOONG 2.4G
+        0x3710, // Pulsar (OpenMouseProvider)
+        0x3367, // Endgame Gear (OpenMouseProvider)
+        0x361D, // Finalmouse (OpenMouseProvider)
+        0x3434, // Keychron (ViaKeyboardProvider)
+        0x31E3, // Wooting (ViaKeyboardProvider)
+        0x03EB, // Wooting legacy (ViaKeyboardProvider)
+        0x352D, // DrunkDeer (ViaKeyboardProvider)
+        0x19F5, // NuPhy (ViaKeyboardProvider)
+        0x057E, // Nintendo (GamepadBatteryProvider)
+        0x2DC8, // 8BitDo (GamepadBatteryProvider)
     ];
 
     public bool CanHandleDevice(string deviceId)
@@ -59,6 +69,7 @@ public sealed class CompXProvider : ITunablePeripheralProvider
                 bool knownBrandReceiver = brand is "Lamzu" or "WLmouse";
 
                 (int Battery, bool Charging)? hit = null;
+                string? probedModelName = null;
 
                 // 1. 先查 65B (优先精确 65 字节，再查 513) Page/Cmd 0x83 电池帧 (WLmouse / Lamzu Inca / Maya X)
                 foreach (var dev in g.Where(d => HidSafe.MaxFeatureLen(d) >= 64)
@@ -66,7 +77,16 @@ public sealed class CompXProvider : ITunablePeripheralProvider
                                      .ThenBy(HidSafe.MaxFeatureLen))
                 {
                     hit = Query0x83Feature(dev);
-                    if (hit != null) break;
+                    if (hit != null)
+                    {
+                        if (GearDeck.Core.Services.ReceiverModelRegistry.IsGenericReceiverName(CleanName(rawName) ?? KnownModelName(vid, pid)))
+                        {
+                            using var raw = RawHidFeature.TryOpen(dev.DevicePath);
+                            if (raw != null)
+                                probedModelName = CompXPageProtocol.QueryDeviceModelHint(raw, HidSafe.MaxFeatureLen(dev), $"{vid:X4}:{pid:X4}");
+                        }
+                        break;
+                    }
                 }
 
                 // 2. 再查 0x08 17/64 字节 (Lamzu Atlantis 等 CompX Flash 固件)
@@ -87,7 +107,7 @@ public sealed class CompXProvider : ITunablePeripheralProvider
                 if (hit == null && !knownBrandReceiver)
                     continue;
 
-                string cleanName = CleanName(rawName) ?? KnownModelName(vid, pid) ?? $"{brand} {vid:X4}:{pid:X4}";
+                string cleanName = probedModelName ?? CleanName(rawName) ?? KnownModelName(vid, pid) ?? $"{brand} {vid:X4}:{pid:X4}";
                 bool wired = rawName?.Contains("Wired", StringComparison.OrdinalIgnoreCase) == true
                           || (vid == 0x37B0 && pid is 0x0007 or 0x0009);
                 results.Add(new PeripheralDevice
@@ -249,7 +269,8 @@ public sealed class CompXProvider : ITunablePeripheralProvider
         if (vid == 0x3554 && d.ProductID == 0xFA07) return true; // LEOBOG Hi98C Pro Bluetooth
         string upper = HidSafe.ProductName(d).ToUpperInvariant();
         if (upper.Contains("AULA") || upper.Contains("MCHOSE") || upper.Contains("ATK ") || upper.Contains("VXE ") ||
-            upper.Contains("LEOBOG") || upper.Contains("HI98") || upper.Contains("MLOONG"))
+            upper.Contains("LEOBOG") || upper.Contains("HI98") || upper.Contains("MLOONG") ||
+            upper.Contains("RAPOO") || upper.Contains("NINJUTSO") || upper.Contains("PULSAR") || upper.Contains("KEYCHRON"))
             return true;
         if (vid == 0x3554 && !upper.Contains("LAMZU") && !upper.Contains("ATLANTIS") && !upper.Contains("INCA") && !upper.Contains("THORN"))
         {

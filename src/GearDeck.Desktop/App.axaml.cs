@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -92,6 +94,7 @@ public partial class App : Application
         _startedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         Settings = new SettingsService();
         AtkModelCatalog.SeedPersistentReceiverModels(Settings.Current.KnownReceiverModels);
+        ReceiverModelRegistry.Seed(Settings.Current.KnownReceiverModels, Settings.Current.DeviceCustomNames);
 
         var cmdArgs = Environment.GetCommandLineArgs();
         var mirrorArg = cmdArgs.FirstOrDefault(a => a.StartsWith("--mirror=", StringComparison.OrdinalIgnoreCase));
@@ -120,6 +123,8 @@ public partial class App : Application
             new HyperXProvider(),
             new MloongProvider(),
             new LeobogProvider(),
+            new OpenMouseProvider(),
+            new ViaKeyboardProvider(),
             new GamepadBatteryProvider(),
             new BluetoothBatteryProvider(),
         });
@@ -310,14 +315,6 @@ public partial class App : Application
             if (seq < _startedAt) return;
             _lastCommandSeq = seq;
 
-            if (groupId == "__monitor__")
-            {
-                _mainWindow?.CloseMonitorFlyout();
-                ShowMainWindowCore();
-                _mainWindow?.OpenMonitorPage();
-                return;
-            }
-
             Rect? anchor = null;
             if (root.TryGetProperty("X", out var xEl) && root.TryGetProperty("Y", out var yEl) &&
                 root.TryGetProperty("W", out var wEl) && root.TryGetProperty("H", out var hEl))
@@ -325,32 +322,31 @@ public partial class App : Application
                 anchor = new Rect(xEl.GetInt32(), yEl.GetInt32(), wEl.GetInt32(), hEl.GetInt32());
             }
 
+            if (groupId == "__monitor__")
+            {
+                WidgetMonitorWindow.ShowOrUpdate(anchor, isHover: false);
+                return;
+            }
+
             if (groupId == "__monitor_hover__")
             {
-                if (_mainWindow != null)
+                if (Settings.Current.WidgetFlyoutOnHover)
+                    WidgetMonitorWindow.ShowOrUpdate(anchor, isHover: true);
+                return;
+            }
+
+            if (groupId.StartsWith("__group_hover__:", StringComparison.Ordinal))
+            {
+                if (Settings.Current.WidgetFlyoutOnHover)
                 {
-                    _mainWindow.ShowMonitorFlyout(anchor);
-                }
-                else
-                {
-                    var mon = anchor is { } ar ? new WidgetMonitorWindow(ar) : new WidgetMonitorWindow();
-                    mon.Show();
+                    string actualGroupId = groupId["__group_hover__:".Length..];
+                    if (!string.IsNullOrWhiteSpace(actualGroupId))
+                        WidgetGroupWindow.ShowStandalone(actualGroupId, anchor, isHover: true);
                 }
                 return;
             }
 
-            if (_mainWindow != null)
-            {
-                _mainWindow.ShowGroupFlyout(groupId, anchor);
-            }
-            else if (anchor is { } r)
-            {
-                WidgetGroupWindow.ShowNear((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height, groupId);
-            }
-            else
-            {
-                new WidgetGroupWindow(groupId).Show();
-            }
+            WidgetGroupWindow.ShowStandalone(groupId, anchor, isHover: false);
         }
         catch { }
     }
@@ -590,8 +586,32 @@ public partial class App : Application
             _mainWindow.Closed -= OnMainWindowClosed;
             (_mainWindow as IDisposable)?.Dispose();
             _mainWindow = null;
+            ScheduleClosedTrim();
         }
     }
+
+    private void ScheduleClosedTrim()
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(500);
+            if (IsExiting || _mainWindow is not null)
+                return;
+            try
+            {
+                GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
+                if (OperatingSystem.IsWindows())
+                {
+                    using var proc = Process.GetCurrentProcess();
+                    _ = SetProcessWorkingSetSize(proc.Handle, (IntPtr)(-1), (IntPtr)(-1));
+                }
+            }
+            catch { }
+        });
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetProcessWorkingSetSize(IntPtr hProcess, IntPtr dwMinimumWorkingSetSize, IntPtr dwMaximumWorkingSetSize);
 
     private void ExitCore(bool invokeDesktopShutdown = true)
     {

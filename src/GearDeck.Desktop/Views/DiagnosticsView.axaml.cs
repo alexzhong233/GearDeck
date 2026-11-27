@@ -8,7 +8,9 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using FluentAvalonia.UI.Controls;
 using GearDeck.Core;
+using GearDeck.Core.Hid;
 
 namespace GearDeck.Desktop.Views;
 
@@ -75,6 +77,11 @@ public partial class DiagnosticsView : UserControl
             sb.AppendLine($"已加载 Provider 驱动数量：{loaded}");
             sb.AppendLine($"已识别设备驱动种类：{recognized}");
             sb.AppendLine($"已发现设备数量：{App.LastDevices.Count}");
+            sb.AppendLine();
+
+            var unknown = UnknownHidScanner.Scan(App.LastDevices);
+            sb.AppendLine($"== 未识别外设 HID 指纹 ({unknown.Count}) ==");
+            sb.AppendLine(UnknownHidScanner.FormatSummary(unknown));
 
             SnapshotText.Text = sb.ToString();
         }
@@ -120,6 +127,40 @@ public partial class DiagnosticsView : UserControl
         catch (Exception ex)
         {
             Diag.Log($"复制诊断日志失败: {ex.Message}");
+            ActionHintText.Text = $"复制失败：{ex.Message}";
+        }
+        finally
+        {
+            _copying = false;
+        }
+    }
+
+    private async void OnCopyUnknownHidClick(object? sender, RoutedEventArgs e)
+    {
+        if (_copying) return;
+        _copying = true;
+        try
+        {
+            var items = UnknownHidScanner.Scan(App.LastDevices);
+            string json = UnknownHidScanner.SerializeJson(items);
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (clipboard != null)
+            {
+                await clipboard.SetTextAsync(json);
+                string msg = items.Count == 0
+                    ? "当前无未识别外设，已复制空列表 JSON。"
+                    : $"已复制 {items.Count} 台未识别外设 HID 指纹 JSON。";
+                ActionHintText.Text = msg;
+                MainWindow.ShowToast(msg, InfoBarSeverity.Success);
+            }
+            else
+            {
+                ActionHintText.Text = "无法访问剪贴板。";
+            }
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"复制未知外设指纹失败: {ex.Message}");
             ActionHintText.Text = $"复制失败：{ex.Message}";
         }
         finally

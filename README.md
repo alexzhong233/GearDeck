@@ -96,7 +96,7 @@ dotnet publish src/GearDeck.Desktop/GearDeck.Desktop.csproj -c Release -r win-x6
 dotnet publish src/GearDeck.Desktop/GearDeck.Desktop.csproj -c Release -r osx-arm64 --self-contained true -o publish/osx-arm64
 ```
 
-Windows 快速启动：在项目根目录运行 [`启动 GearDeck.cmd`](%E5%90%AF%E5%8A%A8%20GearDeck.cmd)。
+Windows 构建后可直接运行输出目录中的 `src/GearDeck.Desktop/bin/Release/net8.0/GearDeck.Desktop.exe`。
 
 ---
 

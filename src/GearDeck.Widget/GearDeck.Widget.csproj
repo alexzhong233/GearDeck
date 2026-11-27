@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>..\GearDeck.App\Assets\app.ico</ApplicationIcon>
+    <ApplicationIcon>..\GearDeck.Desktop\Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="GearDeck.Tests" />

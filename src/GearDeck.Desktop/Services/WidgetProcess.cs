@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using GearDeck.Core;
 using GearDeck.Core.Models;
+using GearDeck.Core.Services;
 
 namespace GearDeck.Desktop.Services;
 
@@ -13,7 +14,15 @@ public static class WidgetProcess
     private static readonly object SyncLock = new();
     private static long _stateSeq;
 
-    private static string ExePath => Path.Combine(AppContext.BaseDirectory, "widget", "GearDeck.Widget.exe");
+    private static string ResolveExePath()
+    {
+        string nested = Path.Combine(AppContext.BaseDirectory, "widget", "GearDeck.Widget.exe");
+        if (File.Exists(nested))
+            return nested;
+
+        string adjacent = Path.Combine(AppContext.BaseDirectory, "GearDeck.Widget.exe");
+        return File.Exists(adjacent) ? adjacent : nested;
+    }
 
     private static string StatePath => Path.Combine(
         Environment.GetFolderPath(OperatingSystem.IsWindows()
@@ -23,22 +32,30 @@ public static class WidgetProcess
 
     public static void Refresh()
     {
+        if (!OperatingSystem.IsWindows())
+            return;
+
         lock (SyncLock)
         {
             try
             {
                 WriteState();
-                if (!OperatingSystem.IsWindows()) return;
-                if (!File.Exists(ExePath)) return;
+                string exePath = ResolveExePath();
+                if (!File.Exists(exePath))
+                {
+                    Diag.Log($"未找到任务栏贴片程序: {exePath}");
+                    return;
+                }
+
                 if (_process == null || _process.HasExited)
                 {
                     KillStrayProcesses();
                     // 严禁 --preview：贴片仅接受 --widget-bg 后台模式
-                    _process = Process.Start(new ProcessStartInfo(ExePath)
+                    _process = Process.Start(new ProcessStartInfo(exePath)
                     {
                         Arguments = "--widget-bg",
                         UseShellExecute = false,
-                        WorkingDirectory = Path.GetDirectoryName(ExePath)!,
+                        WorkingDirectory = Path.GetDirectoryName(exePath)!,
                     });
                 }
             }
@@ -51,6 +68,9 @@ public static class WidgetProcess
 
     public static void Stop()
     {
+        if (!OperatingSystem.IsWindows())
+            return;
+
         lock (SyncLock)
         {
             try
@@ -63,7 +83,7 @@ public static class WidgetProcess
             }
             catch { }
             finally { _process = null; }
-            if (OperatingSystem.IsWindows()) KillStrayProcesses();
+            KillStrayProcesses();
         }
     }
 
@@ -100,62 +120,96 @@ public static class WidgetProcess
         {
             try
             {
+                var settings = App.Settings.Current;
                 var devices = App.LastDevices ?? [];
-                var settings = App.Settings;
+                App.Settings.EnsureDefaults();
 
-                // 桌面版无任务栏分组配置：按已连接设备生成贴片条目。
                 var groups = new List<WidgetChipOut>();
-                foreach (var dev in devices.Where(d => d.Connected))
+                foreach (var cfg in settings.TaskbarGroups.Where(g => g.Visible))
                 {
-                    string label = dev.Kind switch
+                    var members = MembersOf(cfg.GroupId, devices);
+                    var def = BatteryHistoryHelper.SelectGroupDisplayDevice(members, cfg.DefaultDeviceId);
+                    string label = cfg.GroupId switch
                     {
-                        DeviceKind.Mouse => "鼠标",
-                        DeviceKind.Keyboard => "键盘",
-                        DeviceKind.Headset => "耳机",
-                        _ => "手柄",
+                        "builtin:mouse" => "鼠标",
+                        "builtin:keyboard" => "键盘",
+                        "builtin:headset" => "耳机",
+                        "builtin:controller" => "手柄",
+                        _ => settings.CustomGroups.FirstOrDefault(c => c.Id == cfg.GroupId)?.DisplayName ?? "组",
                     };
-                    string glyph = dev.Kind switch
+                    string glyph = GroupIconCatalog.ResolveEffectiveGlyph(cfg, members);
+                    string iconPath = GroupIconCatalog.ResolveValidIconPath(cfg) ?? "";
+
+                    string text = "--";
+                    string textTop = "";
+                    string textBottom = "";
+                    int? effPct = null;
+                    bool usedHist = false;
+                    bool isLow = false;
+                    if (def != null)
                     {
-                        DeviceKind.Mouse => "\uE962",
-                        DeviceKind.Keyboard => "\uE765",
-                        DeviceKind.Headset => "\uE95B",
-                        _ => "\uE7FC",
-                    };
+                        var cached = App.Settings.GetLastKnownBattery(def.Id);
+                        var chipRes = BatteryHistoryHelper.BuildChipText(def, label: "", showPct: true, cached);
+                        text = chipRes.Text;
+                        textTop = chipRes.TextTop;
+                        textBottom = chipRes.TextBottom;
+                        effPct = chipRes.EffectivePercent;
+                        usedHist = chipRes.UsedHistoricalFallback;
 
-                    var cached = settings?.GetLastKnownBattery(dev.Id);
-                    int? livePct = dev.BatteryPercent;
-                    int? effPct = livePct ?? cached?.BatteryPercent;
-                    bool usedHist = livePct == null && effPct != null;
-                    string text = effPct is { } pct ? $"{pct}%" : "--";
-                    bool isLow = effPct is { } bp && bp <= 20;
+                        int? livePct = def.BatteryPercent
+                                       ?? (def.LeftEarPercent.HasValue || def.RightEarPercent.HasValue ? chipRes.EffectivePercent : null);
+                        isLow = livePct is { } bp && App.Settings.IsDeviceLowBattery(def.Id, bp);
+                    }
 
-                    string tip = label + "\n" + (
-                        dev.FormatDualEarSummary(compact: false) is { } dual
-                            ? $"{dev.Name}: {(dev.IsSleeping ? "休眠 · 上次 " : "")}{dual}"
-                            : livePct is { } lp
-                                ? $"{dev.Name}: {lp}%{(dev.State == BatteryState.Charging ? " ⚡" : "")}"
-                                : effPct is { } hp
-                                    ? $"{dev.Name}: {(dev.IsSleeping ? "休眠 · 上次电量" : "上次电量")} {hp}%"
-                                    : $"{dev.Name}: 未读到");
+                    string tip = label + "\n" + (members.Count == 0
+                        ? "（无设备）"
+                        : string.Join("\n", members.Select(m =>
+                        {
+                            var mc = App.Settings.GetLastKnownBattery(m.Id);
+                            if (m.FormatDualEarSummary(compact: false) is { } dualTip)
+                                return $"{m.Name}: {dualTip}";
+                            if (mc != null && (mc.LeftEarPercent.HasValue || mc.RightEarPercent.HasValue))
+                            {
+                                string lt = mc.LeftEarPercent is { } lv ? $"{lv}%" : "--";
+                                string rt = mc.RightEarPercent is { } rv ? $"{rv}%" : "--";
+                                return $"{m.Name}: {(m.IsSleeping ? "休眠 · 上次 " : "上次 ")}L {lt} / R {rt}";
+                            }
+                            if (m.BatteryPercent is { } mp)
+                                return $"{m.Name}: {mp}%{(m.State == BatteryState.Charging ? " ⚡" : "")}";
+                            if (mc?.BatteryPercent is { } histP)
+                                return $"{m.Name}: {(m.IsSleeping ? "休眠 · 上次电量" : "上次电量")} {histP}%";
+                            return $"{m.Name}: 未读到";
+                        })));
 
                     groups.Add(new WidgetChipOut
                     {
                         Glyph = glyph,
-                        IconPath = "",
+                        IconPath = iconPath,
                         Text = text,
-                        TextTop = "",
-                        TextBottom = "",
+                        TextTop = textTop,
+                        TextBottom = textBottom,
                         Tip = tip,
                         Low = isLow,
-                        Dim = dev.IsSleeping || usedHist || effPct == null,
-                        GroupId = $"device:{dev.Id}",
+                        Dim = def == null || def.IsSleeping || usedHist || effPct == null,
+                        GroupId = cfg.GroupId,
                     });
                 }
 
                 var state = new WidgetStateOut
                 {
                     MainExe = Environment.ProcessPath ?? "",
-                    Embedded = true,
+                    Embedded = settings.WidgetEmbedded,
+                    FlyoutOnHover = settings.WidgetFlyoutOnHover,
+                    Align = settings.WidgetAlignment,
+                    Offset = settings.WidgetOffsetX,
+                    FloatX = settings.WidgetFloatX,
+                    FloatY = settings.WidgetFloatY,
+                    Monitor = settings.MonitorEnabled,
+                    MonitorTop = settings.MonitorTopMetric,
+                    MonitorBottom = settings.MonitorBottomMetric,
+                    Height = settings.WidgetHeight,
+                    FontSize = settings.WidgetFontSize,
+                    BlockWidth = settings.WidgetBlockWidth,
                     Groups = groups,
                 };
 
@@ -169,6 +223,7 @@ public static class WidgetProcess
                     return;
                 }
 
+                // 内容发生变化：自增序号后重新序列化，并用线程唯一临时文件原子替换目标文件
                 state.Seq = Interlocked.Increment(ref _stateSeq);
                 string json = JsonSerializer.Serialize(state, jsonOptions);
 
@@ -185,10 +240,25 @@ public static class WidgetProcess
         }
     }
 
+    private static List<PeripheralDevice> MembersOf(string groupId, IReadOnlyList<PeripheralDevice> devices)
+    {
+        IEnumerable<PeripheralDevice> q = groupId switch
+        {
+            "builtin:mouse" => devices.Where(d => d.Kind == DeviceKind.Mouse),
+            "builtin:keyboard" => devices.Where(d => d.Kind == DeviceKind.Keyboard),
+            "builtin:headset" => devices.Where(d => d.Kind == DeviceKind.Headset),
+            "builtin:controller" => devices.Where(d => d.Kind == DeviceKind.Controller),
+            _ => devices.Where(d => App.Settings.Current.CustomGroups
+                .FirstOrDefault(g => g.Id == groupId)?.MemberIds.Contains(d.Id) == true),
+        };
+        return q.Where(d => d.Connected).ToList();
+    }
+
     private sealed class WidgetStateOut
     {
         public string MainExe { get; set; } = "";
         public bool Embedded { get; set; } = true;
+        public bool FlyoutOnHover { get; set; }
         public string Align { get; set; } = "right";
         public int Offset { get; set; }
         public int FloatX { get; set; } = -1;

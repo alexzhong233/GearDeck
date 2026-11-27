@@ -23,9 +23,35 @@ public partial class SettingsView : UserControl
     {
         _binding = true;
         InitializeComponent();
+        CardsGrid.SizeChanged += (_, _) => UpdateResponsiveColumns();
         WireEvents();
         LoadSettings();
         _binding = false;
+    }
+
+    private bool _twoCol = true;
+
+    private void UpdateResponsiveColumns()
+    {
+        double w = CardsGrid.Bounds.Width;
+        if (w <= 1) return;
+        bool wantTwo = w >= 820;
+        if (wantTwo == _twoCol) return;
+        _twoCol = wantTwo;
+        if (wantTwo)
+        {
+            CardsGrid.ColumnDefinitions = new ColumnDefinitions("*,14,*");
+            Grid.SetRow(RightColumnPanel, 0);
+            Grid.SetColumn(RightColumnPanel, 2);
+            RightColumnPanel.Margin = new Thickness(0);
+        }
+        else
+        {
+            CardsGrid.ColumnDefinitions = new ColumnDefinitions("*");
+            Grid.SetRow(RightColumnPanel, 1);
+            Grid.SetColumn(RightColumnPanel, 0);
+            RightColumnPanel.Margin = new Thickness(0, 14, 0, 0);
+        }
     }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
@@ -80,14 +106,15 @@ public partial class SettingsView : UserControl
 
         StartupSwitch.IsCheckedChanged += (_, _) => ApplyStartupToggle();
 
-        GitHubMirrorBox.TextChanged += (_, _) => MarkUnsaved();
-        RepoSlugBox.TextChanged += (_, _) => MarkUnsaved();
         CloudManifestUrlBox.TextChanged += (_, _) => MarkUnsaved();
 
-        ClearMirrorBtn.Click += (_, _) => SaveMirrorSetting("", "已清空自定义镜像站，将直连 GitHub。");
-        GhfastMirrorBtn.Click += (_, _) => SaveMirrorSetting("https://ghfast.top/", "已设置并保存镜像站：https://ghfast.top/");
-        GhProxyMirrorBtn.Click += (_, _) => SaveMirrorSetting("https://gh-proxy.com/", "已设置并保存镜像站：https://gh-proxy.com/");
-        SaveMirrorBtn.Click += (_, _) => SaveMirrorSetting(GitHubMirrorBox.Text, "自定义 GitHub 镜像站配置已保存。");
+        MirrorChannelCombo.SelectionChanged += (_, _) =>
+        {
+            if (_binding || MirrorChannelCombo.SelectedItem is not ComboBoxItem item) return;
+            App.Settings.Current.GitHubMirrorUrl = item.Tag as string ?? "";
+            App.Settings.Save();
+            UpdateStatusText.Text = $"已切换更新通道：{item.Content}";
+        };
 
         CheckUpdateBtn.Click += OnCheckUpdateClick;
         DownloadUpdateBtn.Click += OnDownloadUpdateClick;
@@ -110,15 +137,45 @@ public partial class SettingsView : UserControl
         AutoYieldSwitch.IsChecked = App.Settings.Current.AutoYieldToVendorSoftware;
         DebugSwitch.IsChecked = App.Settings.Current.DebugModeEnabled;
         AutoCheckUpdateSwitch.IsChecked = App.Settings.Current.CheckUpdateOnStartup;
-        RepoSlugBox.Text = App.Settings.Current.UpdateRepoSlug;
-        GitHubMirrorBox.Text = App.Settings.Current.GitHubMirrorUrl ?? "";
+        PopulateMirrorChannels(App.Settings.Current.GitHubMirrorUrl ?? "");
         CloudManifestUrlBox.Text = App.Settings.Current.CustomCloudGalleryManifestUrl ?? "";
         _binding = false;
 
-        UpdateStatusText.Text = $"当前仓库：{App.Settings.Current.UpdateRepoSlug}（程序版本 v{AppUpdateService.CurrentVersion}）";
+        UpdateStatusText.Text = $"当前版本 v{AppUpdateService.CurrentVersion}";
         StartupHintText.Text = StartupStateHint(App.Settings.Current.LaunchOnStartup, "", withDetail: false);
         SavedHintText.Text = "";
     }
+
+    private void PopulateMirrorChannels(string currentUrl)
+    {
+        string normalized = currentUrl.Trim();
+        var presets = new List<(string Label, string Url)>
+        {
+            ("GitHub 官方直连", ""),
+            ("国内加速通道 1（ghfast）", "https://ghfast.top/"),
+            ("国内加速通道 2（gh-proxy）", "https://gh-proxy.com/"),
+        };
+
+        if (!string.IsNullOrEmpty(normalized) &&
+            !presets.Any(p => string.Equals(p.Url.TrimEnd('/'), normalized.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)))
+        {
+            presets.Add(("当前自定义加速通道", normalized));
+        }
+
+        MirrorChannelCombo.Items.Clear();
+        int selected = 0;
+        for (int i = 0; i < presets.Count; i++)
+        {
+            var (label, url) = presets[i];
+            MirrorChannelCombo.Items.Add(new ComboBoxItem { Content = label, Tag = url });
+            if (string.Equals(url.TrimEnd('/'), normalized.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
+                selected = i;
+        }
+        MirrorChannelCombo.SelectedIndex = selected;
+    }
+
+    private string GetSelectedMirrorUrl()
+        => (MirrorChannelCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
 
     private void MarkUnsaved()
     {
@@ -182,15 +239,6 @@ public partial class SettingsView : UserControl
     private static string NormalizeRepoSlug(string? text)
         => string.IsNullOrWhiteSpace(text) ? UpdateClient.DefaultRepoSlug : text.Trim();
 
-    private void SaveMirrorSetting(string? mirror, string feedback)
-    {
-        App.Settings.Current.GitHubMirrorUrl = mirror?.Trim() ?? "";
-        App.Settings.Current.UpdateRepoSlug = NormalizeRepoSlug(RepoSlugBox.Text);
-        App.Settings.Current.CheckUpdateOnStartup = AutoCheckUpdateSwitch.IsChecked == true;
-        App.Settings.Save();
-        UpdateStatusText.Text = feedback;
-    }
-
     private void OnSaveClick(object? sender, RoutedEventArgs e)
     {
         try
@@ -211,8 +259,8 @@ public partial class SettingsView : UserControl
             s.AutoYieldToVendorSoftware = AutoYieldSwitch.IsChecked == true;
             s.DebugModeEnabled = DebugSwitch.IsChecked == true;
             s.CheckUpdateOnStartup = AutoCheckUpdateSwitch.IsChecked == true;
-            s.GitHubMirrorUrl = GitHubMirrorBox.Text?.Trim() ?? "";
-            s.UpdateRepoSlug = NormalizeRepoSlug(RepoSlugBox.Text);
+            s.GitHubMirrorUrl = GetSelectedMirrorUrl();
+            s.UpdateRepoSlug = NormalizeRepoSlug(s.UpdateRepoSlug);
             s.CustomCloudGalleryManifestUrl = CloudManifestUrlBox.Text?.Trim() ?? "";
             App.Settings.Save();
 
@@ -241,8 +289,8 @@ public partial class SettingsView : UserControl
         _checking = true;
         try
         {
-            App.Settings.Current.GitHubMirrorUrl = GitHubMirrorBox.Text?.Trim() ?? "";
-            App.Settings.Current.UpdateRepoSlug = NormalizeRepoSlug(RepoSlugBox.Text);
+            App.Settings.Current.GitHubMirrorUrl = GetSelectedMirrorUrl();
+            App.Settings.Current.UpdateRepoSlug = NormalizeRepoSlug(App.Settings.Current.UpdateRepoSlug);
             App.Settings.Save();
 
             CheckUpdateBtn.IsEnabled = false;
@@ -347,7 +395,7 @@ public partial class SettingsView : UserControl
             return;
         }
 
-        string channel = outcome.UsedMirror ? "自定义镜像站" : "GitHub 直连";
+        string channel = outcome.UsedMirror ? "加速通道" : "GitHub 官方直连";
         string warn = string.IsNullOrWhiteSpace(outcome.MirrorFallbackWarning) ? "" : $"（{outcome.MirrorFallbackWarning}）";
 
         if (!outcome.Success)

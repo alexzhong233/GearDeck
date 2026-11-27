@@ -138,6 +138,51 @@ internal static class CompXPageProtocol
         return (pct, res.Payload[0] != 0);
     }
 
+    private static readonly HashSet<string> LoggedModelProbeKeys = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>尝试通过 CompX 65B 协议只读获取已配对鼠标名称/设备标识，用于替代接收器通用名称。</summary>
+    public static string? QueryDeviceModelHint(RawHidFeature raw, int featLen, string cacheKey)
+    {
+        foreach (byte cmd in new byte[] { 0x80, 0x81, 0x86 })
+        {
+            var res = Exchange(raw, featLen, TargetMouse, PageDevice, cmd, [], expectedLen: 0x10, attempts: 2);
+            if (!res.Ok || res.Payload.Length == 0)
+                continue;
+
+            lock (LoggedModelProbeKeys)
+            {
+                if (LoggedModelProbeKeys.Add($"{cacheKey}:{cmd:X2}"))
+                    Diag.Log($"[CompX ModelProbe] {cacheKey} cmd=0x{cmd:X2} payload={BitConverter.ToString(res.Payload)}");
+            }
+
+            string? extracted = TryExtractReadableModel(res.Payload);
+            if (extracted != null)
+                return extracted;
+        }
+        return null;
+    }
+
+    internal static string? TryExtractReadableModel(ReadOnlySpan<byte> payload)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (byte b in payload)
+        {
+            if (b is >= 0x20 and <= 0x7E)
+                sb.Append((char)b);
+            else if (sb.Length > 0)
+                break;
+        }
+
+        string candidate = sb.ToString().Trim();
+        if (candidate.Length < 5)
+            return null;
+        // 排除纯版本号字符串如 V1.0.3 / 1.00.02
+        if (candidate.All(c => char.IsDigit(c) || c is '.' or 'v' or 'V' or '-' or ' '))
+            return null;
+        int letterCount = candidate.Count(char.IsLetter);
+        return letterCount >= 4 ? candidate : null;
+    }
+
     public static DeviceTuningCapabilities QueryCapabilities(string deviceId, RawHidFeature raw, int featLen, bool isWireless, string? productName)
     {
         var caps = new DeviceTuningCapabilities { DeviceId = deviceId };

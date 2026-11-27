@@ -383,6 +383,7 @@ public static partial class DeviceUnifier
             RightEarPercent = wired.RightEarPercent ?? wireless.RightEarPercent,
             RightEarCharging = wired.RightEarCharging || wireless.RightEarCharging,
             CaseBatteryPercent = wired.CaseBatteryPercent ?? wireless.CaseBatteryPercent,
+            CaseCharging = wired.CaseCharging || wireless.CaseCharging,
             LastUpdated = wired.LastUpdated >= wireless.LastUpdated ? wired.LastUpdated : wireless.LastUpdated,
         };
     }

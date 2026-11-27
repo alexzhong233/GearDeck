@@ -46,6 +46,7 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                 var anyDevice = g.First();
                 string product = HidSafe.ProductName(anyDevice);
                 bool passthrough = pid == 0xC54F;
+                bool knownSleepingReceiver = pid is 0xC54F or 0xC547 or 0xC54D or 0xC539 or 0xC53F or 0xC545 or 0xC548;
                 bool receiver = passthrough || product.Contains("Receiver", StringComparison.OrdinalIgnoreCase) || product.Contains("Lightspeed", StringComparison.OrdinalIgnoreCase);
                 Diag.Log($"Logitech {pid:X4}: shorts={shorts.Count} longs={longs.Count} product={product}");
 
@@ -54,39 +55,13 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                     : new byte[] { 0xFF }).ToList();
                 if (!receiver) list.AddRange(new byte[] { 1, 2, 3, 4, 5, 6 });
 
+                bool emittedAny = false;
                 foreach (byte idx in list.Distinct())
                 {
                     var battery = ReadBattery(h, idx, out byte chargeStatus);
                     Diag.Log($"Logitech {pid:X4}: idx={idx:X2} battery={battery}");
                     if (battery == null)
-                    {
-                        if (passthrough && idx == 1)
-                        {
-                            var sleepMeta = MetaCache.TryGetValue((pid, idx), out var cachedMeta)
-                                ? cachedMeta
-                                : (product.Contains("SUPERSTRIKE", StringComparison.OrdinalIgnoreCase)
-                                    ? product.Trim()
-                                    : "Logitech PRO X3 SUPERSTRIKE", DeviceKind.Mouse);
-                            results.Add(new PeripheralDevice
-                            {
-                                Id = $"logi:{pid:X4}:{idx:X2}",
-                                VendorId = 0x046D,
-                                ProductId = pid,
-                                Name = sleepMeta.Item1,
-                                Kind = sleepMeta.Item2,
-                                Provider = ProviderName,
-                                Connected = true,
-                                IsSleeping = true,
-                                Transport = "2.4G",
-                                BatteryPercent = null,
-                                State = BatteryState.Unknown,
-                                Note = "罗技接收器在线（鼠标休眠中，晃动唤醒后读取电量与 HITS 参数）",
-                                LastUpdated = DateTimeOffset.Now,
-                            });
-                            break;
-                        }
                         continue;
-                    }
 
                     var meta = ResolveMeta(h, pid, idx, product);
                     bool isBluetooth = anyDevice.DevicePath.Contains("bth", StringComparison.OrdinalIgnoreCase);
@@ -109,7 +84,43 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                         },
                         LastUpdated = DateTimeOffset.Now,
                     });
+                    emittedAny = true;
                     if (!receiver || passthrough) break;
+                }
+
+                if (!emittedAny && knownSleepingReceiver)
+                {
+                    string? catName = GearDeck.Core.Services.DeviceCatalogService.TryLookup(0x046D, pid, out var cat) ? cat?.Model : null;
+                    var sleepMeta = MetaCache.TryGetValue((pid, 1), out var cachedMeta)
+                        ? cachedMeta
+                        : (product.Contains("SUPERSTRIKE", StringComparison.OrdinalIgnoreCase)
+                            ? product.Trim()
+                            : !string.IsNullOrWhiteSpace(catName)
+                                ? catName
+                                : pid == 0xC54F
+                                    ? "Logitech PRO X3 SUPERSTRIKE"
+                                    : string.IsNullOrWhiteSpace(product) || product.Contains("Receiver", StringComparison.OrdinalIgnoreCase)
+                                        ? $"Logitech 无线接收器 ({pid:X4})"
+                                        : product.Trim(),
+                            DeviceKind.Mouse);
+                    results.Add(new PeripheralDevice
+                    {
+                        Id = $"logi:{pid:X4}:01",
+                        VendorId = 0x046D,
+                        ProductId = pid,
+                        Name = sleepMeta.Item1,
+                        Kind = sleepMeta.Item2,
+                        Provider = ProviderName,
+                        Connected = true,
+                        IsSleeping = true,
+                        Transport = "2.4G",
+                        BatteryPercent = null,
+                        State = BatteryState.Unknown,
+                        Note = pid == 0xC54F
+                            ? "罗技接收器在线（鼠标休眠中，晃动唤醒后读取电量与 HITS 参数）"
+                            : "罗技接收器在线（鼠标休眠中，晃动唤醒后读取电量与参数）",
+                        LastUpdated = DateTimeOffset.Now,
+                    });
                 }
             }
             catch (Exception ex)
@@ -380,6 +391,7 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                 caps.SupportsHostModeSwitch = true;
                 // 1 = Onboard Mode, 2 = Host Mode (部分固件用 0 表示 Host/Disabled)
                 caps.IsHostMode = m[0] != 1;
+                Diag.Log($"Logitech 0x8100 getMode raw=0x{m[0]:X2} -> IsHostMode={caps.IsHostMode}");
             }
 
             // fn 0 (getInfo) -> payload[3] = profileCount
@@ -686,7 +698,36 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                 return p[0];
             }
         }
+        f = h.FeatureIndex(idx, 0x1001);
+        if (f != 0)
+        {
+            var p = h.Call(idx, f, 0, null, out _);
+            if (p != null && ParseBatteryVoltageReply(p) is { } volt)
+            {
+                chargeStatus = volt.Charging ? (byte)1 : (byte)0;
+                return volt.Percent;
+            }
+        }
         return null;
+    }
+
+    internal static (int Percent, bool Charging)? ParseBatteryVoltageReply(byte[] p)
+    {
+        if (p.Length < 3) return null;
+        int mv = (p[0] << 8) | p[1];
+        if (mv is < 2500 or > 4600) return null;
+        bool charging = (p[2] & 0x80) != 0 || (p[2] & 0x07) is 1 or 2 or 4;
+        int pct = mv switch
+        {
+            >= 4186 => 100,
+            >= 4060 => 85 + (mv - 4060) * 15 / 126,
+            >= 3920 => 60 + (mv - 3920) * 25 / 140,
+            >= 3790 => 30 + (mv - 3790) * 30 / 130,
+            >= 3650 => 10 + (mv - 3650) * 20 / 140,
+            >= 3500 => (mv - 3500) * 10 / 150,
+            _ => 0,
+        };
+        return (Math.Clamp(pct, 0, 100), charging);
     }
 
     internal static (int Min, int Max, int Step)? ParseDpiRangeList(byte[] data, int startOffset = 1)

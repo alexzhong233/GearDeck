@@ -944,6 +944,7 @@ public partial class MacrosView : UserControl
             WorkspaceGrid.ColumnDefinitions[1].Width = new GridLength(0);
             Grid.SetRow(EditorPane, 1);
             Grid.SetColumn(EditorPane, 0);
+            EditorPane.Margin = new Thickness(0, 14, 0, 0);
         }
         else
         {
@@ -951,13 +952,15 @@ public partial class MacrosView : UserControl
             WorkspaceGrid.ColumnDefinitions[1].Width = new GridLength(1.25, GridUnitType.Star);
             Grid.SetRow(EditorPane, 0);
             Grid.SetColumn(EditorPane, 1);
+            EditorPane.Margin = new Thickness(16, 0, 0, 0);
         }
     }
 
     private void ShowStatus(string message, InfoBarSeverity severity)
     {
-        StatusInfoBar.Severity = severity;
-        StatusInfoBar.Message = message;
-        StatusInfoBar.IsOpen = !string.IsNullOrWhiteSpace(message);
+        if (string.IsNullOrWhiteSpace(message))
+            MainWindow.HideToast();
+        else
+            MainWindow.ShowToast(message, severity);
     }
 }

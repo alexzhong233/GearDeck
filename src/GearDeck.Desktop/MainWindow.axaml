@@ -20,10 +20,12 @@
             <StackPanel x:Name="TitleBarLeftPanel" Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"
                         Margin="6,0,0,0">
                 <Button x:Name="TitleBarBackBtn" Width="36" Height="32" Padding="0" IsEnabled="False"
+                        Background="Transparent" BorderThickness="0" CornerRadius="4"
                         Click="OnTitleBarBackClick">
                     <TextBlock Text="&#xE72B;" FontFamily="{StaticResource AppIconFontFamily}" FontSize="12" />
                 </Button>
                 <Button x:Name="TitleBarPaneBtn" Width="36" Height="32" Padding="0"
+                        Background="Transparent" BorderThickness="0" CornerRadius="4"
                         Click="OnTitleBarPaneClick">
                     <TextBlock Text="&#xE700;" FontFamily="{StaticResource AppIconFontFamily}" FontSize="13" />
                 </Button>
@@ -41,8 +43,11 @@
             <Border x:Name="RightCaptionColumn" Grid.Column="2" Width="138" />
         </Grid>
 
-        <ui:NavigationView Grid.Row="1" x:Name="RootNavigation" IsSettingsVisible="False"
-                           OpenPaneLength="230" CompactPaneLength="48" IsPaneOpen="True">
+        <ui:NavigationView Grid.Row="1" x:Name="RootNavigation"
+                           IsBackButtonVisible="False"
+                           IsPaneToggleButtonVisible="False"
+                           IsSettingsVisible="False"
+                           OpenPaneLength="258" CompactPaneLength="48" IsPaneOpen="True">
             <ui:NavigationView.MenuItems>
                 <ui:NavigationViewItem x:Name="DevicesNav" Content="设备总览" Tag="devices">
                     <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE7F4;" FontFamily="{StaticResource AppIconFontFamily}" /></ui:NavigationViewItem.IconSource>
@@ -96,5 +101,22 @@
                 <ContentControl x:Name="PageHost" />
             </ui:NavigationView.Content>
         </ui:NavigationView>
+
+        <Border x:Name="ToastHost" Grid.Row="1"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                Margin="0,0,22,22" MaxWidth="420" ZIndex="100"
+                Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1" CornerRadius="10"
+                BoxShadow="0 8 24 0 #33000000"
+                IsVisible="False" Opacity="0">
+            <Border.Transitions>
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.2" />
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.22" Easing="CubicEaseOut" />
+                </Transitions>
+            </Border.Transitions>
+            <ui:InfoBar x:Name="ToastInfoBar" BorderThickness="0" IsOpen="False" IsClosable="True" />
+        </Border>
     </Grid>
 </windowing:AppWindow>

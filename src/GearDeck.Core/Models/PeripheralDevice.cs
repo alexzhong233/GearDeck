@@ -57,6 +57,8 @@ public sealed class PeripheralDevice
 
     public int? CaseBatteryPercent { get; set; }
 
+    public bool CaseCharging { get; set; }
+
     public DateTimeOffset LastUpdated { get; set; }
 
     /// <summary>生成左右耳合并电量文本（如 L 85% · R 82%），非 TWS 双耳返回 null。</summary>
@@ -72,7 +74,9 @@ public sealed class PeripheralDevice
         if (compact)
             return $"L{l}{lChg} R{r}{rChg}";
 
-        string caseText = CaseBatteryPercent.HasValue ? $" · 盒 {CaseBatteryPercent.Value}%" : "";
+        string caseText = CaseBatteryPercent.HasValue
+            ? $" · 盒 {CaseBatteryPercent.Value}%{(CaseCharging ? "⚡" : "")}"
+            : "";
         return $"L {l}{lChg} · R {r}{rChg}{caseText}";
     }
 }

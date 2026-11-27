@@ -78,6 +78,9 @@ public sealed class AppSettings
 
     public bool WidgetEmbedded { get; set; } = true;
 
+    /// <summary>任务栏贴片浮窗触发方式：true=鼠标悬浮自动弹出，false=左键点击弹出。</summary>
+    public bool WidgetFlyoutOnHover { get; set; }
+
     /// <summary>水平偏移（DIP，正数向右，负数向左）。</summary>
     public int WidgetOffsetX { get; set; }
 
@@ -123,11 +126,15 @@ public sealed class AppSettings
 
     public bool DebugModeEnabled { get; set; }
 
-    public bool NotifyOnProfileSwitch { get; set; } = true;
+    public bool NotifyOnProfileSwitch { get; set; }
 
     public bool AutoYieldToVendorSoftware { get; set; } = true;
 
+    public List<string> RemovedBuiltinGroups { get; set; } = [];
+
     public Dictionary<string, string> KnownReceiverModels { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, string> DeviceCustomNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public bool UseCardLayout { get; set; } = true;
 
@@ -322,8 +329,11 @@ public sealed class SettingsService
 
     public void EnsureDefaults()
     {
+        Current.RemovedBuiltinGroups ??= [];
         foreach (var id in new[] { "builtin:mouse", "builtin:keyboard", "builtin:headset", "builtin:controller" })
         {
+            if (Current.RemovedBuiltinGroups.Any(x => string.Equals(x, id, StringComparison.OrdinalIgnoreCase)))
+                continue;
             if (Current.TaskbarGroups.All(g => g.GroupId != id))
                 Current.TaskbarGroups.Add(new TaskbarGroupConfig { GroupId = id, Visible = id != "builtin:controller" });
         }
@@ -351,6 +361,7 @@ public sealed class SettingsService
         Current.DeviceLowBatteryPolicies ??= new Dictionary<string, DeviceLowBatteryPolicy>(StringComparer.OrdinalIgnoreCase);
         Current.LastKnownBatteries ??= new Dictionary<string, CachedBatteryRecord>(StringComparer.OrdinalIgnoreCase);
         Current.KnownReceiverModels ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Current.DeviceCustomNames ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Current.DeviceImageOverrides ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Current.AutoCloudDeviceImages ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Current.CustomCloudGalleryManifestUrl ??= "";
@@ -428,6 +439,15 @@ public sealed class SettingsService
         bool changed = false;
         lock (SyncRoot)
         {
+            foreach (var (key, val) in ReceiverModelRegistry.SnapshotKnown())
+            {
+                if (!string.IsNullOrWhiteSpace(val) &&
+                    (!Current.KnownReceiverModels.TryGetValue(key, out var prev) || !string.Equals(prev, val, StringComparison.Ordinal)))
+                {
+                    Current.KnownReceiverModels[key] = val;
+                    changed = true;
+                }
+            }
             foreach (var d in devices)
             {
                 if (d.Id.StartsWith("atk:", StringComparison.OrdinalIgnoreCase)

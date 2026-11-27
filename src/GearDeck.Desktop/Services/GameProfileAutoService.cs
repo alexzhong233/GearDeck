@@ -56,6 +56,7 @@ public sealed class GameProfileAutoService : IDisposable
     private GameProfileResolution? _latchedResolution;
 
     public string LastForegroundProcess { get; private set; } = "";
+    public string LastForegroundExePath { get; private set; } = "";
     public string LastForegroundTitle { get; private set; } = "";
     public bool LastIsFullscreen { get; private set; }
     public string ActiveRuleKey { get; private set; } = "";
@@ -94,6 +95,8 @@ public sealed class GameProfileAutoService : IDisposable
 
     public Task ApplyRuleManuallyAsync(GameAutoRule rule)
     {
+        rule.ProcessNames ??= [];
+        rule.PerMouseTargets ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var res = new GameProfileResolution(
             ActiveSwitchReason.ProcessRule,
             $"rule:{rule.Id}",
@@ -139,10 +142,11 @@ public sealed class GameProfileAutoService : IDisposable
         try
         {
             var settings = App.Settings.Current;
-            var (hwnd, pid, procName, title, isFs, isSelf) = InspectForeground();
+            var (hwnd, pid, procName, exePath, title, isFs, isSelf) = InspectForeground();
             if (!isSelf)
             {
                 LastForegroundProcess = procName;
+                LastForegroundExePath = exePath;
                 LastForegroundTitle = title;
                 LastIsFullscreen = isFs;
             }
@@ -171,6 +175,7 @@ public sealed class GameProfileAutoService : IDisposable
             {
                 LastIsFullscreen = false;
                 LastForegroundProcess = "";
+                LastForegroundExePath = "";
                 LastForegroundTitle = "";
             }
             if (isSelf && !force && !latchedDiedWhileSelf && !pendingRollbackRetryWhileSelf)
@@ -321,18 +326,21 @@ public sealed class GameProfileAutoService : IDisposable
                 _latchedRuleProcs = [];
             }
 
+            var targets = resolution.PerMouseTargets ?? EmptyTargets;
             bool hasDesktopRollbackWork = resolution.Reason == ActiveSwitchReason.DesktopDefault && _preEntrySnapshots.Count > 0;
-            if (resolution.Reason == ActiveSwitchReason.None || (resolution.PerMouseTargets.Count == 0 && !hasDesktopRollbackWork))
+            if (resolution.Reason == ActiveSwitchReason.None || (targets.Count == 0 && !hasDesktopRollbackWork))
             {
                 StatusChanged?.Invoke();
                 return;
             }
 
-            var mouseMap = App.LastDevices
-                .Where(d => d.Kind is DeviceKind.Mouse or DeviceKind.Controller && d.Connected)
-                .ToDictionary(d => d.Id, StringComparer.OrdinalIgnoreCase);
+            var mouseMap = (App.LastDevices ?? [])
+                .Where(d => d != null && !string.IsNullOrWhiteSpace(d.Id) && d.Kind is DeviceKind.Mouse or DeviceKind.Controller && d.Connected)
+                .GroupBy(d => d.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-            var presetMap = App.Settings.Current.Presets
+            var presetMap = (App.Settings.Current.Presets ?? [])
+                .Where(p => p != null && !string.IsNullOrWhiteSpace(p.Id))
                 .GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
@@ -346,14 +354,14 @@ public sealed class GameProfileAutoService : IDisposable
                     return;
                 }
 
-                var targetDeviceIds = resolution.PerMouseTargets.Keys
+                var targetDeviceIds = targets.Keys
                     .Union(_preEntrySnapshots.Keys, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
                 foreach (string deviceId in targetDeviceIds)
                 {
                     if (!mouseMap.TryGetValue(deviceId, out var dev)) continue;
-                    resolution.PerMouseTargets.TryGetValue(deviceId, out var rawTarget);
+                    targets.TryGetValue(deviceId, out var rawTarget);
                     var parsed = GameProfileRuleMatcher.ParseTarget(rawTarget);
 
                     if (parsed.KeepCurrent)
@@ -429,7 +437,7 @@ public sealed class GameProfileAutoService : IDisposable
             }
             else
             {
-                foreach (var (deviceId, rawTarget) in resolution.PerMouseTargets)
+                foreach (var (deviceId, rawTarget) in targets)
                 {
                     if (!mouseMap.TryGetValue(deviceId, out var dev)) continue;
                     var parsed = GameProfileRuleMatcher.ParseTarget(rawTarget);
@@ -634,42 +642,43 @@ public sealed class GameProfileAutoService : IDisposable
         return list.OrderBy(x => x.ProcessName, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    private (IntPtr Hwnd, uint Pid, string ProcessName, string Title, bool IsFullscreen, bool IsSelf) InspectForeground()
+    private (IntPtr Hwnd, uint Pid, string ProcessName, string ExePath, string Title, bool IsFullscreen, bool IsSelf) InspectForeground()
     {
         if (OperatingSystem.IsMacOS())
         {
             var front = MacWorkspaceHelper.GetFrontmostApp();
             if (front == null || string.IsNullOrWhiteSpace(front.LocalizedName))
-                return (IntPtr.Zero, 0, "", "", false, false);
+                return (IntPtr.Zero, 0, "", "", "", false, false);
             bool macSelf = front.Pid == Environment.ProcessId || IgnoredPickerProcesses.Contains(front.LocalizedName);
             string label = string.IsNullOrWhiteSpace(front.BundleId) ? front.LocalizedName : $"{front.LocalizedName} ({front.BundleId})";
-            return (IntPtr.Zero, (uint)Math.Max(0, front.Pid), front.LocalizedName, label, false, macSelf);
+            return (IntPtr.Zero, (uint)Math.Max(0, front.Pid), front.LocalizedName, "", label, false, macSelf);
         }
 
         if (!OperatingSystem.IsWindows())
-            return (IntPtr.Zero, 0, "", "", false, false);
+            return (IntPtr.Zero, 0, "", "", "", false, false);
 
         IntPtr hwnd = GetForegroundWindow();
         if (hwnd == IntPtr.Zero)
-            return (IntPtr.Zero, 0, "", "", false, false);
+            return (IntPtr.Zero, 0, "", "", "", false, false);
 
         GetWindowThreadProcessId(hwnd, out uint pid);
         if (pid == 0)
-            return (IntPtr.Zero, 0, "", "", false, false);
+            return (IntPtr.Zero, 0, "", "", "", false, false);
 
         bool isSelf = pid == (uint)Environment.ProcessId;
-        string procName = ResolveProcessName(pid);
+        string exePath = ResolveProcessPath(pid);
+        string procName = !string.IsNullOrWhiteSpace(exePath) ? Path.GetFileName(exePath) : ResolveProcessName(pid);
         if (!isSelf && string.Equals(procName, "GearDeck.Widget.exe", StringComparison.OrdinalIgnoreCase))
             isSelf = true;
 
         string title = ReadWindowTitle(hwnd);
         if (isSelf)
-            return (hwnd, pid, procName, title, false, true);
+            return (hwnd, pid, procName, exePath, title, false, true);
 
         bool exclusiveQuns = SHQueryUserNotificationState(out int qns) == 0 && qns == 3;
         var probe = ProbeWindow(hwnd, pid, procName, exclusiveQuns);
         bool isFullscreen = probe != null && FullscreenWindowClassifier.IsFullscreen(probe, App.Settings.Current.OnlyTrueExclusiveFullscreen);
-        return (hwnd, pid, procName, title, isFullscreen, false);
+        return (hwnd, pid, procName, exePath, title, isFullscreen, false);
     }
 
     private static (string ProcName, string Title) QueryMacFrontmost()
@@ -744,6 +753,26 @@ public sealed class GameProfileAutoService : IDisposable
             rc.Left, rc.Top, rc.Right, rc.Bottom,
             mi.rcMonitor.Left, mi.rcMonitor.Top, mi.rcMonitor.Right, mi.rcMonitor.Bottom,
             isQunsD3d);
+    }
+
+    private static string ResolveProcessPath(uint pid)
+    {
+        IntPtr hProc = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+        if (hProc != IntPtr.Zero)
+        {
+            try
+            {
+                var sb = new StringBuilder(512);
+                int len = sb.Capacity;
+                if (QueryFullProcessImageNameW(hProc, 0, sb, ref len) && len > 0)
+                    return sb.ToString(0, len);
+            }
+            finally
+            {
+                CloseHandle(hProc);
+            }
+        }
+        return "";
     }
 
     private static string ResolveProcessName(uint pid)

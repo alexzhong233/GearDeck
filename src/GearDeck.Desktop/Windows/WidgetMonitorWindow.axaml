@@ -5,30 +5,33 @@
     x:CompileBindings="False"
     Title="GearDeck Monitor"
     Width="336"
-    Height="300"
-    MinWidth="240"
-    MinHeight="110"
+    Height="280"
+    MinWidth="300"
+    MinHeight="116"
     WindowStartupLocation="Manual"
     SystemDecorations="None"
-    TransparencyLevelHint="AcrylicBlur"
+    TransparencyLevelHint="Transparent"
+    TransparencyBackgroundFallback="Transparent"
     Background="Transparent"
     Topmost="True"
     ShowInTaskbar="False"
     CanResize="False">
 
-    <Border Background="#F4222020" BorderBrush="#28408080" BorderThickness="1"
-            CornerRadius="14" Padding="12">
+    <Border x:Name="RootBorder" BorderThickness="1" CornerRadius="14" Padding="12">
         <Grid RowDefinitions="Auto,*">
-            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
-                <TextBlock Grid.Column="0" Text="⌁" FontSize="14" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" Text="系统实时监控" FontSize="13" FontWeight="SemiBold"
+            <Grid x:Name="HeaderGrid" Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
+                <TextBlock x:Name="IconText" Grid.Column="0" Text="&#xE950;" FontSize="14"
+                           VerticalAlignment="Center" />
+                <TextBlock x:Name="TitleText" Grid.Column="1" Text="系统实时监控" FontSize="13" FontWeight="SemiBold"
                            Margin="8,0,0,0" VerticalAlignment="Center" />
-                <Button x:Name="CloseBtn" Grid.Column="2" Content="×" Width="24" Height="24"
-                        Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+                <Button x:Name="SettingsBtn" Grid.Column="2" Content="&#xE713;" Width="26" Height="26"
+                        Margin="6,0,0,0" Padding="0" Background="Transparent" BorderThickness="0"
+                        HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                        ToolTip.Tip="系统监控设置" />
             </Grid>
-            <ScrollViewer Grid.Row="1" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-                <StackPanel x:Name="MetricHost" Spacing="6" />
+            <ScrollViewer x:Name="MetricScroll" Grid.Row="1" Margin="0,8,0,0"
+                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="MetricHost" Spacing="6" VerticalAlignment="Top" />
             </ScrollViewer>
         </Grid>
     </Border>

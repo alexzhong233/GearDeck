@@ -187,4 +187,95 @@ public class DesktopCompatibilityTests
         Assert.False(GearDeck.Desktop.App.ShouldCancelMacShutdown(isMacOs: true, isExiting: false, systemShuttingDown: false, closeToTray: false));
         Assert.False(GearDeck.Desktop.App.ShouldCancelMacShutdown(isMacOs: false, isExiting: false, systemShuttingDown: false, closeToTray: true));
     }
+
+    [Fact]
+    public void DeviceImageRuleMatcher_PreservesAssetFileAcrossMergeAndMatch()
+    {
+        var remote = DeviceImageRuleMatcher.ParseManifest("""
+        {
+          "version": 5,
+          "rules": [
+            {
+              "id": "logi_gpw",
+              "name": "Logitech G PRO Wireless",
+              "vidPid": "046d:c088",
+              "preset": "logitech_gpx",
+              "piperSvg": "logitech-g-pro-wireless.svg",
+              "assetFile": "images/abc123.png"
+            }
+          ],
+          "gallery": [
+            {
+              "id": "g_gpw",
+              "name": "GPW",
+              "brand": "Logitech",
+              "matchHint": "usb:046d:c088",
+              "imageUrl": "https://cdn.jsdelivr.net/gh/libratbag/piper@master/data/svgs/logitech-g-pro-wireless.svg",
+              "isPiperSvg": true,
+              "assetFile": "images/abc123.png"
+            }
+          ]
+        }
+        """);
+
+        var localUser = DeviceImageRuleMatcher.ParseManifest("""
+        {
+          "version": 5,
+          "rules": [
+            {
+              "id": "logi_gpw",
+              "name": "Logitech G PRO Wireless",
+              "vidPid": "046d:c088",
+              "preset": "logitech_gpx",
+              "piperSvg": "logitech-g-pro-wireless.svg"
+            }
+          ]
+        }
+        """);
+
+        var merged = DeviceImageRuleMatcher.MergeManifests(remote, localUser);
+        var dev = new PeripheralDevice
+        {
+            Id = "logi:046D-C088",
+            VendorId = 0x046D,
+            ProductId = 0xC088,
+            Name = "G PRO Wireless",
+            Kind = DeviceKind.Mouse,
+            Provider = "Logitech",
+        };
+        var matched = DeviceImageRuleMatcher.MatchRule(dev, merged.Rules);
+        Assert.Equal("images/abc123.png", matched.AssetFile);
+        Assert.Equal("images/abc123.png", merged.Gallery[0].AssetFile);
+    }
+
+    [Fact]
+    public void DeviceImageService_BuildDownloadCandidates_PrefersAssetsBranchAndSupportsMirror()
+    {
+        string testUrl = "https://cdn.jsdelivr.net/gh/libratbag/piper@master/data/svgs/logitech-g-pro-wireless.svg";
+        string expectedHash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(testUrl)))[..16].ToLowerInvariant();
+        Assert.Equal(expectedHash, DeviceImageService.ComputeAssetHash16(testUrl));
+
+        var mirrored = DeviceImageService.BuildDownloadCandidates(
+            testUrl,
+            assetFile: null,
+            repoSlug: "alexzhong233/GearDeck",
+            mirrorUrl: "https://ghfast.top/");
+
+        Assert.Equal(3, mirrored.Count);
+        Assert.Equal($"https://ghfast.top/https://raw.githubusercontent.com/alexzhong233/GearDeck/assets/images/{expectedHash}.png", mirrored[0]);
+        Assert.Equal($"https://cdn.jsdelivr.net/gh/alexzhong233/GearDeck@assets/images/{expectedHash}.png", mirrored[1]);
+        Assert.Equal(testUrl, mirrored[2]);
+
+        var direct = DeviceImageService.BuildDownloadCandidates(
+            testUrl,
+            assetFile: "images/custom_asset.png",
+            repoSlug: "alexzhong233/GearDeck",
+            mirrorUrl: "");
+
+        Assert.Equal(3, direct.Count);
+        Assert.Equal("https://cdn.jsdelivr.net/gh/alexzhong233/GearDeck@assets/images/custom_asset.png", direct[0]);
+        Assert.Equal("https://raw.githubusercontent.com/alexzhong233/GearDeck/assets/images/custom_asset.png", direct[1]);
+        Assert.Equal(testUrl, direct[2]);
+    }
 }

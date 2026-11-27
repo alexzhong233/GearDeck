@@ -60,7 +60,19 @@ public sealed class MchoseProvider : ITunablePeripheralProvider
 
             (int Percent, bool Charging)? hit = null;
 
-            if (vid is 0x3837 or 0x5253)
+            if (vid == 0x291D && pid == 0x385D)
+            {
+                cleanName = "MCHOSE V9 Pro Wireless";
+                kind = DeviceKind.Headset;
+                hit = ProbeHeadset55(g);
+            }
+            else if (vid == 0x3837 && pid == 0x6045)
+            {
+                cleanName = "MCHOSE X9 Wireless";
+                kind = DeviceKind.Headset;
+                hit = ProbeHeadset55(g);
+            }
+            else if (vid is 0x3837 or 0x5253)
             {
                 // Prefer vendor config interfaces (output>=64 / feature>=64)
                 foreach (var iface in g.Where(d => HidSafe.MaxOutputLen(d) >= 64 || HidSafe.MaxFeatureLen(d) >= 64)
@@ -142,6 +154,39 @@ public sealed class MchoseProvider : ITunablePeripheralProvider
         }
 
         return null;
+    }
+
+    private static (int Percent, bool Charging)? ProbeHeadset55(IEnumerable<HidDevice> ifaces)
+    {
+        var dev = ifaces.FirstOrDefault(d =>
+            HidSafe.PrimaryUsage(d) == (0xFF90, 0x0001) &&
+            HidSafe.MaxOutputLen(d) >= 64 &&
+            HidSafe.MaxInputLen(d) >= 4);
+        if (dev == null) return null;
+        using var ch = HidChannel.TryOpen(dev);
+        if (ch == null) return null;
+
+        var req = new byte[Math.Max(ch.OutputLength, 64)];
+        req[0] = 0x55;
+        req[1] = 0x65;
+        req[2] = 0x01;
+        if (!ch.WriteOutput(req)) return null;
+
+        var dl = Environment.TickCount64 + 650;
+        while (Environment.TickCount64 < dl)
+        {
+            var r = ch.Read(100);
+            if (r != null && ParseHeadset55Battery(r) is { } pct)
+                return (pct, false);
+        }
+        return null;
+    }
+
+    internal static int? ParseHeadset55Battery(ReadOnlySpan<byte> r)
+    {
+        if (r.Length < 4 || r[0] != 0x55 || r[1] != 0x65 || r[3] != 0x02)
+            return null;
+        return r[2] <= 100 ? r[2] : null;
     }
 
     public DeviceTuningCapabilities QueryCapabilities(string deviceId)
@@ -996,6 +1041,7 @@ public sealed class MchoseProvider : ITunablePeripheralProvider
     private static bool IsMchoseDevice(HidDevice d)
     {
         if (d.VendorID == 0x3837) return true;
+        if (d.VendorID == 0x291D && d.ProductID == 0x385D) return true;
         if (d.VendorID == 0x5253 && d.ProductID is 0x1011 or 0x1020) return true;
         string name = HidSafe.ProductName(d);
         return name.Contains("MCHOSE", StringComparison.OrdinalIgnoreCase);

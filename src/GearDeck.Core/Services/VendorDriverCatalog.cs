@@ -130,6 +130,46 @@ public static class VendorDriverCatalog
         null,
         "https://www.leobog.com/");
 
+    private static readonly LocalDriverInfo SteelSeriesLocal = new(
+        "steelseries",
+        "打开 SteelSeries GG",
+        ["SteelSeriesGG", "SteelSeriesGGClient", "SteelSeriesEngine"],
+        ExpandProgramFiles(false,
+            @"SteelSeries\GG\SteelSeriesGG.exe",
+            @"SteelSeries\SteelSeries Engine 3\SteelSeriesEngine3.exe"),
+        ["SteelSeries GG", "SteelSeries Engine"],
+        null,
+        "https://steelseries.com/gg");
+
+    private static readonly LocalDriverInfo CorsairLocal = new(
+        "corsair",
+        "打开 Corsair iCUE",
+        ["iCUE"],
+        ExpandProgramFiles(false,
+            @"Corsair\Corsair iCUE5 Software\iCUE.exe",
+            @"Corsair\CORSAIR iCUE 4 Software\iCUE.exe"),
+        ["CORSAIR iCUE", "iCUE"],
+        null,
+        "https://www.corsair.com/icue");
+
+    private static readonly LocalDriverInfo HyperXLocal = new(
+        "hyperx",
+        "打开 HyperX NGENUITY",
+        ["NGENUITY"],
+        [],
+        ["HyperX NGENUITY", "NGENUITY"],
+        null,
+        "https://hyperx.com/pages/ngenuity");
+
+    private static readonly LocalDriverInfo EndgameGearLocal = new(
+        "egg",
+        "打开 Endgame Gear 驱动",
+        ["EGG", "EndgameGear"],
+        [],
+        ["Endgame Gear"],
+        null,
+        "https://www.endgamegear.com/downloads");
+
     private static readonly WebDriverInfo RazerWeb = new("razer", "打开雷蛇网页驱动", "https://synapse.razer.com");
     private static readonly WebDriverInfo FlydigiWeb = new("flydigi", "打开飞智网页空间站", "https://space_station.flydigi.com/");
     private static readonly WebDriverInfo AtkWeb = new("atk", "打开 ATK 网页驱动", "https://hub.atk.pro");
@@ -143,6 +183,14 @@ public static class VendorDriverCatalog
     private static readonly WebDriverInfo PulsarWeb = new("pulsar", "打开 Pulsar Bibimbap", "https://bibimbap.pulsar.gg");
     private static readonly WebDriverInfo ScyroxWeb = new("scyrox", "打开 Scyrox 网页驱动", "https://scyrox.net");
     private static readonly WebDriverInfo MloongWeb = new("mloong", "打开 MLOONG HUB 网页驱动", "https://hub.mloongplanet.com/");
+    private static readonly WebDriverInfo NinjutsoWeb = new("ninjutso", "打开 Ninjutso NinjaForce", "https://ninjaforce.co");
+    private static readonly WebDriverInfo FinalmouseWeb = new("finalmouse", "打开 Finalmouse XPANEL", "https://xpanel.finalmouse.com");
+    private static readonly WebDriverInfo RapooWeb = new("rapoo", "打开雷柏官方驱动页", "https://www.rapoo.cn/downloadcenter");
+    private static readonly WebDriverInfo WootingWeb = new("wooting", "打开 Wootility 网页驱动", "https://wootility.io");
+    private static readonly WebDriverInfo ViaWeb = new("via", "打开 VIA 网页改键", "https://usevia.app");
+    private static readonly WebDriverInfo MonsGeekWeb = new("monsgeek", "打开 MonsGeek 网页驱动", "https://web.monsgeek.com");
+    private static readonly WebDriverInfo DrunkDeerWeb = new("drunkdeer", "打开 DrunkDeer Antler", "https://drunkdeer-antler.com");
+    private static readonly WebDriverInfo NuPhyWeb = new("nuphy", "打开 NuPhyIO 网页驱动", "https://nuphy.io");
 
     public static VendorDriverLinks Resolve(PeripheralDevice? device)
     {
@@ -163,8 +211,20 @@ public static class VendorDriverCatalog
         if (vid == 0x1532 || id.StartsWith("razer:") || prov.Contains("razer"))
             return new VendorDriverLinks(RazerLocal, RazerWeb);
 
+        if (id.StartsWith("ps:"))
+            return new VendorDriverLinks(null, null);
+
         if (vid == 0x054C || id.StartsWith("sony:") || prov.Contains("sony") || name.Contains("inzone"))
             return new VendorDriverLinks(SonyLocal, null);
+
+        if (vid == 0x1038 || id.StartsWith("steelseries:") || prov.Contains("steelseries"))
+            return new VendorDriverLinks(SteelSeriesLocal, null);
+
+        if (vid == 0x1B1C || id.StartsWith("corsair:") || prov.Contains("corsair"))
+            return new VendorDriverLinks(CorsairLocal, null);
+
+        if (vid is 0x03F0 or 0x0951 || id.StartsWith("hyperx:") || prov.Contains("hyperx"))
+            return new VendorDriverLinks(HyperXLocal, null);
 
         if (vid == 0x37D7 || id.StartsWith("flydigi:") || prov.Contains("flydigi") || name.Contains("飞智") || name.Contains("八爪鱼"))
             return new VendorDriverLinks(FlydigiLocal, FlydigiWeb);
@@ -184,13 +244,40 @@ public static class VendorDriverCatalog
         if (vid is 0x373E || id.StartsWith("lamzu:") || prov.Contains("lamzu") || name.Contains("lamzu") || name.Contains("maya") || name.Contains("inca"))
             return new VendorDriverLinks(null, LamzuWeb);
 
+        if (vid == 0x3367 || id.StartsWith("egg:") || name.Contains("endgame"))
+            return new VendorDriverLinks(EndgameGearLocal, null);
+
+        if (id.StartsWith("rapoo:") || name.Contains("rapoo"))
+            return new VendorDriverLinks(null, RapooWeb);
+
+        if (id.StartsWith("ninjutso:") || name.Contains("ninjutso") || name.Contains("sora"))
+            return new VendorDriverLinks(null, NinjutsoWeb);
+
+        if (vid == 0x361D || id.StartsWith("finalmouse:") || name.Contains("finalmouse"))
+            return new VendorDriverLinks(null, FinalmouseWeb);
+
         if (vid is 0x24AE or 0x3837 || id.StartsWith("mchose:") || prov.Contains("mchose") || name.Contains("mchose") || name.Contains("迈从"))
             return new VendorDriverLinks(null, MchoseWeb);
 
-        if (vid is 0x3434 || name.Contains("keychron"))
+        if (vid is 0x31E3 or 0x03EB || id.StartsWith("wooting:") || name.Contains("wooting"))
+            return new VendorDriverLinks(null, WootingWeb);
+
+        if (vid == 0x3434 || id.StartsWith("keychron:") || name.Contains("keychron"))
             return new VendorDriverLinks(null, KeychronWeb);
 
-        if (vid is 0x3710 || name.Contains("pulsar"))
+        if (id.StartsWith("monsgeek:") || name.Contains("monsgeek") || name.Contains("akko"))
+            return new VendorDriverLinks(null, MonsGeekWeb);
+
+        if (vid == 0x352D || id.StartsWith("drunkdeer:") || name.Contains("drunkdeer"))
+            return new VendorDriverLinks(null, DrunkDeerWeb);
+
+        if (vid == 0x19F5 || id.StartsWith("nuphy:") || name.Contains("nuphy"))
+            return new VendorDriverLinks(null, NuPhyWeb);
+
+        if (id.StartsWith("via:") || prov.Contains("via/qmk"))
+            return new VendorDriverLinks(null, ViaWeb);
+
+        if (vid is 0x3710 or 0x25A7 || id.StartsWith("pulsar:") || name.Contains("pulsar"))
             return new VendorDriverLinks(null, PulsarWeb);
 
         if (vid is 0xA8A4 or 0xA8A5 || id.StartsWith("mloong:") || prov.Contains("mloong") || name.Contains("mx301") || name.Contains("mloong"))

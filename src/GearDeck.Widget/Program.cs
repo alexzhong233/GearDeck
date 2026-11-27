@@ -243,6 +243,7 @@ internal sealed class WidgetState
 {
     public string MainExe { get; set; } = "";
     public bool Embedded { get; set; } = true;
+    public bool FlyoutOnHover { get; set; }
     public string Align { get; set; } = "right";
     public int Offset { get; set; }
     public int FloatX { get; set; } = -1;
@@ -854,16 +855,20 @@ internal sealed class TaskbarForm : Form
             _dirtyRender = true;
         }
 
-        if (!_dragging && _hover >= 0 && _hover < _blocks.Count &&
-            _blocks[_hover].Kind == BlockKind.Monitor &&
+        if (_state.FlyoutOnHover &&
+            !_dragging &&
+            _hover >= 0 && _hover < _blocks.Count &&
             !_monitorHoverSent &&
             now - _monitorHoverSince >= 180)
         {
             _monitorHoverSent = true;
-            var mb = _blocks[_hover];
-            var pt = new POINT { X = mb.Bounds.X, Y = mb.Bounds.Y };
+            var hb = _blocks[_hover];
+            var pt = new POINT { X = hb.Bounds.X, Y = hb.Bounds.Y };
             ClientToScreen(Handle, ref pt);
-            WriteCommand("__monitor_hover__", pt.X, pt.Y, mb.Bounds.Width, mb.Bounds.Height);
+            string cmd = hb.Kind == BlockKind.Monitor
+                ? "__monitor_hover__"
+                : $"__group_hover__:{hb.GroupId}";
+            WriteCommand(cmd, pt.X, pt.Y, hb.Bounds.Width, hb.Bounds.Height);
         }
 
         bool light = IsLight();
@@ -1362,17 +1367,12 @@ internal sealed class TaskbarForm : Form
         if (hit != _hover)
         {
             _hover = hit;
-            if (hit >= 0 && _blocks[hit].Kind == BlockKind.Monitor)
-            {
+            _monitorHoverSince = Environment.TickCount64;
+            _monitorHoverSent = false;
+            if (_state.FlyoutOnHover || (hit >= 0 && _blocks[hit].Kind == BlockKind.Monitor))
                 _tip.SetToolTip(this, "");
-                _monitorHoverSince = Environment.TickCount64;
-                _monitorHoverSent = false;
-            }
             else
-            {
-                _monitorHoverSent = false;
                 _tip.SetToolTip(this, hit >= 0 ? _blocks[hit].Tip : "");
-            }
             RenderCurrent();
         }
     }

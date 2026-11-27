@@ -16,7 +16,7 @@
         <StackPanel Margin="24,18,24,28" Spacing="14">
             <StackPanel Spacing="4">
                 <TextBlock Text="系统监控" FontSize="26" FontWeight="SemiBold" />
-                <TextBlock Classes="meta" Text="12 项实时硬件与网络指标每秒采样；可配置任务栏双指标，并显示可拖动的桌面悬浮监控条。" />
+                <TextBlock Classes="meta" Text="实时硬件与网络指标监控，支持任务栏双指标配置" />
             </StackPanel>
 
             <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"

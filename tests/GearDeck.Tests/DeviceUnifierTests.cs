@@ -436,24 +436,29 @@ public class DeviceUnifierTests
         };
         var members = new List<PeripheralDevice> { sleepingDefault, awakeCharging };
 
-        // 1. 默认设备休眠中：不卡在 "73% 休眠"，自动展示唤醒/充电中的设备
-        var picked = BatteryHistoryHelper.SelectGroupDisplayDevice(members, sleepingDefault.Id);
+        // 1. 自动模式（未固定默认设备）：不卡在休眠设备，自动展示唤醒/充电中的设备
+        var picked = BatteryHistoryHelper.SelectGroupDisplayDevice(members, null);
         Assert.NotNull(picked);
         Assert.Equal(awakeCharging.Id, picked.Id);
         Assert.Equal(BatteryState.Charging, picked.State);
         Assert.Equal(52, picked.BatteryPercent);
 
-        // 2. 默认设备唤醒后：立即切回展示默认设备
-        sleepingDefault.IsSleeping = false;
+        // 2. 用户显式固定某台设备时（即使它当前休眠），仍严格尊重固定选择
         picked = BatteryHistoryHelper.SelectGroupDisplayDevice(members, sleepingDefault.Id);
         Assert.NotNull(picked);
         Assert.Equal(sleepingDefault.Id, picked.Id);
         Assert.Equal(73, picked.BatteryPercent);
 
-        // 3. 全员休眠：按默认设备优先回退历史电量
+        // 3. 固定设备不存在于当前成员中时，自动回退到唤醒设备
+        picked = BatteryHistoryHelper.SelectGroupDisplayDevice(members, "missing:0000-0000");
+        Assert.NotNull(picked);
+        Assert.Equal(awakeCharging.Id, picked.Id);
+        Assert.Equal(52, picked.BatteryPercent);
+
+        // 4. 自动模式下全员休眠：回退到第一个有电量的成员
         sleepingDefault.IsSleeping = true;
         awakeCharging.IsSleeping = true;
-        picked = BatteryHistoryHelper.SelectGroupDisplayDevice(members, sleepingDefault.Id);
+        picked = BatteryHistoryHelper.SelectGroupDisplayDevice(members, null);
         Assert.NotNull(picked);
         Assert.Equal(sleepingDefault.Id, picked.Id);
         Assert.Equal(73, picked.BatteryPercent);

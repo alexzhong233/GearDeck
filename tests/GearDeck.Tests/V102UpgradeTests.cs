@@ -190,7 +190,7 @@ public class V102UpgradeTests
     [Fact]
     public void DeviceImageManifest_BundledV4RulesMatchAllCoreDevicesWithSingleMouseUrls()
     {
-        string path = Path.Combine(FindRepoRoot(), "src", "GearDeck.App", "Assets", "device-images.json");
+        string path = Path.Combine(FindRepoRoot(), "src", "GearDeck.Desktop", "Assets", "device-images.json");
         var manifest = DeviceImageRuleMatcher.ParseManifest(File.ReadAllText(path));
         Assert.True(manifest.Version >= 4);
 

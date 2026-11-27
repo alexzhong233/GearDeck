@@ -165,7 +165,7 @@ jobs:
           # Generate GearDeck.icns from app.png using sips + iconutil
           ICONSET="${STAGE}/GearDeck.iconset"
           mkdir -p "${ICONSET}"
-          SRC_PNG="src/GearDeck.App/Assets/app.png"
+          SRC_PNG="src/GearDeck.Desktop/Assets/app.png"
           for sz in 16 32 128 256 512; do
             sips -z $sz $sz "${SRC_PNG}" --out "${ICONSET}/icon_${sz}x${sz}.png" >/dev/null
             sz2=$((sz * 2))

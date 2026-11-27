@@ -7,6 +7,8 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Media.Transformation;
+using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
 using FluentAvalonia.UI.Windowing;
 using GearDeck.Core.Models;
@@ -31,9 +33,10 @@ public partial class MainWindow : AppWindow
     private readonly List<NavEntry> _history = new();
     private int _historyIndex = -1;
     private bool _suppressNavHandler;
-    private Window? _groupWindow;
-    private Window? _monitorWindow;
+    private bool _initialNavExpanded;
     private string? _activeDeviceId;
+    private readonly DispatcherTimer _toastTimer = new();
+    private int _toastSeq;
 
     public MainWindow()
     {
@@ -68,7 +71,21 @@ public partial class MainWindow : AppWindow
         TitleBarSearchBox.ItemsSource = BuildSearchCandidates();
 
         App.Devices.DevicesUpdated += OnDevicesUpdated;
-        Closed += (_, _) => App.Devices.DevicesUpdated -= OnDevicesUpdated;
+        ToastInfoBar.Closed += (_, _) => HideToastCore();
+        _toastTimer.Tick += (_, _) =>
+        {
+            _toastTimer.Stop();
+            FadeOutToastCore();
+        };
+        Closed += (_, _) =>
+        {
+            _toastTimer.Stop();
+            App.Devices.DevicesUpdated -= OnDevicesUpdated;
+            try { PageHost.Content = null; } catch { }
+            _pages.Clear();
+            if (ReferenceEquals(Instance, this))
+                Instance = null;
+        };
 
         RebuildDeviceMenus(App.LastDevices);
         UpdateDebugVisibility();
@@ -80,6 +97,71 @@ public partial class MainWindow : AppWindow
 
     protected override AutomationPeer OnCreateAutomationPeer()
         => new MacAccessibilityGuard.SafeWindowAutomationPeer(this);
+
+    public static void ShowToast(string message, InfoBarSeverity severity = InfoBarSeverity.Informational, int? durationMs = null)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            HideToast();
+            return;
+        }
+        App.UiPost(() => Instance?.ShowToastCore(message, severity, durationMs));
+    }
+
+    public static void HideToast()
+        => App.UiPost(() => Instance?.HideToastCore());
+
+    private void ShowToastCore(string message, InfoBarSeverity severity, int? durationMs)
+    {
+        int seq = ++_toastSeq;
+        _toastTimer.Stop();
+
+        ToastInfoBar.Severity = severity;
+        ToastInfoBar.Message = message;
+        ToastInfoBar.IsOpen = true;
+        ToastHost.RenderTransform = TransformOperations.Parse("translateX(28px)");
+        ToastHost.Opacity = 0;
+        ToastHost.IsVisible = true;
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_toastSeq != seq) return;
+            ToastHost.RenderTransform = TransformOperations.Parse("translateX(0px)");
+            ToastHost.Opacity = 1;
+        }, DispatcherPriority.Render);
+
+        int timeout = durationMs ?? (severity is InfoBarSeverity.Warning or InfoBarSeverity.Error ? 5000 : 3500);
+        if (timeout > 0)
+        {
+            _toastTimer.Interval = TimeSpan.FromMilliseconds(timeout);
+            _toastTimer.Start();
+        }
+    }
+
+    private void FadeOutToastCore()
+    {
+        int seq = _toastSeq;
+        ToastHost.Opacity = 0;
+        ToastHost.RenderTransform = TransformOperations.Parse("translateX(28px)");
+        _ = System.Threading.Tasks.Task.Delay(230).ContinueWith(_ =>
+        {
+            App.UiPost(() =>
+            {
+                if (_toastSeq != seq) return;
+                ToastInfoBar.IsOpen = false;
+                ToastHost.IsVisible = false;
+            });
+        });
+    }
+
+    private void HideToastCore()
+    {
+        _toastSeq++;
+        _toastTimer.Stop();
+        ToastHost.Opacity = 0;
+        ToastInfoBar.IsOpen = false;
+        ToastHost.IsVisible = false;
+    }
 
     public static void ShowOrActivate()
     {
@@ -149,44 +231,19 @@ public partial class MainWindow : AppWindow
 
     public void ShowGroupFlyout(string groupId, Rect? anchor = null)
     {
-        try
-        {
-            if (_groupWindow is { IsVisible: true } old)
-                old.Close();
-
-            var created = anchor is { } r
-                ? new WidgetGroupWindow(groupId, r)
-                : new WidgetGroupWindow(groupId);
-            _groupWindow = created;
-            created.Show(this);
-        }
+        try { WidgetGroupWindow.ShowStandalone(groupId, anchor, isHover: false); }
         catch { }
     }
 
     public void ShowMonitorFlyout(Rect? anchor = null)
     {
-        try
-        {
-            if (_monitorWindow is WidgetMonitorWindow { IsVisible: true } existing)
-            {
-                if (anchor is { } r)
-                    existing.UpdateAnchor((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
-                return;
-            }
-
-            var created = anchor is { } r2
-                ? new WidgetMonitorWindow(r2)
-                : new WidgetMonitorWindow();
-            _monitorWindow = created;
-            created.Show(this);
-        }
+        try { WidgetMonitorWindow.ShowOrUpdate(anchor, isHover: false); }
         catch { }
     }
 
     public void CloseMonitorFlyout()
     {
-        try { _monitorWindow?.Close(); } catch { }
-        _monitorWindow = null;
+        WidgetMonitorWindow.CloseIfOpen();
     }
 
     private void OnTitleBarBackClick(object? sender, RoutedEventArgs e)
@@ -265,8 +322,6 @@ public partial class MainWindow : AppWindow
             _ => DevicesNav,
         };
         RootNavigation.SelectedItem = selected;
-        if (selected != null)
-            selected.IsExpanded = true;
     }
 
     private NavigationViewItem? FindDeviceNavItem(string? deviceId)
@@ -408,10 +463,14 @@ public partial class MainWindow : AppWindow
             Fill(HeadsetNav, devices.Where(d => d.Kind == DeviceKind.Headset));
             Fill(ControllerNav, devices.Where(d => d.Kind == DeviceKind.Controller));
 
-            MouseNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Mouse);
-            KeyboardNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Keyboard);
-            HeadsetNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Headset);
-            ControllerNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Controller);
+            if (!_initialNavExpanded && devices.Count > 0)
+            {
+                _initialNavExpanded = true;
+                MouseNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Mouse);
+                KeyboardNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Keyboard);
+                HeadsetNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Headset);
+                ControllerNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Controller);
+            }
 
             if (!string.IsNullOrWhiteSpace(_activeDeviceId) && PageHost.Content is DeviceDetailView or LeobogHi98View)
                 UpdateNavSelection("device", _activeDeviceId);
@@ -428,6 +487,48 @@ public partial class MainWindow : AppWindow
         var ordered = devices.OrderBy(d => d.Name).ToList();
         var existing = parent.MenuItems.OfType<NavigationViewItem>().ToList();
 
+        static (string Badge, bool Dim, string Tip) BuildBadge(PeripheralDevice d)
+        {
+            string? dual = d.FormatDualEarSummary(compact: true);
+            if (!string.IsNullOrEmpty(dual))
+                return (dual, false, $"{d.Name} · {dual}");
+            if (d.BatteryPercent is { } p)
+                return ($"{p}%", false, $"{d.Name} · {p}%");
+            if (d.IsSleeping)
+                return ("休眠", true, $"{d.Name} · 接收器已连接 · 休眠");
+            return ("", !d.Connected, d.Name);
+        }
+
+        static Control BuildItemContent(string name, string badge, bool dim)
+        {
+            var grid = new Grid { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+            grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+            grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+
+            var nameBlock = new TextBlock
+            {
+                Text = name,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            Grid.SetColumn(nameBlock, 0);
+            grid.Children.Add(nameBlock);
+
+            var badgeBlock = new TextBlock
+            {
+                Text = badge,
+                FontSize = 11,
+                Opacity = dim ? 0.65 : 1.0,
+                Margin = new Thickness(8, 0, 0, 0),
+                IsVisible = !string.IsNullOrEmpty(badge),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            Grid.SetColumn(badgeBlock, 1);
+            grid.Children.Add(badgeBlock);
+
+            return grid;
+        }
+
         if (ordered.Count > 0 && existing.Count == ordered.Count
             && existing.Zip(ordered).All(pair =>
                 string.Equals(pair.First.Tag as string, $"device:{pair.Second.Id}", StringComparison.OrdinalIgnoreCase)))
@@ -435,10 +536,23 @@ public partial class MainWindow : AppWindow
             for (int i = 0; i < ordered.Count; i++)
             {
                 var d = ordered[i];
-                string battery = d.BatteryPercent is { } p ? $" · {p}%" : (d.IsSleeping ? " · 休眠" : "");
-                string text = $"{d.Name}{battery}";
-                if (!string.Equals(existing[i].Content as string, text, StringComparison.Ordinal))
-                    existing[i].Content = text;
+                var (badge, dim, tip) = BuildBadge(d);
+                ToolTip.SetTip(existing[i], tip);
+                if (existing[i].Content is Grid g && g.Children.Count >= 2
+                    && g.Children[0] is TextBlock nb && g.Children[1] is TextBlock bb)
+                {
+                    if (!string.Equals(nb.Text, d.Name, StringComparison.Ordinal))
+                        nb.Text = d.Name;
+                    if (!string.Equals(bb.Text, badge, StringComparison.Ordinal))
+                        bb.Text = badge;
+                    bb.Opacity = dim ? 0.65 : 1.0;
+                    bb.IsVisible = !string.IsNullOrEmpty(badge);
+                }
+                else
+                {
+                    existing[i].HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
+                    existing[i].Content = BuildItemContent(d.Name, badge, dim);
+                }
             }
             return;
         }
@@ -449,12 +563,15 @@ public partial class MainWindow : AppWindow
         parent.MenuItems.Clear();
         foreach (var d in ordered)
         {
-            string battery = d.BatteryPercent is { } p ? $" · {p}%" : (d.IsSleeping ? " · 休眠" : "");
-            parent.MenuItems.Add(new NavigationViewItem
+            var (badge, dim, tip) = BuildBadge(d);
+            var item = new NavigationViewItem
             {
-                Content = $"{d.Name}{battery}",
+                HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                Content = BuildItemContent(d.Name, badge, dim),
                 Tag = $"device:{d.Id}",
-            });
+            };
+            ToolTip.SetTip(item, tip);
+            parent.MenuItems.Add(item);
         }
         if (parent.MenuItems.Count == 0)
             parent.MenuItems.Add(new NavigationViewItem { Content = "（未发现设备）", IsEnabled = false });

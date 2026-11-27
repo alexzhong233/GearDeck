@@ -40,7 +40,7 @@ public static class BatteryHistoryHelper
             int? right = d.RightEarPercent is >= 0 and <= 100 ? d.RightEarPercent : null;
             int? box = d.CaseBatteryPercent is >= 0 and <= 100 ? d.CaseBatteryPercent : null;
 
-            if (bat == null && left == null && right == null)
+            if (bat == null && left == null && right == null && box == null)
                 continue;
 
             if (!cache.TryGetValue(d.Id, out var existing))
@@ -157,19 +157,16 @@ public static class BatteryHistoryHelper
             ? members.FirstOrDefault(m => string.Equals(m.Id, defaultDeviceId, StringComparison.OrdinalIgnoreCase))
             : null;
 
-        // 1. 默认设备处于唤醒且有实时电量时，优先展示默认设备
-        if (defaultMatch != null && IsAwakeLive(defaultMatch))
+        // 1. 若用户显式固定/选择了分组内某台设备，始终优先展示该设备（包括其休眠或仅保留历史电量时）
+        if (defaultMatch != null)
             return defaultMatch;
 
-        // 2. 唤醒且有实时电量的成员中，充电中的优先，否则取第一个
+        // 2. 自动模式（或固定设备当前未接入）：优先唤醒且有实时电量的成员，充电中的排最前
         var awakeLive = members.Where(IsAwakeLive).ToList();
         if (awakeLive.Count > 0)
             return awakeLive.FirstOrDefault(m => m.State == BatteryState.Charging) ?? awakeLive[0];
 
-        // 3. 全员休眠或均无实时电量：默认设备 -> 有电量成员 -> 第一个成员
-        if (defaultMatch != null)
-            return defaultMatch;
-
+        // 3. 全员休眠或均无实时电量：回退到有电量成员 -> 第一个成员
         return members.FirstOrDefault(HasLiveBattery) ?? members[0];
     }
 }

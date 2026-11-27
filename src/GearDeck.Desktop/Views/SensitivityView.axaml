@@ -18,35 +18,30 @@
         <Style Selector="Button.tool">
             <Setter Property="Padding" Value="10,6" />
             <Setter Property="FontSize" Value="12" />
-            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="Margin" Value="0,0,6,6" />
         </Style>
         <Style Selector="Button.tool.active">
             <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
             <Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
         </Style>
-        <Style Selector="Button.filter">
-            <Setter Property="Padding" Value="10,5" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Margin" Value="0,0,6,6" />
-        </Style>
-        <Style Selector="Button.filter.active">
+        <Style Selector="Button.accent">
             <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
             <Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
         </Style>
     </UserControl.Styles>
 
-    <ScrollViewer x:Name="RootScrollViewer" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer x:Name="RootScrollViewer" VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="24,18,24,28" Spacing="14">
 
             <StackPanel Spacing="4">
                 <TextBlock Text="跨游戏灵敏度换算" FontSize="26" FontWeight="SemiBold" />
-                <TextBlock Classes="meta" Text="选择基准游戏并输入 FOV 与灵敏度，点击下方任意游戏卡片即时换算并查看具体改法；展开高级设置可调整 DPI 与分辨率/拉伸。" />
-                <ui:InfoBar x:Name="PageInfoBar" IsOpen="False" IsClosable="True" />
+                <TextBlock Classes="meta" Text="跨游戏 FOV、DPI 与灵敏度换算" />
             </StackPanel>
 
             <Grid x:Name="WorkspaceGrid">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="370" />
+                    <ColumnDefinition Width="380" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
@@ -54,73 +49,110 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <!-- 基准卡 -->
-                <Border x:Name="BaseCard" Grid.Row="0" Grid.Column="0"
+                <!-- 左侧基准卡（集成 DPI 与分辨率设置） -->
+                <Border x:Name="BaseCard" Grid.Row="0" Grid.Column="0" VerticalAlignment="Top"
                         Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1" CornerRadius="10" Padding="16">
-                    <StackPanel Spacing="12">
+                    <StackPanel Spacing="10">
                         <TextBlock Text="基准游戏设置" FontSize="16" FontWeight="SemiBold" />
 
                         <TextBlock Classes="label" Text="基准游戏" />
                         <ComboBox x:Name="BaseGameCombo" HorizontalAlignment="Stretch" />
 
                         <TextBlock Classes="label" Text="基准灵敏度" />
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="BaseSensBox" Grid.Column="0" />
-                            <Button x:Name="BaseSensHalfBtn" Grid.Column="1" Classes="tool" Content="÷2" />
-                            <Button x:Name="BaseSensDoubleBtn" Grid.Column="2" Classes="tool" Content="×2" />
+                        <Grid ColumnDefinitions="*,Auto,Auto">
+                            <TextBox x:Name="BaseSensBox" Grid.Column="0" Margin="0,0,6,0" />
+                            <Button x:Name="BaseSensHalfBtn" Grid.Column="1" Classes="tool" Content="÷2" Margin="0,0,6,0" />
+                            <Button x:Name="BaseSensDoubleBtn" Grid.Column="2" Classes="tool" Content="×2" Margin="0" />
                         </Grid>
 
                         <TextBlock Classes="label" Text="基准 FOV" />
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="BaseFovBox" Grid.Column="0" />
-                            <Button x:Name="BaseFovResetBtn" Grid.Column="1" Classes="tool" Content="默认" />
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBox x:Name="BaseFovBox" Grid.Column="0" Margin="0,0,6,0" />
+                            <Button x:Name="BaseFovResetBtn" Grid.Column="1" Classes="tool" Content="默认" Margin="0" />
                         </Grid>
                         <TextBlock x:Name="BaseFovMetaText" Classes="meta" />
+
+                        <Border Height="1" Background="{DynamicResource CardStrokeColorDefaultBrush}" Margin="0,2" />
+
+                        <!-- 鼠标 DPI 集成 -->
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Text="鼠标 DPI" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <Button x:Name="ReadMouseDpiBtn" Grid.Column="1" Content="读取鼠标 DPI"
+                                    Classes="tool" Padding="8,4" Margin="0" />
+                        </Grid>
+                        <WrapPanel>
+                            <TextBox x:Name="BaseDpiBox" Width="88" Margin="0,0,6,6" />
+                            <Button Classes="tool" Tag="400" Content="400" Padding="8,5" />
+                            <Button Classes="tool" Tag="800" Content="800" Padding="8,5" />
+                            <Button Classes="tool" Tag="1600" Content="1600" Padding="8,5" />
+                            <Button Classes="tool" Tag="3200" Content="3200" Padding="8,5" />
+                        </WrapPanel>
+                        <CheckBox x:Name="SameDpiCheck" Content="目标游戏使用相同 DPI" MinWidth="0" />
+                        <StackPanel x:Name="TargetDpiPanel" Spacing="6" IsVisible="False">
+                            <TextBlock Classes="label" Text="目标鼠标 DPI" />
+                            <WrapPanel>
+                                <TextBox x:Name="TargetDpiBox" Width="88" Margin="0,0,6,6" />
+                                <Button Classes="tool" Tag="400" Content="400" Padding="8,5" />
+                                <Button Classes="tool" Tag="800" Content="800" Padding="8,5" />
+                                <Button Classes="tool" Tag="1600" Content="1600" Padding="8,5" />
+                                <Button Classes="tool" Tag="3200" Content="3200" Padding="8,5" />
+                            </WrapPanel>
+                        </StackPanel>
+
+                        <Border Height="1" Background="{DynamicResource CardStrokeColorDefaultBrush}" Margin="0,2" />
+
+                        <!-- 分辨率与比例集成 -->
+                        <TextBlock Text="分辨率与比例" FontSize="14" FontWeight="SemiBold" />
+                        <ComboBox x:Name="BaseResPresetCombo" HorizontalAlignment="Stretch" />
+                        <Grid ColumnDefinitions="*,Auto,*">
+                            <TextBox x:Name="BaseWidthBox" Grid.Column="0" Watermark="宽" />
+                            <TextBlock Grid.Column="1" Text="×" Classes="meta" Margin="8,0" VerticalAlignment="Center" />
+                            <TextBox x:Name="BaseHeightBox" Grid.Column="2" Watermark="高" />
+                        </Grid>
+                        <WrapPanel>
+                            <CheckBox x:Name="BaseStretchCheck" Content="4:3 拉伸满屏" MinWidth="0" Margin="0,0,14,0" />
+                            <CheckBox x:Name="SameResCheck" Content="目标使用相同分辨率" MinWidth="0" />
+                        </WrapPanel>
+                        <StackPanel x:Name="TargetResPanel" Spacing="6" IsVisible="False">
+                            <TextBlock Classes="label" Text="目标分辨率" />
+                            <ComboBox x:Name="TargetResPresetCombo" HorizontalAlignment="Stretch" />
+                            <Grid ColumnDefinitions="*,Auto,*">
+                                <TextBox x:Name="TargetWidthBox" Grid.Column="0" Watermark="宽" />
+                                <TextBlock Grid.Column="1" Text="×" Classes="meta" Margin="8,0" VerticalAlignment="Center" />
+                                <TextBox x:Name="TargetHeightBox" Grid.Column="2" Watermark="高" />
+                            </Grid>
+                            <CheckBox x:Name="TargetStretchCheck" Content="目标 4:3 拉伸满屏" MinWidth="0" />
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <!-- 目标卡 -->
-                <Border x:Name="TargetCard" Grid.Row="0" Grid.Column="1"
+                <!-- 右侧目标换算卡 -->
+                <Border x:Name="TargetCard" Grid.Row="0" Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Top"
                         Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1" CornerRadius="10" Padding="16">
                     <StackPanel Spacing="12">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="4">
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock x:Name="TargetGameTitleText" FontSize="20" FontWeight="SemiBold"
-                                               TextTrimming="CharacterEllipsis" />
-                                    <Border VerticalAlignment="Center" CornerRadius="6" Padding="6,2"
-                                            Background="{DynamicResource SubtleFillColorSecondaryBrush}">
-                                        <TextBlock x:Name="TargetTagBadgeText" Classes="label" />
-                                    </Border>
-                                </StackPanel>
-                                <TextBlock x:Name="TargetFovMetaText" Classes="meta" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Spacing="4">
-                                <TextBlock Classes="label" Text="目标 FOV" />
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBox x:Name="TargetFovBox" Width="104" />
-                                    <Button x:Name="TargetFovResetBtn" Classes="tool" Content="默认" />
-                                    <Button x:Name="SwapGamesBtn" Classes="tool" Content="互换基准/目标" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Grid>
+                        <!-- 标题行与 FOV/互换控制分行，避免窄窗口重叠 -->
+                        <StackPanel Spacing="8">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock x:Name="TargetGameTitleText" Grid.Column="0" FontSize="20" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                <Border Grid.Column="1" VerticalAlignment="Center" CornerRadius="6" Padding="8,3"
+                                        Margin="10,0,0,0"
+                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}">
+                                    <TextBlock x:Name="TargetTagBadgeText" Classes="label" />
+                                </Border>
+                            </Grid>
+                            <WrapPanel>
+                                <TextBlock Classes="label" Text="目标 FOV" VerticalAlignment="Center" Margin="0,0,8,6" />
+                                <TextBox x:Name="TargetFovBox" Width="88" Margin="0,0,6,6" />
+                                <Button x:Name="TargetFovResetBtn" Classes="tool" Content="默认" />
+                                <Button x:Name="SwapGamesBtn" Classes="tool" Content="互换基准/目标" />
+                            </WrapPanel>
+                            <TextBlock x:Name="TargetFovMetaText" Classes="meta" />
+                        </StackPanel>
 
                         <TextBlock Text="转换算法" FontSize="14" FontWeight="SemiBold" />
                         <WrapPanel>
@@ -157,28 +189,28 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <Border Grid.Row="0" Grid.Column="0" CornerRadius="8" Padding="12"
+                            <Border Grid.Row="0" Grid.Column="0" CornerRadius="8" Padding="12" Margin="0,0,5,5"
                                     Background="{DynamicResource SubtleFillColorSecondaryBrush}">
                                 <StackPanel Spacing="4">
                                     <TextBlock Classes="label" Text="360° 等距 vs 焦距缩放" />
                                     <TextBlock x:Name="MetricCompareText" FontSize="13" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Row="0" Grid.Column="1" CornerRadius="8" Padding="12"
+                            <Border Grid.Row="0" Grid.Column="1" CornerRadius="8" Padding="12" Margin="5,0,0,5"
                                     Background="{DynamicResource SubtleFillColorSecondaryBrush}">
                                 <StackPanel Spacing="4">
                                     <TextBlock Classes="label" Text="物理转身 cm/360° &amp; eDPI" />
                                     <TextBlock x:Name="MetricCm360Text" FontSize="13" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Row="1" Grid.Column="0" CornerRadius="8" Padding="12"
+                            <Border Grid.Row="1" Grid.Column="0" CornerRadius="8" Padding="12" Margin="0,5,5,0"
                                     Background="{DynamicResource SubtleFillColorSecondaryBrush}">
                                 <StackPanel Spacing="4">
                                     <TextBlock Classes="label" Text="实际视野 HFOV / VFOV" />
                                     <TextBlock x:Name="MetricFovText" FontSize="13" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
-                            <Border Grid.Row="1" Grid.Column="1" CornerRadius="8" Padding="12"
+                            <Border Grid.Row="1" Grid.Column="1" CornerRadius="8" Padding="12" Margin="5,5,0,0"
                                     Background="{DynamicResource SubtleFillColorSecondaryBrush}">
                                 <StackPanel Spacing="4">
                                     <TextBlock Classes="label" Text="像素步进 &amp; 2K 跑满手速" />
@@ -199,108 +231,18 @@
                 </Border>
             </Grid>
 
-            <!-- 高级：DPI / 分辨率 / 4:3 拉伸 -->
-            <Expander x:Name="AdvancedExpander" HorizontalAlignment="Stretch" IsExpanded="False">
-                <Expander.Header>
-                    <TextBlock x:Name="AdvancedSummaryText" FontSize="14" FontWeight="SemiBold"
-                               Text="高级功能：DPI 与 分辨率（当前 800 DPI · 1920×1080 16:9）" />
-                </Expander.Header>
-                <WrapPanel>
-                    <StackPanel Width="360" Spacing="10" Margin="0,0,16,12">
-                        <TextBlock Text="DPI 设置" FontSize="15" FontWeight="SemiBold" />
-                        <TextBlock Classes="label" Text="基准鼠标 DPI" />
-                        <WrapPanel>
-                            <TextBox x:Name="BaseDpiBox" Width="110" Margin="0,0,6,6" />
-                            <Button Classes="tool" Tag="400" Content="400" />
-                            <Button Classes="tool" Tag="800" Content="800" />
-                            <Button Classes="tool" Tag="1600" Content="1600" />
-                            <Button Classes="tool" Tag="3200" Content="3200" />
-                        </WrapPanel>
-                        <Button x:Name="ReadMouseDpiBtn" Content="读取当前鼠标 DPI" HorizontalAlignment="Left"
-                                Classes="tool" Margin="0" />
-                        <CheckBox x:Name="SameDpiCheck" Content="目标游戏使用相同 DPI" />
-                        <StackPanel x:Name="TargetDpiPanel" Spacing="8" IsVisible="False">
-                            <TextBlock Classes="label" Text="目标鼠标 DPI" />
-                            <WrapPanel>
-                                <TextBox x:Name="TargetDpiBox" Width="110" Margin="0,0,6,6" />
-                                <Button Classes="tool" Tag="400" Content="400" />
-                                <Button Classes="tool" Tag="800" Content="800" />
-                                <Button Classes="tool" Tag="1600" Content="1600" />
-                                <Button Classes="tool" Tag="3200" Content="3200" />
-                            </WrapPanel>
-                        </StackPanel>
-                    </StackPanel>
-
-                    <StackPanel Width="380" Spacing="10" Margin="0,0,16,12">
-                        <TextBlock Text="分辨率与比例设置" FontSize="15" FontWeight="SemiBold" />
-                        <WrapPanel>
-                            <StackPanel Spacing="4" Margin="0,0,8,8">
-                                <TextBlock Classes="label" Text="基准分辨率预设" />
-                                <ComboBox x:Name="BaseResPresetCombo" Width="230" />
-                            </StackPanel>
-                            <StackPanel Spacing="4" Margin="0,0,8,8">
-                                <TextBlock Classes="label" Text="宽" />
-                                <TextBox x:Name="BaseWidthBox" Width="90" />
-                            </StackPanel>
-                            <StackPanel Spacing="4" Margin="0,0,8,8">
-                                <TextBlock Classes="label" Text="高" />
-                                <TextBox x:Name="BaseHeightBox" Width="90" />
-                            </StackPanel>
-                        </WrapPanel>
-                        <CheckBox x:Name="BaseStretchCheck" Content="4:3 拉伸到 16:9 满屏" />
-                        <CheckBox x:Name="SameResCheck" Content="目标游戏使用相同分辨率" />
-                        <StackPanel x:Name="TargetResPanel" Spacing="8" IsVisible="False">
-                            <WrapPanel>
-                                <StackPanel Spacing="4" Margin="0,0,8,8">
-                                    <TextBlock Classes="label" Text="目标分辨率预设" />
-                                    <ComboBox x:Name="TargetResPresetCombo" Width="230" />
-                                </StackPanel>
-                                <StackPanel Spacing="4" Margin="0,0,8,8">
-                                    <TextBlock Classes="label" Text="宽" />
-                                    <TextBox x:Name="TargetWidthBox" Width="90" />
-                                </StackPanel>
-                                <StackPanel Spacing="4" Margin="0,0,8,8">
-                                    <TextBlock Classes="label" Text="高" />
-                                    <TextBox x:Name="TargetHeightBox" Width="90" />
-                                </StackPanel>
-                            </WrapPanel>
-                            <CheckBox x:Name="TargetStretchCheck" Content="4:3 拉伸到 16:9 满屏" />
-                        </StackPanel>
-                    </StackPanel>
-                </WrapPanel>
-            </Expander>
-
-            <!-- 19 款游戏卡片墙 -->
+            <!-- 游戏一览（精简为搜索框 + 双按钮响应式卡片墙） -->
             <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1" CornerRadius="10" Padding="18">
                 <StackPanel Spacing="12">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="游戏一览（点击卡片直接换算）" FontSize="17" FontWeight="SemiBold" />
-                                <TextBlock Classes="meta" Text="卡片显示按当前基准、DPI 与分辨率实时预估的目标灵敏度；点击卡片换算，点「设为基准」交换基准。" />
-                            </StackPanel>
-                            <TextBox x:Name="GameSearchBox" Grid.Column="1" Width="220"
-                                     Watermark="搜索游戏或引擎..." />
-                        </Grid>
-                        <WrapPanel x:Name="CategoryFilterPanel" Grid.Row="1">
-                            <Button Classes="filter" Tag="全部" Content="全部" />
-                            <Button Classes="filter" Tag="战术射击" Content="战术射击" />
-                            <Button Classes="filter" Tag="大逃杀 / 搜打撤" Content="大逃杀 / 搜打撤" />
-                            <Button Classes="filter" Tag="英雄射击" Content="英雄射击" />
-                            <Button Classes="filter" Tag="练枪 / 拟真" Content="练枪 / 拟真" />
-                        </WrapPanel>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="游戏一览" FontSize="17" FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                        <TextBox x:Name="GameSearchBox" Grid.Column="1" Width="220" Margin="12,0,0,0"
+                                 Watermark="搜索游戏或引擎..." />
                     </Grid>
-                    <WrapPanel x:Name="GameCardsHost" />
+                    <Panel x:Name="GameCardsHost" />
                 </StackPanel>
             </Border>
 

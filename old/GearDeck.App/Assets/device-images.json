@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "rules": [
     {
       "id": "logi_pro_x3_superstrike",
@@ -175,6 +175,159 @@
       "vidPid": "054c:0ec2",
       "preset": "sony_inzone_buds",
       "cloudUrl": "https://helpguide.sony.net/mdr/2977/v1/en/contents/image/i0010_wfg700n.png"
+    },
+    {
+      "id": "sony_inzone_headset",
+      "name": "Sony INZONE H9 / H7 / H5",
+      "vid": "054c",
+      "kind": "Headset",
+      "keywords": ["h9", "h7", "h5", "inzone"],
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://helpguide.sony.net/mdr/2977/v1/en/contents/image/i0010_wfg700n.png"
+    },
+    {
+      "id": "pulsar_family",
+      "name": "Pulsar X2 / Xlite / Feinmann 家族",
+      "vid": "3710",
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "glorious-model-o.svg"
+    },
+    {
+      "id": "pulsar_legacy_kw",
+      "name": "Pulsar X2 / Xlite",
+      "keywords": ["pulsar", "x2v2", "x2h", "xlite", "feinmann", "tenz"],
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "glorious-model-o.svg"
+    },
+    {
+      "id": "egg_family",
+      "name": "Endgame Gear XM2 / OP1 家族",
+      "vid": "3367",
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "endgame-gear-xm1r.svg"
+    },
+    {
+      "id": "rapoo_vt_kw",
+      "name": "Rapoo VT 无线系列",
+      "keywords": ["rapoo", "vt9", "vt1", "vt3", "雷柏"],
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "logitech-g-pro-wireless.svg"
+    },
+    {
+      "id": "ninjutso_sora_kw",
+      "name": "Ninjutso Sora 系列",
+      "keywords": ["ninjutso", "sora"],
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "glorious-model-o.svg"
+    },
+    {
+      "id": "finalmouse_family",
+      "name": "Finalmouse ULX / Starlight 家族",
+      "vid": "361d",
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "glorious-model-o.svg"
+    },
+    {
+      "id": "steelseries_headset_family",
+      "name": "SteelSeries Arctis Nova 系列耳机",
+      "vid": "1038",
+      "kind": "Headset",
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/b15882bc-d8fe-4638-98ea-01c66296de9b/A701_2400x2400_1.png"
+    },
+    {
+      "id": "corsair_mouse_family",
+      "name": "Corsair Dark Core 鼠标",
+      "vid": "1b1c",
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "corsair-m65-pro.svg"
+    },
+    {
+      "id": "corsair_headset_family",
+      "name": "Corsair Void / Virtuoso / HS80 耳机",
+      "vid": "1b1c",
+      "kind": "Headset",
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/b15882bc-d8fe-4638-98ea-01c66296de9b/A701_2400x2400_1.png"
+    },
+    {
+      "id": "hyperx_cloud_family",
+      "name": "HyperX Cloud 系列无线耳机",
+      "keywords": ["hyperx", "cloud"],
+      "kind": "Headset",
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/b15882bc-d8fe-4638-98ea-01c66296de9b/A701_2400x2400_1.png"
+    },
+    {
+      "id": "wooting_kb_family",
+      "name": "Wooting HE 磁轴键盘家族",
+      "vid": "31e3",
+      "kind": "Keyboard",
+      "preset": "rog_falchion_75he",
+      "cloudUrl": "https://dlcdnwebimgs.asus.com/gain/21597AB2-8BDD-4E12-83EC-45C6B2DC9B03/w717/h525/fwebp"
+    },
+    {
+      "id": "keychron_kb_family",
+      "name": "Keychron Q / K / V 机械与磁轴键盘",
+      "vid": "3434",
+      "kind": "Keyboard",
+      "preset": "rog_scope_98",
+      "piperSvg": "logitech-g-pro-keyboard.svg"
+    },
+    {
+      "id": "monsgeek_kb_family",
+      "name": "MonsGeek / Akko 磁轴键盘",
+      "keywords": ["monsgeek", "fun60", "m1"],
+      "kind": "Keyboard",
+      "preset": "rog_falchion_75he",
+      "piperSvg": "logitech-g-pro-keyboard.svg"
+    },
+    {
+      "id": "drunkdeer_kb_family",
+      "name": "DrunkDeer A75 / G65 磁轴键盘",
+      "vid": "352d",
+      "kind": "Keyboard",
+      "preset": "rog_falchion_75he",
+      "piperSvg": "logitech-g-pro-keyboard.svg"
+    },
+    {
+      "id": "nuphy_kb_family",
+      "name": "NuPhy Air / Halo / Field 键盘",
+      "vid": "19f5",
+      "kind": "Keyboard",
+      "preset": "rog_falchion_75he",
+      "piperSvg": "logitech-g-pro-keyboard.svg"
+    },
+    {
+      "id": "ps_controller_family",
+      "name": "PlayStation DualSense / DualShock 4",
+      "keywords": ["dualsense", "dualshock"],
+      "kind": "Controller",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png"
+    },
+    {
+      "id": "nintendo_switch_pro_family",
+      "name": "Nintendo Switch Pro / Joy-Con",
+      "vid": "057e",
+      "kind": "Controller",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png"
+    },
+    {
+      "id": "bitdo_controller_family",
+      "name": "8BitDo 控制器家族",
+      "vid": "2dc8",
+      "kind": "Controller",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png"
     },
     {
       "id": "flydigi_cd2_dock",

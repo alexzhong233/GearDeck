@@ -3,9 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 using GearDeck.Core.Hid;
 using GearDeck.Core.Models;
 using GearDeck.Core.Services;
@@ -21,12 +24,14 @@ public partial class DevicesView : UserControl
     private DeviceKind? _kindFilter;
     private bool _refreshing;
     private bool _imageBusy;
+    private UniformGrid? _cardGrid;
 
     public DevicesView()
     {
         InitializeComponent();
         _isCardMode = App.Settings.Current.UseCardLayout;
         ViewSwitchSlot.Children.Add(UiBuilders.CreateViewModeSwitcher(_isCardMode, OnViewModeChanged));
+        DeviceHost.SizeChanged += (_, _) => UpdateCardColumns();
     }
 
     /// <summary>总览传 null；鼠标/键盘/耳机/手柄传对应 DeviceKind。</summary>
@@ -69,7 +74,21 @@ public partial class DevicesView : UserControl
             ? all.Where(d => d.Kind == kind).ToList()
             : all.ToList();
 
-        Panel host = _isCardMode ? new WrapPanel() : new StackPanel { Spacing = 10 };
+        Panel host;
+        if (_isCardMode)
+        {
+            _cardGrid = new UniformGrid
+            {
+                Columns = ComputeCardColumns(),
+                VerticalAlignment = VerticalAlignment.Top,
+            };
+            host = _cardGrid;
+        }
+        else
+        {
+            _cardGrid = null;
+            host = new StackPanel { Spacing = 10 };
+        }
         if (devices.Count == 0)
         {
             host.Children.Add(BuildEmptyCard());
@@ -142,17 +161,33 @@ public partial class DevicesView : UserControl
         },
     };
 
+    private int ComputeCardColumns()
+    {
+        double w = DeviceHost.Bounds.Width;
+        if (w <= 1) return 3;
+        return w >= 920 ? 3 : (w >= 580 ? 2 : 1);
+    }
+
+    private void UpdateCardColumns()
+    {
+        if (_cardGrid == null) return;
+        int cols = ComputeCardColumns();
+        if (_cardGrid.Columns != cols)
+            _cardGrid.Columns = cols;
+    }
+
     private Control BuildDeviceCard(PeripheralDevice d)
     {
         var card = new Border
         {
-            Width = 310,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = new Thickness(0, 0, 12, 12),
             Background = ResolveBrush("CardBackgroundFillColorDefaultBrush"),
             BorderBrush = ResolveBrush("CardStrokeColorDefaultBrush"),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(16),
+            Padding = new Thickness(14, 12),
+            Cursor = new Cursor(StandardCursorType.Hand),
         };
 
         var root = new StackPanel { Spacing = 12 };
@@ -161,75 +196,62 @@ public partial class DevicesView : UserControl
         top.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         top.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
         top.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        top.Children.Add(UiBuilders.CreateDeviceAvatar(d, 64));
+        top.Children.Add(UiBuilders.CreateDeviceAvatar(d, 58));
 
-        var meta = new StackPanel { Spacing = 3, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+        var meta = new StackPanel
+        {
+            Spacing = 3,
+            Margin = new Thickness(12, 0, 10, 0),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
         meta.Children.Add(new TextBlock
         {
             Text = d.Name,
-            FontSize = 16,
+            FontSize = 15,
             FontWeight = FontWeight.SemiBold,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
         meta.Children.Add(new TextBlock
         {
-            Text = $"{d.Provider} · {d.Transport} · {(d.IsSleeping ? "休眠中" : "在线")}",
+            Text = FormatDeviceStatus(d),
             FontSize = 12,
             Foreground = ResolveBrush("TextFillColorSecondaryBrush"),
         });
-        if (!string.IsNullOrWhiteSpace(d.Note))
-        {
-            meta.Children.Add(new TextBlock
-            {
-                Text = d.Note,
-                FontSize = 11,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = ResolveBrush("TextFillColorSecondaryBrush"),
-            });
-        }
         Grid.SetColumn(meta, 1);
         top.Children.Add(meta);
 
         var capsule = BuildBatteryCapsule(d);
         Grid.SetColumn(capsule, 2);
         top.Children.Add(capsule);
-        top.Tapped += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
         root.Children.Add(top);
 
-        var primary = new WrapPanel();
-        var tuneBtn = new Button
-        {
-            Content = "参数调节",
-            Padding = new Thickness(12, 5, 12, 5),
-            Margin = new Thickness(0, 0, 8, 8),
-        };
-        tuneBtn.Click += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
-        primary.Children.Add(tuneBtn);
-        AddDriverButtons(primary, d, compact: false);
+        var footer = new Grid();
+        footer.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+        footer.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
 
-        var secondary = new WrapPanel();
-        var imageBtn = new Button
+        var primaryActions = new StackPanel
         {
-            Content = "换图",
-            Padding = new Thickness(10, 5, 10, 5),
-            Margin = new Thickness(0, 0, 8, 8),
-            Tag = d,
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
-        imageBtn.Click += OnImageClick;
-        secondary.Children.Add(imageBtn);
+        AddDriverButtons(primaryActions, d, compact: false);
+        Grid.SetColumn(primaryActions, 0);
+        footer.Children.Add(primaryActions);
 
-        var pinBtn = new Button
-        {
-            Content = OperatingSystem.IsMacOS() ? "固定到菜单栏" : "固定贴片",
-            Padding = new Thickness(10, 5, 10, 5),
-            Margin = new Thickness(0, 0, 8, 8),
-        };
-        pinBtn.Click += (_, _) => PinToTaskbar(d);
-        secondary.Children.Add(pinBtn);
+        var utilityTools = CreateUtilityToolPair(d);
+        utilityTools.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+        utilityTools.Margin = new Thickness(8, 0, 0, 0);
+        Grid.SetColumn(utilityTools, 1);
+        footer.Children.Add(utilityTools);
 
-        root.Children.Add(primary);
-        root.Children.Add(secondary);
+        root.Children.Add(footer);
         card.Child = root;
+        card.Tapped += (_, e) =>
+        {
+            if (!IsClickInsideButton(e.Source))
+                MainWindow.Instance?.OpenDevice(d.Id);
+        };
         return card;
     }
 
@@ -243,6 +265,7 @@ public partial class DevicesView : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(14, 10, 14, 10),
+            Cursor = new Cursor(StandardCursorType.Hand),
         };
 
         var row = new Grid();
@@ -252,69 +275,130 @@ public partial class DevicesView : UserControl
         row.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
 
         var avatar = UiBuilders.CreateDeviceAvatar(d, 42);
-        avatar.Tapped += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
         row.Children.Add(avatar);
 
-        var meta = new StackPanel { Spacing = 2, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+        var meta = new StackPanel
+        {
+            Spacing = 2,
+            Margin = new Thickness(12, 0, 12, 0),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
         meta.Children.Add(new TextBlock { Text = d.Name, FontWeight = FontWeight.SemiBold });
         meta.Children.Add(new TextBlock
         {
-            Text = $"{d.Provider} · {d.Transport}" + (string.IsNullOrWhiteSpace(d.Note) ? "" : $" · {d.Note}"),
+            Text = FormatDeviceStatus(d),
             FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
             Foreground = ResolveBrush("TextFillColorSecondaryBrush"),
         });
-        meta.Tapped += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
         Grid.SetColumn(meta, 1);
         row.Children.Add(meta);
 
         var capsule = BuildBatteryCapsule(d);
+        if (capsule is Control capCtrl)
+            capCtrl.Margin = new Thickness(0, 0, 12, 0);
         Grid.SetColumn(capsule, 2);
         row.Children.Add(capsule);
 
         var actions = new StackPanel
         {
+            Orientation = Orientation.Horizontal,
             Spacing = 6,
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
-        var primary = new WrapPanel { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right };
-        var tuneBtn = new Button
+        var drivers = new StackPanel
         {
-            Content = "调节",
-            Padding = new Thickness(10, 4, 10, 4),
-            Margin = new Thickness(0, 0, 6, 6),
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
-        tuneBtn.Click += (_, _) => MainWindow.Instance?.OpenDevice(d.Id);
-        primary.Children.Add(tuneBtn);
-        AddDriverButtons(primary, d, compact: true);
+        AddDriverButtons(drivers, d, compact: true);
+        actions.Children.Add(drivers);
+        actions.Children.Add(CreateUtilityToolPair(d));
 
-        var secondary = new WrapPanel { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right };
-        var imageBtn = new Button
-        {
-            Content = "换图",
-            Padding = new Thickness(8, 4, 8, 4),
-            Margin = new Thickness(0, 0, 6, 6),
-            Tag = d,
-        };
-        imageBtn.Click += OnImageClick;
-        secondary.Children.Add(imageBtn);
-        var pinBtn = new Button
-        {
-            Content = OperatingSystem.IsMacOS() ? "固定到菜单栏" : "固定贴片",
-            Padding = new Thickness(8, 4, 8, 4),
-            Margin = new Thickness(0, 0, 6, 6),
-        };
-        pinBtn.Click += (_, _) => PinToTaskbar(d);
-        secondary.Children.Add(pinBtn);
-
-        actions.Children.Add(primary);
-        actions.Children.Add(secondary);
         Grid.SetColumn(actions, 3);
         row.Children.Add(actions);
 
         card.Child = row;
+        card.Tapped += (_, e) =>
+        {
+            if (!IsClickInsideButton(e.Source))
+                MainWindow.Instance?.OpenDevice(d.Id);
+        };
         return card;
+    }
+
+    private StackPanel CreateUtilityToolPair(PeripheralDevice d)
+    {
+        var pair = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        var imageBtn = CreateUtilityIconButton("\uEB9F", "更换设备图");
+        imageBtn.Tag = d;
+        imageBtn.Click += OnImageClick;
+        var pinBtn = CreateUtilityIconButton("\uE718", OperatingSystem.IsMacOS() ? "固定到菜单栏" : "固定到任务栏");
+        pinBtn.Click += (_, _) => PinToTaskbar(d);
+        pair.Children.Add(imageBtn);
+        pair.Children.Add(pinBtn);
+        return pair;
+    }
+
+    private static Button CreateUtilityIconButton(string glyph, string tooltip)
+    {
+        var btn = new Button
+        {
+            Width = 28,
+            Height = 28,
+            Padding = new Thickness(0),
+            Background = ResolveBrush("SubtleFillColorSecondaryBrush"),
+            BorderBrush = ResolveBrush("CardStrokeColorDefaultBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Content = new TextBlock
+            {
+                Text = glyph,
+                FontFamily = UiBuilders.IconFont,
+                FontSize = 13,
+                Foreground = ResolveBrush("TextFillColorSecondaryBrush"),
+            },
+        };
+        ToolTip.SetTip(btn, tooltip);
+        return btn;
+    }
+
+    private static string FormatDeviceStatus(PeripheralDevice d)
+        => d.IsSleeping ? "接收器已连接 · 休眠" : (d.Connected ? $"{d.Provider} · 在线" : $"{d.Provider} · 离线");
+
+    private static bool IsClickInsideButton(object? source)
+    {
+        for (Visual? cur = source as Visual; cur != null; cur = cur.GetVisualParent())
+        {
+            if (cur is Button)
+                return true;
+        }
+        return false;
+    }
+
+    private static string ShortLocalDriverLabel(string displayName)
+    {
+        if (displayName.Contains("雷云", StringComparison.OrdinalIgnoreCase) ||
+            displayName.Contains("Synapse", StringComparison.OrdinalIgnoreCase))
+            return "雷云";
+        if (displayName.Contains("奥创", StringComparison.OrdinalIgnoreCase) ||
+            displayName.Contains("Armoury", StringComparison.OrdinalIgnoreCase))
+            return "奥创";
+        if (displayName.Contains("G HUB", StringComparison.OrdinalIgnoreCase))
+            return "G HUB";
+        if (displayName.Contains("INZONE", StringComparison.OrdinalIgnoreCase))
+            return "INZONE";
+        if (displayName.Contains("飞智", StringComparison.OrdinalIgnoreCase))
+            return "空间站";
+        return displayName.Replace("打开 ", "");
     }
 
     private static void AddDriverButtons(Panel panel, PeripheralDevice d, bool compact)
@@ -324,9 +408,12 @@ public partial class DevicesView : UserControl
         {
             var btn = new Button
             {
-                Content = compact ? "官方软件" : local.DisplayName.Replace("打开 ", ""),
-                Padding = new Thickness(10, 5, 10, 5),
-                Margin = new Thickness(0, 0, 8, 8),
+                Content = ShortLocalDriverLabel(local.DisplayName),
+                Height = 28,
+                FontSize = 12,
+                Padding = new Thickness(9, 0),
+                Margin = new Thickness(0),
+                VerticalContentAlignment = VerticalAlignment.Center,
             };
             ToolTip.SetTip(btn, $"{local.DisplayName}（启动后自动暂停 GearDeck 后台轮询 180 秒）");
             btn.Click += (_, _) => { try { _ = VendorDriverLauncher.LaunchLocal(local); } catch { } };
@@ -337,8 +424,11 @@ public partial class DevicesView : UserControl
             var btn = new Button
             {
                 Content = "网页驱动",
-                Padding = new Thickness(10, 5, 10, 5),
-                Margin = new Thickness(0, 0, 8, 8),
+                Height = 28,
+                FontSize = 12,
+                Padding = new Thickness(9, 0),
+                Margin = new Thickness(0),
+                VerticalContentAlignment = VerticalAlignment.Center,
             };
             ToolTip.SetTip(btn, $"{web.DisplayName}: {web.Url}（启动后自动暂停后台轮询避免 WebHID 抢占）");
             btn.Click += (_, _) => { try { _ = VendorDriverLauncher.LaunchWeb(web); } catch { } };
@@ -346,12 +436,80 @@ public partial class DevicesView : UserControl
         }
     }
 
-    /// <summary>历史电量胶囊：仅使用真实观测过的历史值，绝不虚构电量。</summary>
+    /// <summary>电量胶囊：双耳分 L/R 两行展示，不追加多余标注。</summary>
     private static Control BuildBatteryCapsule(PeripheralDevice d)
     {
         var chip = BatteryHistoryHelper.BuildChipText(d, string.Empty, true, App.Settings.GetLastKnownBattery(d.Id));
-        string text = chip.UsedHistoricalFallback ? chip.Text + "（历史）" : chip.Text;
         bool isLow = chip.EffectivePercent is { } p && !d.IsSleeping && App.Settings.IsDeviceLowBattery(d.Id, p);
+        IBrush fg = isLow ? new SolidColorBrush(Colors.OrangeRed) : ResolveBrush("TextFillColorPrimaryBrush");
+
+        Control content;
+        if (!string.IsNullOrEmpty(chip.TextTop) && !string.IsNullOrEmpty(chip.TextBottom))
+        {
+            var stack = new StackPanel { Spacing = 1 };
+            stack.Children.Add(new TextBlock
+            {
+                Text = chip.TextTop,
+                FontSize = 12,
+                FontWeight = FontWeight.SemiBold,
+                TextAlignment = TextAlignment.Right,
+                Foreground = fg,
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = chip.TextBottom,
+                FontSize = 12,
+                FontWeight = FontWeight.SemiBold,
+                TextAlignment = TextAlignment.Right,
+                Foreground = fg,
+            });
+            int? casePct = d.CaseBatteryPercent ?? App.Settings.GetLastKnownBattery(d.Id)?.CaseBatteryPercent;
+            if (casePct.HasValue)
+            {
+                stack.Children.Add(new TextBlock
+                {
+                    Text = $"盒 {casePct.Value}%{(d.CaseCharging ? "⚡" : "")}",
+                    FontSize = 11,
+                    TextAlignment = TextAlignment.Right,
+                    Foreground = ResolveBrush("TextFillColorSecondaryBrush"),
+                });
+            }
+            content = stack;
+        }
+        else
+        {
+            int? casePct = d.CaseBatteryPercent ?? App.Settings.GetLastKnownBattery(d.Id)?.CaseBatteryPercent;
+            if (casePct.HasValue)
+            {
+                var stack = new StackPanel { Spacing = 1 };
+                stack.Children.Add(new TextBlock
+                {
+                    Text = chip.Text,
+                    FontSize = 12,
+                    FontWeight = FontWeight.SemiBold,
+                    TextAlignment = TextAlignment.Right,
+                    Foreground = fg,
+                });
+                stack.Children.Add(new TextBlock
+                {
+                    Text = $"备 {casePct.Value}%{(d.CaseCharging ? "⚡" : "")}",
+                    FontSize = 11,
+                    TextAlignment = TextAlignment.Right,
+                    Foreground = ResolveBrush("TextFillColorSecondaryBrush"),
+                });
+                content = stack;
+            }
+            else
+            {
+                content = new TextBlock
+                {
+                    Text = chip.Text,
+                    FontSize = 12,
+                    FontWeight = FontWeight.SemiBold,
+                    Foreground = fg,
+                };
+            }
+        }
 
         return new Border
         {
@@ -359,13 +517,7 @@ public partial class DevicesView : UserControl
             Padding = new Thickness(10, 4),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Background = ResolveBrush("SubtleFillColorSecondaryBrush"),
-            Child = new TextBlock
-            {
-                Text = text,
-                FontSize = 12,
-                FontWeight = FontWeight.SemiBold,
-                Foreground = isLow ? new SolidColorBrush(Colors.OrangeRed) : ResolveBrush("TextFillColorPrimaryBrush"),
-            },
+            Child = content,
         };
     }
 
@@ -378,16 +530,24 @@ public partial class DevicesView : UserControl
             DeviceKind.Controller => "builtin:controller",
             _ => "builtin:mouse",
         };
+        App.Settings.Current.RemovedBuiltinGroups?.RemoveAll(x => string.Equals(x, groupId, StringComparison.OrdinalIgnoreCase));
         App.Settings.EnsureDefaults();
-        var cfg = App.Settings.Current.TaskbarGroups.First(g => g.GroupId == groupId);
+        var cfg = App.Settings.Current.TaskbarGroups.FirstOrDefault(g => g.GroupId == groupId);
+        if (cfg == null)
+        {
+            cfg = new TaskbarGroupConfig { GroupId = groupId, Visible = true };
+            App.Settings.Current.TaskbarGroups.Add(cfg);
+        }
         cfg.Visible = true;
         cfg.DefaultDeviceId = d.Id;
         App.Settings.Current.WidgetVisible = true;
         App.Settings.Save();
         App.RefreshWidget();
-        StatusText.Text = OperatingSystem.IsMacOS()
+        string toast = OperatingSystem.IsMacOS()
             ? $"已将「{d.Name}」固定到菜单栏对应分组"
             : $"已将「{d.Name}」固定到任务栏对应分组";
+        StatusText.Text = toast;
+        MainWindow.ShowToast(toast, FluentAvalonia.UI.Controls.InfoBarSeverity.Success);
     }
 
     private void OnRefreshClick(object? sender, RoutedEventArgs e)

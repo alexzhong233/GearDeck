@@ -1,6 +1,7 @@
 using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -16,8 +17,8 @@ public partial class SensitivityView : UserControl
 {
     private bool _binding = true;
     private SensitivityConversionMethod _method = SensitivityConversionMethod.Cm360;
-    private string _categoryFilter = "全部";
     private SensitivityConversionResult? _lastResult;
+    private UniformGrid? _gameCardsGrid;
     private readonly DispatcherTimer _saveTimer;
 
     public SensitivityView()
@@ -27,7 +28,6 @@ public partial class SensitivityView : UserControl
         _saveTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(300), DispatcherPriority.Normal, OnSaveTimerTick);
         WireEvents();
         LoadPreferences();
-        ApplyCategoryStyle();
         RenderGameCards();
         _binding = false;
         Unloaded += OnUnloaded;
@@ -76,9 +76,7 @@ public partial class SensitivityView : UserControl
             button.Click += (_, _) => { if (!_binding && button.Tag is string tag) TargetDpiBox.Text = tag; };
 
         GameSearchBox.TextChanged += (_, _) => { if (!_binding) RenderGameCards(); };
-        foreach (var button in CategoryFilterPanel.Children.OfType<Button>())
-            button.Click += OnCategoryFilterClick;
-
+        GameCardsHost.SizeChanged += (_, _) => UpdateGameCardColumns();
         WorkspaceGrid.SizeChanged += OnWorkspaceSizeChanged;
     }
 
@@ -312,7 +310,6 @@ public partial class SensitivityView : UserControl
         }
 
         ApplyFovLock();
-        UpdateAdvancedSummary();
     }
 
     private void ApplyFovLock()
@@ -328,38 +325,11 @@ public partial class SensitivityView : UserControl
         TargetFovResetBtn.IsEnabled = !targetLocked;
     }
 
-    private void UpdateAdvancedSummary()
-    {
-        App.Settings.Current.SensitivityPrefs ??= new();
-        var p = App.Settings.Current.SensitivityPrefs;
-        double bd = PositiveOr(p.BaseDpi, 800);
-        double td = p.SameDpi ? bd : PositiveOr(p.TargetDpi, bd);
-        string dpiPart = p.SameDpi || Math.Abs(bd - td) < 1.0
-            ? $"{FormatNumber(bd)} DPI"
-            : $"{FormatNumber(bd)}→{FormatNumber(td)} DPI";
-
-        int bw = Math.Max(1, p.BaseWidth);
-        int bh = Math.Max(1, p.BaseHeight);
-        int tw = p.SameResolution ? bw : Math.Max(1, p.TargetWidth);
-        int th = p.SameResolution ? bh : Math.Max(1, p.TargetHeight);
-        string resPart = p.SameResolution || (bw == tw && bh == th && p.BaseStretched == p.TargetStretched)
-            ? $"{bw}×{bh} {AspectLabel(bw, bh)}"
-            : $"{bw}×{bh}→{tw}×{th}";
-
-        AdvancedSummaryText.Text = $"高级功能：DPI 与 分辨率（当前 {dpiPart} · {resPart}）";
-    }
-
     private void ApplyMethodStyle()
     {
         MethodCm360Btn.Classes.Set("active", _method == SensitivityConversionMethod.Cm360);
         MethodMdv0Btn.Classes.Set("active", _method == SensitivityConversionMethod.FocalLengthMdv0);
         MethodMdh100Btn.Classes.Set("active", _method == SensitivityConversionMethod.MonitorDistanceH100);
-    }
-
-    private void ApplyCategoryStyle()
-    {
-        foreach (var button in CategoryFilterPanel.Children.OfType<Button>())
-            button.Classes.Set("active", string.Equals(button.Tag as string, _categoryFilter, StringComparison.Ordinal));
     }
 
     // ── 输入处理 ─────────────────────────────────────────────────────────────
@@ -786,19 +756,27 @@ public partial class SensitivityView : UserControl
 
     private void ShowInfo(string message, InfoBarSeverity severity)
     {
-        PageInfoBar.Severity = severity;
-        PageInfoBar.Message = message;
-        PageInfoBar.IsOpen = true;
+        if (string.IsNullOrWhiteSpace(message))
+            MainWindow.HideToast();
+        else
+            MainWindow.ShowToast(message, severity);
     }
 
     // ── 游戏卡片墙 ───────────────────────────────────────────────────────────
 
-    private void OnCategoryFilterClick(object? sender, RoutedEventArgs e)
+    private int ComputeGameCardColumns()
     {
-        if (_binding || sender is not Button button || button.Tag is not string tag) return;
-        _categoryFilter = tag;
-        ApplyCategoryStyle();
-        RenderGameCards();
+        double w = GameCardsHost.Bounds.Width;
+        if (w <= 1) return 3;
+        return w >= 1060 ? 4 : (w >= 760 ? 3 : (w >= 480 ? 2 : 1));
+    }
+
+    private void UpdateGameCardColumns()
+    {
+        if (_gameCardsGrid == null) return;
+        int cols = ComputeGameCardColumns();
+        if (_gameCardsGrid.Columns != cols)
+            _gameCardsGrid.Columns = cols;
     }
 
     private void RenderGameCards()
@@ -810,12 +788,19 @@ public partial class SensitivityView : UserControl
         string query = GameSearchBox.Text?.Trim() ?? "";
 
         GameCardsHost.Children.Clear();
+        _gameCardsGrid = new UniformGrid
+        {
+            Columns = ComputeGameCardColumns(),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+
+        IBrush cardBg = ResolveBrush("SubtleFillColorSecondaryBrush");
+        IBrush defaultStroke = ResolveBrush("CardStrokeColorDefaultBrush");
+        IBrush accentStroke = ResolveBrush("AccentFillColorDefaultBrush");
+        IBrush secondaryText = ResolveBrush("TextFillColorSecondaryBrush");
+
         foreach (var game in SensitivityConverter.AllGames)
         {
-            if (_categoryFilter != "全部" &&
-                !string.Equals(game.Category, _categoryFilter, StringComparison.Ordinal))
-                continue;
-
             if (query.Length > 0 &&
                 !game.Name.Contains(query, StringComparison.OrdinalIgnoreCase) &&
                 !game.ShortTag.Contains(query, StringComparison.OrdinalIgnoreCase) &&
@@ -827,66 +812,95 @@ public partial class SensitivityView : UserControl
             bool isBase = string.Equals(game.Id, baseGame.Id, StringComparison.OrdinalIgnoreCase);
             var preview = SensitivityConverter.Convert(BuildRequest(game.Id));
 
-            var content = new StackPanel { Spacing = 5 };
+            var content = new StackPanel { Spacing = 6 };
             content.Children.Add(new TextBlock
             {
                 Text = game.Name,
                 FontSize = 14,
                 FontWeight = FontWeight.SemiBold,
-                TextWrapping = TextWrapping.Wrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
             });
             content.Children.Add(new TextBlock
             {
                 Text = $"{game.ShortTag} · {game.Category}",
                 FontSize = 11,
-                Foreground = Brushes.Gray,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = secondaryText,
             });
             content.Children.Add(new TextBlock
             {
                 Text = $"≈ {preview.FormattedSelected}",
-                FontSize = 18,
+                FontSize = 19,
                 FontWeight = FontWeight.Bold,
             });
-            content.Children.Add(new TextBlock
-            {
-                Text = isTarget && isBase ? "● 当前基准 / 目标" : isTarget ? "● 当前目标" : isBase ? "● 当前基准" : "点击卡片换算到该游戏",
-                FontSize = 11,
-                Foreground = Brushes.Gray,
-            });
+
+            var actions = new Grid();
+            actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+            actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
 
             var setBaseBtn = new Button
             {
-                Content = "设为基准",
+                Content = isBase ? "当前基准" : "设为基准",
                 Tag = game.Id,
                 FontSize = 11,
-                Padding = new Thickness(8, 3, 8, 3),
-                HorizontalAlignment = HorizontalAlignment.Left,
+                Padding = new Thickness(6, 4),
+                Margin = new Thickness(0, 0, 3, 0),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
             };
+            if (isBase)
+                setBaseBtn.Classes.Add("accent");
             setBaseBtn.Click += OnSetBaseGameClick;
-            setBaseBtn.Tapped += (_, args) => args.Handled = true;
-            content.Children.Add(setBaseBtn);
+            Grid.SetColumn(setBaseBtn, 0);
+            actions.Children.Add(setBaseBtn);
+
+            var setTargetBtn = new Button
+            {
+                Content = isTarget ? "当前换算" : "设为换算",
+                Tag = game.Id,
+                FontSize = 11,
+                Padding = new Thickness(6, 4),
+                Margin = new Thickness(3, 0, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+            };
+            if (isTarget)
+                setTargetBtn.Classes.Add("accent");
+            setTargetBtn.Click += (_, _) => SetTargetGame(game.Id);
+            Grid.SetColumn(setTargetBtn, 1);
+            actions.Children.Add(setTargetBtn);
+
+            content.Children.Add(actions);
 
             var card = new Border
             {
                 Tag = game.Id,
                 Child = content,
-                Background = Brushes.Transparent,
-                BorderBrush = isTarget ? Brushes.CornflowerBlue : Brushes.Gray,
-                BorderThickness = isTarget ? new Thickness(2) : new Thickness(1),
+                Background = cardBg,
+                BorderBrush = (isTarget || isBase) ? accentStroke : defaultStroke,
+                BorderThickness = (isTarget || isBase) ? new Thickness(1.5) : new Thickness(1),
                 CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(12),
-                Width = 235,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
                 Margin = new Thickness(0, 0, 10, 10),
             };
-            card.Tapped += OnGameCardTapped;
-            GameCardsHost.Children.Add(card);
+            _gameCardsGrid.Children.Add(card);
         }
+
+        GameCardsHost.Children.Add(_gameCardsGrid);
     }
 
-    private void OnGameCardTapped(object? sender, TappedEventArgs e)
+    private static IBrush ResolveBrush(string key)
     {
-        if (sender is Border card && card.Tag is string id)
-            SetTargetGame(id);
+        try
+        {
+            if (Application.Current != null &&
+                Application.Current.TryGetResource(key, null, out var value) &&
+                value is IBrush brush)
+                return brush;
+        }
+        catch { }
+        return Brushes.Gray;
     }
 
     private void OnSetBaseGameClick(object? sender, RoutedEventArgs e)
@@ -915,19 +929,21 @@ public partial class SensitivityView : UserControl
     private void OnWorkspaceSizeChanged(object? sender, SizeChangedEventArgs e)
     {
         if (WorkspaceGrid.ColumnDefinitions.Count < 2) return;
-        if (e.NewSize.Width < 880)
+        if (e.NewSize.Width < 920)
         {
             WorkspaceGrid.ColumnDefinitions[1].Width = new GridLength(0);
             WorkspaceGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
             Grid.SetRow(TargetCard, 1);
             Grid.SetColumn(TargetCard, 0);
+            TargetCard.Margin = new Thickness(0, 14, 0, 0);
         }
         else
         {
             WorkspaceGrid.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
-            WorkspaceGrid.ColumnDefinitions[0].Width = new GridLength(370);
+            WorkspaceGrid.ColumnDefinitions[0].Width = new GridLength(380);
             Grid.SetRow(TargetCard, 0);
             Grid.SetColumn(TargetCard, 1);
+            TargetCard.Margin = new Thickness(14, 0, 0, 0);
         }
     }
 

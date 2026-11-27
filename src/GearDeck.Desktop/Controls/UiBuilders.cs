@@ -24,32 +24,28 @@ public static class UiBuilders
             VerticalAlignment = VerticalAlignment.Center,
         };
 
+        var cardGlyph = new TextBlock { Text = "\uF0E2", FontFamily = IconFont, FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
+        var cardText = new TextBlock { Text = "卡片", FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
         var cardBtn = new Button
         {
             Content = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 Spacing = 5,
-                Children =
-                {
-                    new TextBlock { Text = "\uF0E2", FontFamily = IconFont, FontSize = 13 },
-                    new TextBlock { Text = "卡片", FontSize = 12 },
-                },
+                Children = { cardGlyph, cardText },
             },
             Padding = new Thickness(10, 5, 10, 5),
         };
 
+        var listGlyph = new TextBlock { Text = "\uE8FD", FontFamily = IconFont, FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
+        var listText = new TextBlock { Text = "列表", FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
         var listBtn = new Button
         {
             Content = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 Spacing = 5,
-                Children =
-                {
-                    new TextBlock { Text = "\uE8FD", FontFamily = IconFont, FontSize = 13 },
-                    new TextBlock { Text = "列表", FontSize = 12 },
-                },
+                Children = { listGlyph, listText },
             },
             Padding = new Thickness(10, 5, 10, 5),
         };
@@ -60,8 +56,18 @@ public static class UiBuilders
                 new SolidColorBrush(Color.FromArgb(255, 0, 120, 215)));
             var normal = ResolveBrush("SubtleFillColorSecondaryBrush",
                 new SolidColorBrush(Color.FromArgb(20, 128, 128, 128)));
+            var onAccent = ResolveBrush("TextOnAccentFillColorPrimaryBrush", Brushes.White);
+            var normalFg = ResolveBrush("TextFillColorPrimaryBrush", Brushes.Black);
+
             cardBtn.Background = cardSelected ? accent : normal;
+            cardBtn.Foreground = cardSelected ? onAccent : normalFg;
+            cardGlyph.Foreground = cardSelected ? onAccent : normalFg;
+            cardText.Foreground = cardSelected ? onAccent : normalFg;
+
             listBtn.Background = cardSelected ? normal : accent;
+            listBtn.Foreground = cardSelected ? normalFg : onAccent;
+            listGlyph.Foreground = cardSelected ? normalFg : onAccent;
+            listText.Foreground = cardSelected ? normalFg : onAccent;
         }
 
         SyncStyles(isCard);

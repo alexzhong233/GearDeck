@@ -143,12 +143,16 @@ public sealed class DeviceManager : IDisposable
                 foreach (var line in Diag.DumpHidInventory())
                     Diag.Log(line);
 
-                // 每个品牌并行扫（品牌内部自行顺序探测接口），总超时 6 秒
+                // 控制扫描并发度避免阻塞式 HID 探测瞬间拉起过多线程池线程，总超时 6 秒
+                var scanConcurrency = new SemaphoreSlim(4, 4);
                 var tasks = _providers.Select(async p =>
                 {
+                    bool slotTaken = false;
                     try
                     {
-                        var items = await Task.Run(() => p.Enumerate());
+                        await scanConcurrency.WaitAsync().ConfigureAwait(false);
+                        slotTaken = true;
+                        var items = await Task.Run(() => p.Enumerate()).ConfigureAwait(false);
                         Diag.Log($"{p.Name}: {items.Count} 台");
                         return (Provider: p, Succeeded: true, Items: (IReadOnlyList<PeripheralDevice>)items);
                     }
@@ -156,6 +160,11 @@ public sealed class DeviceManager : IDisposable
                     {
                         Diag.Log($"{p.Name} 扫描异常: {ex.Message}");
                         return (Provider: p, Succeeded: false, Items: (IReadOnlyList<PeripheralDevice>)Array.Empty<PeripheralDevice>());
+                    }
+                    finally
+                    {
+                        if (slotTaken)
+                            scanConcurrency.Release();
                     }
                 }).ToArray();
                 var allTasks = Task.WhenAll(tasks);
@@ -175,6 +184,8 @@ public sealed class DeviceManager : IDisposable
 
                     var allRaw = _lastRawByProvider.Values.SelectMany(x => x).ToList();
                     var unified = DeviceUnifier.Unify(allRaw);
+                    ApplyWirelessSleepGuard(unified.Devices);
+                    ReceiverModelRegistry.ApplyAndLearn(unified.Devices);
 
                     _lastKnown.Clear();
                     foreach (var s in unified.Devices)
@@ -328,6 +339,41 @@ public sealed class DeviceManager : IDisposable
     {
         lock (_gate)
             return _lastKnown.Values.OrderBy(d => d.Kind).ThenBy(d => d.Name).ToList();
+    }
+
+    /// <summary>
+    /// 通用无线休眠守卫：凡明确标注为无线传输（2.4G / Omni / Wireless / Bluetooth）且非充电中、
+    /// 未读取到任何电量（主电量/双耳/充电盒均为空）的已连接接收器设备，统一标记 IsSleeping = true。
+    /// </summary>
+    public static void ApplyWirelessSleepGuard(IEnumerable<PeripheralDevice> devices)
+    {
+        foreach (var d in devices)
+        {
+            if (d.IsSleeping || !d.Connected)
+                continue;
+            if (d.BatteryPercent.HasValue || d.LeftEarPercent.HasValue || d.RightEarPercent.HasValue || d.CaseBatteryPercent.HasValue)
+                continue;
+            if (d.State is BatteryState.Charging or BatteryState.FullyCharged)
+                continue;
+            if (IsWirelessOnlyTransport(d.Transport))
+                d.IsSleeping = true;
+        }
+    }
+
+    private static bool IsWirelessOnlyTransport(string? transport)
+    {
+        if (string.IsNullOrWhiteSpace(transport))
+            return false;
+        string t = transport.Trim();
+        if (t.Contains("2.4G", StringComparison.OrdinalIgnoreCase) ||
+            t.Contains("Omni", StringComparison.OrdinalIgnoreCase) ||
+            t.Contains("Wireless", StringComparison.OrdinalIgnoreCase) ||
+            t.Contains("Bluetooth", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(t, "BT", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        return false;
     }
 
     public void Dispose()

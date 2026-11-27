@@ -32,7 +32,7 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid x:Name="RootGrid" RowDefinitions="Auto,Auto,Auto,*" Margin="20,14,20,18">
+    <Grid x:Name="RootGrid" RowDefinitions="Auto,0,Auto,*" Margin="20,14,20,18">
 
         <!-- 顶部：返回 / 标题 / 连接 / 电量 / 写保护 / 同步 / 写入改键 -->
         <Border Grid.Row="0" Classes="card" Padding="12,10">
@@ -70,13 +70,11 @@
                            TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
 
                 <Button x:Name="SyncBtn" Grid.Column="6" Classes="pill" Content="从键盘同步"
-                        VerticalAlignment="Center" />
+                        Margin="8,0,0,0" VerticalAlignment="Center" />
                 <Button x:Name="CommitKeymapBtn" Grid.Column="7" Classes="pill accent" Margin="8,0,0,0"
                         Content="写入改键 (0)" VerticalAlignment="Center" />
             </Grid>
         </Border>
-
-        <ui:InfoBar Grid.Row="1" x:Name="StatusInfoBar" IsOpen="False" IsClosable="True" Margin="0,10,0,0" />
 
         <!-- 四个页签 -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="6" Margin="0,10,0,6">
@@ -316,8 +314,10 @@
                             <Grid ColumnDefinitions="*,Auto,Auto">
                                 <TextBlock Text="实时通信日志" FontSize="15" FontWeight="SemiBold"
                                            VerticalAlignment="Center" />
-                                <Button x:Name="CopyLogsBtn" Grid.Column="1" Classes="pill" Content="复制全部" />
-                                <Button x:Name="ClearLogsBtn" Grid.Column="2" Classes="pill" Content="清空" />
+                                <Button x:Name="CopyLogsBtn" Grid.Column="1" Classes="pill" Content="复制全部"
+                                        Margin="8,0,0,0" />
+                                <Button x:Name="ClearLogsBtn" Grid.Column="2" Classes="pill" Content="清空"
+                                        Margin="8,0,0,0" />
                             </Grid>
                             <TextBox x:Name="LogBox" Height="180" AcceptsReturn="True" IsReadOnly="True"
                                      FontFamily="Menlo, Consolas, Monospace" FontSize="11"

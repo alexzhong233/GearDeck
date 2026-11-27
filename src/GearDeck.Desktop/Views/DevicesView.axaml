@@ -8,10 +8,10 @@
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
             <StackPanel Spacing="4">
                 <TextBlock Text="设备总览" FontSize="28" FontWeight="SemiBold" />
-                <TextBlock Text="实时电量、休眠状态、低电量阈值、自定义图片与快速调参入口"
+                <TextBlock Text="查看外设电量与快速调参"
                            TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
             </StackPanel>
-            <Panel x:Name="ViewSwitchSlot" Grid.Column="1" VerticalAlignment="Center" />
+            <Panel x:Name="ViewSwitchSlot" Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" />
         </Grid>
 
         <StackPanel Grid.Row="1" Spacing="10" Margin="0,16,0,0">
