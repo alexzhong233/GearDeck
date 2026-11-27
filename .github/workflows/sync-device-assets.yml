@@ -131,14 +131,16 @@ jobs:
           }
           (OUT_DIR / "manifest.json").write_text(json.dumps(manifest_out, indent=2, ensure_ascii=False), encoding="utf-8")
           print(f"Synced {len(out_rules)} rules and {len(out_gallery)} gallery images, {len(failures)} failures")
+          for err in failures:
+              print(f"  FAIL: {err}")
           PY
 
       - name: Publish to assets branch
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           cd dist-assets
           git init -b assets
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .
           git commit -m "chore: sync pre-rendered 256px device assets"
           git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
