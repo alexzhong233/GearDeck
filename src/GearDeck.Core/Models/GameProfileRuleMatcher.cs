@@ -42,7 +42,7 @@ public static class GameProfileRuleMatcher
     public static string NormalizeProcessName(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return "";
-        string file = Path.GetFileName(raw.Trim().Trim('"'));
+        string file = Path.GetFileName(raw.Trim().Trim('"').Replace('\\', '/'));
         if (file.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             file = file[..^4];
         return file.Trim().ToLowerInvariant();

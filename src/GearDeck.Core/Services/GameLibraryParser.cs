@@ -136,7 +136,7 @@ public static partial class GameLibraryParser
         foreach (string fullPath in exeFullPaths)
         {
             if (string.IsNullOrWhiteSpace(fullPath)) continue;
-            string exeName = Path.GetFileName(fullPath);
+            string exeName = ExtractFileName(fullPath);
             if (!exeName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
 
             string lower = exeName.ToLowerInvariant();
@@ -177,7 +177,7 @@ public static partial class GameLibraryParser
     public static bool IsIgnoredExecutableName(string? exeName)
     {
         if (string.IsNullOrWhiteSpace(exeName)) return true;
-        string lower = Path.GetFileName(exeName).ToLowerInvariant();
+        string lower = ExtractFileName(exeName).ToLowerInvariant();
         foreach (string token in NonGameExeTokens)
         {
             if (lower.Contains(token, StringComparison.Ordinal))
@@ -191,12 +191,14 @@ public static partial class GameLibraryParser
         if (string.IsNullOrWhiteSpace(rootDir)) return 1;
         string rel = filePath.StartsWith(rootDir, StringComparison.OrdinalIgnoreCase)
             ? filePath[rootDir.Length..].TrimStart('\\', '/')
-            : Path.GetFileName(filePath);
+            : ExtractFileName(filePath);
         int depth = 0;
         foreach (char c in rel)
             if (c is '\\' or '/') depth++;
         return depth;
     }
+
+    internal static string ExtractFileName(string path) => Path.GetFileName(path.Replace('\\', '/'));
 
     private static string NormalizeAlnum(string s)
         => string.Concat(s.Where(char.IsLetterOrDigit)).ToLowerInvariant();
@@ -325,12 +327,12 @@ public static class OpenMouseGameCatalog
                     {
                         string? ex = item.GetString()?.Trim();
                         if (!string.IsNullOrWhiteSpace(ex))
-                            exes.Add(Path.GetFileName(ex));
+                            exes.Add(GameLibraryParser.ExtractFileName(ex));
                     }
                 }
                 else if (el.TryGetProperty("executable", out var single) && !string.IsNullOrWhiteSpace(single.GetString()))
                 {
-                    exes.Add(Path.GetFileName(single.GetString()!.Trim()));
+                    exes.Add(GameLibraryParser.ExtractFileName(single.GetString()!.Trim()));
                 }
 
                 if (exes.Count == 0) continue;
@@ -366,7 +368,7 @@ public static class OpenMouseGameCatalog
         IReadOnlyList<OpenMouseGameCatalogEntry>? catalog = null)
     {
         if (string.IsNullOrWhiteSpace(processExeName)) return null;
-        string file = Path.GetFileName(processExeName.Trim());
+        string file = GameLibraryParser.ExtractFileName(processExeName.Trim());
         var list = catalog ?? BuiltInEntries;
         foreach (var entry in list)
         {
@@ -385,7 +387,7 @@ public static class OpenMouseGameCatalog
     {
         var fileSet = exeFullPaths
             .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Select(p => Path.GetFileName(p))
+            .Select(p => GameLibraryParser.ExtractFileName(p))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (fileSet.Count == 0) return null;
 
