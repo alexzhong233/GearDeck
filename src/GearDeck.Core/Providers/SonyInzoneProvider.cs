@@ -6,8 +6,8 @@ namespace GearDeck.Core.Providers;
 
 /// <summary>
 /// 索尼 Sony INZONE 系列无线耳机 / Buds 协议提供器（VID 0x054C）：
-/// 支持 INZONE Buds (0x0EC2) 双耳+盒电量，与 INZONE H5 (0x0EBF) / H7 (0x0DF4) / H9 (0x0DF5) / H9 II (0x0FA8)
-/// 电量、Sidetone、ANC 模式、自动休眠、语音提示与 ChatMix 平衡读取。
+/// 支持 INZONE Buds (0x0EC2) 与 INZONE H5 (0x0EBF) / H7 (0x0DF4) / H9 (0x0DF5) / H9 II (0x0FA8)
+/// 电量、降噪/环境音、Sidetone、自动休眠、语音提示与 ChatMix 平衡读写。
 /// </summary>
 public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheralProvider
 {
@@ -19,6 +19,7 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
     public const ushort InzoneH9Pid = 0x0DF5;
     public const ushort InzoneH9IiPid = 0x0FA8;
 
+    private const byte AddrPcToTx = 0x21;
     private const byte AddrPcToRx = 0x41;
     private const byte ETypeGet = 0x01;
     private const byte ETypeSet = 0x02;
@@ -26,7 +27,10 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
     private const byte ETypeNtfy = 0x20;
     private const byte ETypeNtfyActive = 0xA0;
 
+    private const byte Eid2GhzConnectStatus = 0x01;
     private const byte EidBatteryInfo = 0x04;
+    private const byte EidAllFunctionSettingsPart1 = 0x06;
+    private const byte EidAllFunctionSettingsPart2 = 0x07;
     private const byte EidChatMixBalance = 0x22;
     private const byte EidSidetoneVolume = 0x23;
     private const byte EidAmbSetting = 0x41;
@@ -41,6 +45,11 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
         [InzoneH5Pid] = "Sony INZONE H5",
         [InzoneH9IiPid] = "Sony INZONE H9 II",
     };
+
+    private static readonly object BudsStateLock = new();
+    private static (int? Left, bool LeftChg, int? Right, bool RightChg, int? Case, bool CaseChg)? _lastBudsHit;
+    private static DateTimeOffset _lastBudsHitUtc = DateTimeOffset.MinValue;
+    private static int _consecutiveBudsMisses;
 
     private static byte _seq = 2;
 
@@ -63,6 +72,7 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
             var devs = g.ToList();
 
             (int? Left, bool LeftChg, int? Right, bool RightChg, int? Case, bool CaseChg)? budsHit = null;
+            bool? budsLinkConnected = null;
             (int Percent, bool Charging)? headsetHit = null;
 
             foreach (var iface in OrderCandidates(devs))
@@ -74,7 +84,10 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
                 if (pid == InzoneBudsPid)
                 {
                     budsHit = QueryBudsBattery(ch);
-                    if (budsHit != null) break;
+                    if (budsHit == null)
+                        budsLinkConnected ??= QueryTransmitterLinkStatus(ch);
+                    if (budsHit != null || budsLinkConnected != null)
+                        break;
                 }
                 else
                 {
@@ -85,7 +98,28 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
 
             if (pid == InzoneBudsPid)
             {
-                results.Add(BuildBudsDevice(pid, modelName, budsHit));
+                lock (BudsStateLock)
+                {
+                    if (budsHit is { } hit && (hit.Left != null || hit.Right != null))
+                    {
+                        _lastBudsHit = hit;
+                        _lastBudsHitUtc = DateTimeOffset.UtcNow;
+                        _consecutiveBudsMisses = 0;
+                    }
+                    else if (budsHit == null)
+                    {
+                        _consecutiveBudsMisses++;
+                        if (budsLinkConnected != false &&
+                            _consecutiveBudsMisses < 2 &&
+                            _lastBudsHit is { } cached &&
+                            (DateTimeOffset.UtcNow - _lastBudsHitUtc) < TimeSpan.FromMinutes(3))
+                        {
+                            budsHit = cached;
+                        }
+                    }
+                }
+
+                results.Add(BuildBudsDevice(pid, modelName, budsHit, budsLinkConnected));
                 continue;
             }
 
@@ -114,7 +148,7 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
     public DeviceTuningCapabilities QueryCapabilities(string deviceId)
     {
         var caps = new DeviceTuningCapabilities { DeviceId = deviceId };
-        if (!TryParsePid(deviceId, out ushort pid) || pid == InzoneBudsPid || !InzoneHeadsets.TryGetValue(pid, out string? model))
+        if (!TryParsePid(deviceId, out ushort pid) || !InzoneHeadsets.TryGetValue(pid, out string? model))
         {
             caps.StatusMessage = "当前 Sony 设备仅支持电量监测。";
             return caps;
@@ -127,28 +161,56 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
             return caps;
         }
 
+        bool isBuds = pid == InzoneBudsPid;
+        if (isBuds && QueryTransmitterLinkStatus(ch) == false)
+        {
+            caps.StatusMessage = "2.4G 链路当前未连接（请先将至少一只耳机佩戴入耳并切换到 2.4G 模式）。";
+            return caps;
+        }
+
         caps.IsOnline = true;
-        bool hasAnc = pid is InzoneH9Pid or InzoneH9IiPid;
-        bool hasVoicePrompt = pid is InzoneH9Pid or InzoneH9IiPid or InzoneH5Pid;
+        bool hasAnc = isBuds || pid is InzoneH9Pid or InzoneH9IiPid;
+        bool hasVoicePrompt = isBuds || pid is InzoneH9Pid or InzoneH9IiPid or InzoneH5Pid;
+        int maxSidetone = isBuds ? 10 : 50;
+
+        byte[]? part1 = isBuds ? Exchange(ch, EidAllFunctionSettingsPart1, ETypeGet, []) : null;
+        byte[]? part2 = isBuds ? Exchange(ch, EidAllFunctionSettingsPart2, ETypeGet, []) : null;
 
         int currentAnc = 0;
         if (hasAnc)
         {
-            var amb = Exchange(ch, EidAmbSetting, ETypeGet, []);
-            if (amb is { Length: >= 1 } && amb[0] <= 2)
-                currentAnc = amb[0];
+            if (part2 is { Length: >= 7 } && part2[3] <= 2)
+            {
+                currentAnc = part2[3];
+            }
+            else
+            {
+                var amb = Exchange(ch, EidAmbSetting, ETypeGet, []);
+                if (amb is { Length: >= 1 } && amb[0] <= 2)
+                    currentAnc = amb[0];
+            }
         }
 
         int currentSidetone = 0;
-        var st = Exchange(ch, EidSidetoneVolume, ETypeGet, []);
-        if (st is { Length: >= 1 } && st[0] <= 50)
-            currentSidetone = st[0];
+        if (part1 is { Length: >= 13 } && part1[11] <= maxSidetone)
+        {
+            currentSidetone = part1[11];
+        }
+        else
+        {
+            var st = Exchange(ch, EidSidetoneVolume, ETypeGet, []);
+            if (st is { Length: >= 1 } && st[0] <= maxSidetone)
+                currentSidetone = st[0];
+        }
 
         string? chatMix = null;
-        var cm = Exchange(ch, EidChatMixBalance, ETypeGet, []);
-        if (cm is { Length: >= 1 } && cm[0] <= 90)
+        int cmMax = isBuds ? 100 : 90;
+        int cmVal = part1 is { Length: >= 11 } && part1[10] <= cmMax
+            ? part1[10]
+            : (Exchange(ch, EidChatMixBalance, ETypeGet, []) is { Length: >= 1 } cm && cm[0] <= cmMax ? cm[0] : -1);
+        if (cmVal >= 0)
         {
-            int chatPct = cm[0] * 100 / 90;
+            int chatPct = cmMax == 100 ? cmVal : cmVal * 100 / 90;
             int gamePct = 100 - chatPct;
             chatMix = $"游戏 {gamePct}% / 语音 {chatPct}%";
         }
@@ -156,7 +218,7 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
         caps.StatusMessage = $"{model} · INZONE HCI-over-HID 已就绪";
         caps.SupportsSidetone = true;
         caps.SidetoneEnabled = currentSidetone > 0;
-        caps.MaxSidetoneLevel = 50;
+        caps.MaxSidetoneLevel = maxSidetone;
         caps.CurrentSidetoneLevel = currentSidetone;
         caps.SupportsAncMode = hasAnc;
         caps.SupportedAncModes = hasAnc
@@ -165,18 +227,29 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
         caps.CurrentAncMode = currentAnc;
         caps.SupportsVoicePrompt = hasVoicePrompt;
         caps.SupportsSleepTimeout = true;
-        caps.MinSleepSeconds = 300;
-        caps.MaxSleepSeconds = 10800;
-        caps.SupportedSleepSeconds = [300, 900, 1800, 3600, 10800];
+        if (isBuds)
+        {
+            caps.MinSleepSeconds = 900;
+            caps.MaxSleepSeconds = 900;
+            caps.SupportedSleepSeconds = [900];
+        }
+        else
+        {
+            caps.MinSleepSeconds = 300;
+            caps.MaxSleepSeconds = 10800;
+            caps.SupportedSleepSeconds = [300, 900, 1800, 3600, 10800];
+        }
         caps.ChatMixSummary = chatMix;
         return caps;
     }
 
     public DeviceTuningResult ApplySettings(string deviceId, DeviceTuningUpdate update)
     {
-        if (!TryParsePid(deviceId, out ushort pid) || pid == InzoneBudsPid || !InzoneHeadsets.ContainsKey(pid))
+        if (!TryParsePid(deviceId, out ushort pid) || !InzoneHeadsets.ContainsKey(pid))
             return new DeviceTuningResult(false, "当前设备不支持 Sony INZONE 调参");
 
+        bool isBuds = pid == InzoneBudsPid;
+        int maxSidetone = isBuds ? 10 : 50;
         var applied = new List<string>();
         var errors = new List<string>();
 
@@ -185,34 +258,32 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
             if (ch == null)
                 return new DeviceTuningResult(false, "无法打开 Sony INZONE 控制通道（请确认 2.4G 接收器与耳机已唤醒）");
 
+            if (isBuds && QueryTransmitterLinkStatus(ch) == false)
+                return new DeviceTuningResult(false, "INZONE Buds 当前未通过 2.4G 链路连接（请确认已佩戴在耳并处于 2.4G 模式）");
+
             if (update.Sidetone is var (stOn, stLevel))
             {
-                byte devLevel = stOn ? (byte)Math.Clamp(stLevel, 0, 50) : (byte)0;
+                byte devLevel = stOn ? (byte)Math.Clamp(stLevel, 0, maxSidetone) : (byte)0;
                 if (Exchange(ch, EidSidetoneVolume, ETypeSet, [devLevel, 0xFF]) != null)
-                    applied.Add(stOn ? $"侧音 {devLevel}/50" : "侧音关闭");
+                    applied.Add(devLevel > 0 ? $"侧音 {devLevel}/{maxSidetone}" : "侧音关闭");
                 else
                     errors.Add("侧音");
             }
 
-            if (update.AncMode is { } ancCode && pid is InzoneH9Pid or InzoneH9IiPid)
+            if (update.AncMode is { } ancCode && (isBuds || pid is InzoneH9Pid or InzoneH9IiPid))
             {
                 byte mode = (byte)Math.Clamp(ancCode, 0, 2);
                 var cur = Exchange(ch, EidAmbSetting, ETypeGet, []);
-                if (cur is { Length: >= 4 })
-                {
-                    byte[] payload = [mode, cur[1], cur[2], cur[3]];
-                    if (Exchange(ch, EidAmbSetting, ETypeSet, payload) != null)
-                        applied.Add($"降噪模式 {(mode == 1 ? "主动降噪" : mode == 2 ? "环境音" : "关闭")}");
-                    else
-                        errors.Add("降噪模式");
-                }
+                byte[] payload = cur is { Length: >= 4 }
+                    ? [mode, cur[1], cur[2], cur[3]]
+                    : [mode, 0x14, 0xFF, 0x00];
+                if (Exchange(ch, EidAmbSetting, ETypeSet, payload) != null)
+                    applied.Add($"降噪模式 {(mode == 1 ? "主动降噪" : mode == 2 ? "环境音" : "关闭")}");
                 else
-                {
-                    errors.Add("降噪模式读取");
-                }
+                    errors.Add("降噪模式");
             }
 
-            if (update.VoicePromptEnabled is { } voiceOn && pid is InzoneH9Pid or InzoneH9IiPid or InzoneH5Pid)
+            if (update.VoicePromptEnabled is { } voiceOn && (isBuds || pid is InzoneH9Pid or InzoneH9IiPid or InzoneH5Pid))
             {
                 if (Exchange(ch, EidGuidanceSetting, ETypeSet, [(byte)(voiceOn ? 1 : 0)]) != null)
                     applied.Add($"语音提示: {(voiceOn ? "开启" : "关闭")}");
@@ -220,22 +291,33 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
                     errors.Add("语音提示");
             }
 
-            if (update.SleepSeconds is { } sleepSec && sleepSec > 0)
+            if (update.SleepSeconds is { } sleepSec)
             {
-                int mins = Math.Clamp((int)Math.Round(sleepSec / 60.0), 1, 180);
-                byte snapped = mins switch
+                if (isBuds)
                 {
-                    <= 10 => 5,
-                    <= 22 => 15,
-                    <= 45 => 30,
-                    <= 120 => 60,
-                    _ => 180,
-                };
-                byte[] payload = pid == InzoneH9IiPid ? [snapped, snapped] : [snapped];
-                if (Exchange(ch, EidAutoPowerOff, ETypeSet, payload) != null)
-                    applied.Add($"休眠 {snapped} 分钟");
-                else
-                    errors.Add("自动休眠");
+                    byte val = sleepSec <= 0 ? (byte)0x00 : (byte)0x0F;
+                    if (Exchange(ch, EidAutoPowerOff, ETypeSet, [val]) != null)
+                        applied.Add(val == 0 ? "自动休眠: 关闭" : "自动休眠: 15 分钟");
+                    else
+                        errors.Add("自动休眠");
+                }
+                else if (sleepSec > 0)
+                {
+                    int mins = Math.Clamp((int)Math.Round(sleepSec / 60.0), 1, 180);
+                    byte snapped = mins switch
+                    {
+                        <= 10 => 5,
+                        <= 22 => 15,
+                        <= 45 => 30,
+                        <= 120 => 60,
+                        _ => 180,
+                    };
+                    byte[] payload = pid == InzoneH9IiPid ? [snapped, snapped] : [snapped];
+                    if (Exchange(ch, EidAutoPowerOff, ETypeSet, payload) != null)
+                        applied.Add($"休眠 {snapped} 分钟");
+                    else
+                        errors.Add("自动休眠");
+                }
             }
         }
 
@@ -282,7 +364,8 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
     private static PeripheralDevice BuildBudsDevice(
         ushort pid,
         string modelName,
-        (int? Left, bool LeftChg, int? Right, bool RightChg, int? Case, bool CaseChg)? hit)
+        (int? Left, bool LeftChg, int? Right, bool RightChg, int? Case, bool CaseChg)? hit,
+        bool? linkConnected = null)
     {
         int? mainPct = null;
         BatteryState batState = BatteryState.Unknown;
@@ -312,11 +395,13 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
             string rStr = b.Right is { } rv ? $"{rv}%{(b.RightChg ? "⚡" : "")}" : "在盒";
             string cStr = b.Case is { } cv ? $"{cv}%{(b.CaseChg ? "⚡" : "")}" : "--";
             note = $"左耳 {lStr} · 右耳 {rStr} · 充电盒 {cStr}";
-            Diag.Log($"Sony INZONE Buds: L={b.Left?.ToString() ?? "--"} R={b.Right?.ToString() ?? "--"} Case={b.Case?.ToString() ?? "--"}");
+            Diag.Verbose($"Sony INZONE Buds: L={b.Left?.ToString() ?? "--"} R={b.Right?.ToString() ?? "--"} Case={b.Case?.ToString() ?? "--"}");
         }
         else
         {
-            note = "2.4G 接收器已连接（耳机均在盒内待机中，取出任一只即可读取左/右耳与盒电量）";
+            note = linkConnected == false
+                ? "2.4G 链路当前未连接（耳机在盒、已切蓝牙或已自动待机）"
+                : "2.4G 接收器已连接（耳机休眠或暂未响应）";
         }
 
         return new PeripheralDevice
@@ -343,33 +428,56 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
         };
     }
 
+    internal static bool? QueryTransmitterLinkStatus(HidChannel ch)
+    {
+        var payload = ExchangeOnce(ch, AddrPcToTx, Eid2GhzConnectStatus, ETypeGet, [], timeoutMs: 250);
+        if (payload == null || payload.Length == 0)
+            return null;
+        return payload.Any(b => b != 0);
+    }
+
     private static (int? Left, bool LeftChg, int? Right, bool RightChg, int? Case, bool CaseChg)? QueryBudsBattery(HidChannel ch)
     {
         for (int i = 0; i < 6; i++)
             if (ch.Read(5) == null) break;
 
-        byte seq = NextSeq();
-        byte[] req = BuildHubRequest(EidBatteryInfo, seq);
-        if (!ch.WriteOutput(req))
-            return null;
-
-        var deadline = Environment.TickCount64 + 550;
         (int? Left, bool LeftChg, int? Right, bool RightChg, int? Case, bool CaseChg)? fallback = null;
-        while (Environment.TickCount64 < deadline)
+        for (int attempt = 0; attempt < 2; attempt++)
         {
-            var r = ch.Read(90);
-            if (r == null) continue;
-            var parsed = TryParseHubBatteryReport(r);
-            if (parsed != null)
+            byte seq = NextSeq();
+            byte[] req = BuildHubRequest(EidBatteryInfo, seq);
+            if (!ch.WriteOutput(req))
+                break;
+
+            var deadline = Environment.TickCount64 + 1200;
+            while (Environment.TickCount64 < deadline)
             {
-                if (r.Length > 11 && r[10] == ETypeRet && r[11] == seq)
-                    return parsed;
-                fallback ??= parsed;
-                continue;
+                var r = ch.Read(100);
+                if (r == null) continue;
+                var parsed = TryParseHubBatteryReport(r);
+                if (parsed != null)
+                {
+                    if (r.Length > 11 && r[10] == ETypeRet && r[11] == seq)
+                        return parsed;
+                    fallback ??= parsed;
+                    continue;
+                }
+                fallback ??= TryParsePassiveBudsReport(r);
             }
-            fallback ??= TryParsePassiveBudsReport(r);
+            if (fallback != null)
+                return fallback;
         }
-        return fallback;
+
+        // 回退尝试单包读取 AllFunctionSettingsPart1 (EID 0x06)：[modelId, 6B battery, ...]
+        var part1 = ExchangeOnce(ch, AddrPcToRx, EidAllFunctionSettingsPart1, ETypeGet, [], timeoutMs: 900);
+        if (part1 != null)
+        {
+            var fromPart1 = TryParsePart1BudsBattery(part1);
+            if (fromPart1 != null)
+                return fromPart1;
+        }
+
+        return null;
     }
 
     private static (int Percent, bool Charging)? QueryHeadsetBattery(HidChannel ch)
@@ -382,31 +490,53 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
         return (pct, charger != 0);
     }
 
-    private static byte[]? Exchange(HidChannel ch, byte eventId, byte eventType, ReadOnlySpan<byte> payload)
+    private static byte[]? Exchange(HidChannel ch, byte eventId, byte eventType, ReadOnlySpan<byte> payload, byte address = AddrPcToRx)
+    {
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            var res = ExchangeOnce(ch, address, eventId, eventType, payload, timeoutMs: 1500);
+            if (res != null)
+                return res;
+        }
+        return null;
+    }
+
+    private static byte[]? ExchangeOnce(HidChannel ch, byte address, byte eventId, byte eventType, ReadOnlySpan<byte> payload, int timeoutMs)
     {
         for (int i = 0; i < 6; i++)
             if (ch.Read(5) == null) break;
 
         byte seq = NextSeq();
-        byte[] req = BuildHciPacket(eventId, eventType, seq, payload);
+        byte[] req = BuildHciPacket(eventId, eventType, seq, payload, address);
         if (!ch.WriteOutput(req))
             return null;
 
         byte wantType = eventType == ETypeSet ? ETypeNtfy : ETypeRet;
-        var dl = Environment.TickCount64 + 900;
+        var dl = Environment.TickCount64 + timeoutMs;
         while (Environment.TickCount64 < dl)
         {
             var r = ch.Read(100);
-            if (r == null || r.Length < 14) continue;
-            if (r[0] != 0x02 || r[6] != 0x96 || r[7] != 0xC3) continue;
-            if (r[9] != eventId || r[11] != seq) continue;
-            if (r[10] != wantType && r[10] != ETypeNtfyActive) continue;
-
-            int hciLen = r[5];
-            int payloadLen = Math.Clamp(hciLen - 8, 0, Math.Max(0, r.Length - 14));
-            return r.AsSpan(13, payloadLen).ToArray();
+            if (r == null) continue;
+            if (TryParseHciEventPayload(r, eventId, seq, wantType) is { } parsed)
+                return parsed;
         }
         return null;
+    }
+
+    internal static byte[]? TryParseHciEventPayload(ReadOnlySpan<byte> r, byte expectedEventId, byte expectedSeq, byte expectedType)
+    {
+        if (r.Length < 14) return null;
+        if (r[0] != 0x02 || r[2] != 0x04 || r[3] != 0xFF || r[6] != 0x96 || r[7] != 0xC3)
+            return null;
+        if (r[9] != expectedEventId || r[11] != expectedSeq)
+            return null;
+        if (r[10] != expectedType && r[10] != ETypeNtfyActive)
+            return null;
+
+        // 事件包头: r[2]=0x04, r[3]=0xFF, r[4]=(9 + payloadLen), r[5]=0x00, [6..12]=vendor header, r[13..]=payload
+        if (r[4] < 9) return null;
+        int payloadLen = Math.Clamp(r[4] - 9, 0, Math.Max(0, r.Length - 14));
+        return r.Slice(13, payloadLen).ToArray();
     }
 
     private static byte NextSeq()
@@ -462,19 +592,37 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
         return (left, lChg, right, rChg, box, cChg);
     }
 
-    /// <summary>解析 INZONE Buds 主动推送（byte[1]=0x12, byte[2]=0x04）电池帧。</summary>
+    /// <summary>解析 INZONE Buds 主动推送（byte[1]=0x12, byte[2]=0x04）电池帧（openinzone/kinako19 验证：14=左, 16=右, 18=盒）。</summary>
     internal static (int? Left, bool LeftChg, int? Right, bool RightChg, int? Case, bool CaseChg)? TryParsePassiveBudsReport(ReadOnlySpan<byte> data)
     {
         if (data.Length <= 18) return null;
         if (data[0] != 0x02 || data[1] != 0x12 || data[2] != 0x04)
             return null;
 
-        int? right = data[14] <= 100 ? data[14] : null;
-        int? left = data[16] <= 100 ? data[16] : null;
+        int? left = data[14] <= 100 ? data[14] : null;
+        int? right = data[16] <= 100 ? data[16] : null;
         int? box = data[18] <= 100 ? data[18] : null;
-        bool rChg = data[13] == 0x01;
-        bool lChg = data[15] == 0x01;
+        bool lChg = data[13] == 0x01;
+        bool rChg = data[15] == 0x01;
         bool cChg = data[17] == 0x01;
+
+        if (left == null && right == null && box == null)
+            return null;
+        return (left, lChg, right, rChg, box, cChg);
+    }
+
+    /// <summary>解析 AllFunctionSettingsPart1 (EID 0x06) 载荷中的入耳 6 字节电量槽：[modelId, stL, pctL, stR, pctR, stCase, pctCase, ...]。</summary>
+    internal static (int? Left, bool LeftChg, int? Right, bool RightChg, int? Case, bool CaseChg)? TryParsePart1BudsBattery(ReadOnlySpan<byte> payload)
+    {
+        if (payload.Length < 13)
+            return null;
+
+        int? left = payload[2] <= 100 ? payload[2] : null;
+        int? right = payload[4] <= 100 ? payload[4] : null;
+        int? box = payload[6] <= 100 ? payload[6] : null;
+        bool lChg = payload[1] == 0x01;
+        bool rChg = payload[3] == 0x01;
+        bool cChg = payload[5] == 0x01;
 
         if (left == null && right == null && box == null)
             return null;

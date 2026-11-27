@@ -235,6 +235,7 @@ public partial class GamesView : UserControl
         var list = new List<UnifiedLibraryGame>();
         var rules = App.Settings.Current.GameRules;
         var matchedRuleIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool backfilledIcons = false;
 
         if (_cachedGames != null)
         {
@@ -250,7 +251,14 @@ public partial class GamesView : UserControl
                     r.ProcessNames.Any(p => gameProcSet.Contains(GameProfileRuleMatcher.NormalizeProcessName(p))));
 
                 if (matchingRule != null)
+                {
                     matchedRuleIds.Add(matchingRule.Id);
+                    if (string.IsNullOrWhiteSpace(matchingRule.IconPath) && !string.IsNullOrWhiteSpace(g.IconPath))
+                    {
+                        matchingRule.IconPath = g.IconPath;
+                        backfilledIcons = true;
+                    }
+                }
 
                 var procs = matchingRule != null && matchingRule.ProcessNames.Count > 0
                     ? matchingRule.ProcessNames.ToList()
@@ -267,6 +275,9 @@ public partial class GamesView : UserControl
                 });
             }
         }
+
+        if (backfilledIcons)
+            App.Settings.Save();
 
         var manualGames = new List<UnifiedLibraryGame>();
         foreach (var r in rules)

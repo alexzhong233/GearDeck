@@ -93,6 +93,7 @@ public partial class App : Application
 
         _startedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         Settings = new SettingsService();
+        Diag.VerboseEnabled = Settings.Current.DebugModeEnabled;
         AtkModelCatalog.SeedPersistentReceiverModels(Settings.Current.KnownReceiverModels);
         ReceiverModelRegistry.Seed(Settings.Current.KnownReceiverModels, Settings.Current.DeviceCustomNames);
 
@@ -403,6 +404,8 @@ public partial class App : Application
 
     private static void FlushDiag()
     {
+        if (!Settings.Current.DebugModeEnabled)
+            return;
         try
         {
             var dir = Path.Combine(StateDir, "logs");

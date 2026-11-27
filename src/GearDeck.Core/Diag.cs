@@ -8,8 +8,17 @@ public static class Diag
     private static readonly object Gate = new();
     private static readonly List<string> Lines = [];
 
+    /// <summary>仅在启用调试模式时开启高频诊断日志（非调试模式免写 SSD，仅记录异常与关键状态）。</summary>
+    public static volatile bool VerboseEnabled;
+
     private static string LogDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GearDeck", "logs");
+
+    public static void Verbose(string message)
+    {
+        if (VerboseEnabled)
+            Log(message);
+    }
 
     public static void Log(string message)
     {

@@ -140,8 +140,11 @@ public sealed class DeviceManager : IDisposable
                 }
                 if (!acquired || _disposed) return;
 
-                foreach (var line in Diag.DumpHidInventory())
-                    Diag.Log(line);
+                if (Diag.VerboseEnabled)
+                {
+                    foreach (var line in Diag.DumpHidInventory())
+                        Diag.Log(line);
+                }
 
                 // 控制扫描并发度避免阻塞式 HID 探测瞬间拉起过多线程池线程，总超时 6 秒
                 var scanConcurrency = new SemaphoreSlim(4, 4);
@@ -153,7 +156,7 @@ public sealed class DeviceManager : IDisposable
                         await scanConcurrency.WaitAsync().ConfigureAwait(false);
                         slotTaken = true;
                         var items = await Task.Run(() => p.Enumerate()).ConfigureAwait(false);
-                        Diag.Log($"{p.Name}: {items.Count} 台");
+                        Diag.Verbose($"{p.Name}: {items.Count} 台");
                         return (Provider: p, Succeeded: true, Items: (IReadOnlyList<PeripheralDevice>)items);
                     }
                     catch (Exception ex)

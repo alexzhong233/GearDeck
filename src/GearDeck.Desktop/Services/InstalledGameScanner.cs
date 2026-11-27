@@ -1,6 +1,10 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using GearDeck.Core;
 using GearDeck.Core.Services;
+using SkiaSharp;
 
 namespace GearDeck.Desktop.Services;
 
@@ -14,9 +18,8 @@ public sealed record ScannedGameEntry(
     string? ExePath);
 
 /// <summary>
-/// 跨平台本地游戏库扫描器：Windows 扫描 Steam/Epic/各平台目录/卸载注册表/运行中进程；
-/// macOS 扫描 /Applications 与 Steam libraryfolders.vdf。图标提取已移除，仅保留可选
-/// IconPath（如 .icns）与 ExePath 供 UI 自行决定呈现方式。
+/// 跨平台本地游戏库扫描器：Windows 扫描 Steam/Epic/各平台目录/卸载注册表/运行中进程并提取透明 PNG 图标缓存；
+/// macOS 扫描 /Applications 与 Steam libraryfolders.vdf。
 /// </summary>
 public static class InstalledGameScanner
 {
@@ -24,6 +27,7 @@ public static class InstalledGameScanner
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "GearDeck");
 
+    private static readonly string IconCacheDir = Path.Combine(AppDataDir, "game-icons");
     private static readonly string OpenMouseGamesCachePath = Path.Combine(AppDataDir, "openmouse-games.json");
     private static readonly HttpClient CatalogHttp = new() { Timeout = TimeSpan.FromSeconds(4) };
 
@@ -39,8 +43,147 @@ public static class InstalledGameScanner
         return await Task.Run(() => ScanInternal(catalog));
     }
 
-    /// <summary>图标提取已移除；保留接口兼容，恒返回 null。</summary>
-    public static string? ExtractExeIcon(string? exePath) => null;
+    /// <summary>从 Windows .exe 提取高分辨率图标并缓存为透明 PNG；非 Windows 平台返回 null。</summary>
+    public static string? ExtractExeIcon(string? exePath)
+    {
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+            return null;
+
+        try
+        {
+            Directory.CreateDirectory(IconCacheDir);
+            string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(exePath.ToLowerInvariant())))[..16];
+            string outPath = Path.Combine(IconCacheDir, $"{hash}.png");
+            if (File.Exists(outPath) && new FileInfo(outPath).Length > 100)
+                return outPath;
+
+            IntPtr hIcon = IntPtr.Zero;
+            var hIcons = new IntPtr[1];
+            var iconIds = new uint[1];
+            uint extracted = PrivateExtractIconsW(exePath, 0, 64, 64, hIcons, iconIds, 1, 0);
+            if (extracted >= 1 && hIcons[0] != IntPtr.Zero)
+            {
+                hIcon = hIcons[0];
+            }
+            else
+            {
+                var shfi = new SHFILEINFO();
+                const uint SHGFI_ICON = 0x100;
+                const uint SHGFI_LARGEICON = 0x0;
+                if (SHGetFileInfoW(exePath, 0, ref shfi, (uint)Marshal.SizeOf<SHFILEINFO>(), SHGFI_ICON | SHGFI_LARGEICON) != IntPtr.Zero)
+                    hIcon = shfi.hIcon;
+            }
+
+            if (hIcon == IntPtr.Zero)
+                return null;
+
+            try
+            {
+                if (!GetIconInfo(hIcon, out ICONINFO ii))
+                    return null;
+
+                try
+                {
+                    IntPtr hBmp = ii.hbmColor != IntPtr.Zero ? ii.hbmColor : ii.hbmMask;
+                    if (hBmp == IntPtr.Zero)
+                        return null;
+
+                    var bm = new BITMAP();
+                    if (GetObjectW(hBmp, Marshal.SizeOf<BITMAP>(), ref bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0)
+                        return null;
+
+                    int w = bm.bmWidth;
+                    int h = ii.hbmColor != IntPtr.Zero ? bm.bmHeight : Math.Max(1, bm.bmHeight / 2);
+                    var bmi = new BITMAPINFOHEADER
+                    {
+                        biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
+                        biWidth = w,
+                        biHeight = -h, // top-down DIB
+                        biPlanes = 1,
+                        biBitCount = 32,
+                        biCompression = 0,
+                    };
+
+                    byte[] pixels = new byte[w * h * 4];
+                    IntPtr hdc = GetDC(IntPtr.Zero);
+                    try
+                    {
+                        if (GetDIBits(hdc, hBmp, 0, (uint)h, pixels, ref bmi, 0) == 0)
+                            return null;
+
+                        bool anyAlpha = false;
+                        for (int i = 3; i < pixels.Length; i += 4)
+                        {
+                            if (pixels[i] != 0)
+                            {
+                                anyAlpha = true;
+                                break;
+                            }
+                        }
+
+                        if (!anyAlpha)
+                        {
+                            byte[]? maskPixels = null;
+                            if (ii.hbmMask != IntPtr.Zero)
+                            {
+                                var maskBm = new BITMAP();
+                                if (GetObjectW(ii.hbmMask, Marshal.SizeOf<BITMAP>(), ref maskBm) != 0 &&
+                                    maskBm.bmWidth == w && maskBm.bmHeight >= h)
+                                {
+                                    var maskBmi = new BITMAPINFOHEADER
+                                    {
+                                        biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
+                                        biWidth = w,
+                                        biHeight = -h,
+                                        biPlanes = 1,
+                                        biBitCount = 32,
+                                        biCompression = 0,
+                                    };
+                                    var buf = new byte[w * h * 4];
+                                    if (GetDIBits(hdc, ii.hbmMask, 0, (uint)h, buf, ref maskBmi, 0) != 0)
+                                        maskPixels = buf;
+                                }
+                            }
+
+                            for (int i = 0; i < pixels.Length; i += 4)
+                            {
+                                bool transparent = maskPixels != null && maskPixels[i] > 128;
+                                pixels[i + 3] = transparent ? (byte)0 : (byte)255;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        ReleaseDC(IntPtr.Zero, hdc);
+                    }
+
+                    using var skBmp = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+                    Marshal.Copy(pixels, 0, skBmp.GetPixels(), pixels.Length);
+                    using var img = SKImage.FromBitmap(skBmp);
+                    using var encoded = img.Encode(SKEncodedImageFormat.Png, 100);
+                    if (encoded == null)
+                        return null;
+
+                    using var fs = File.Create(outPath);
+                    encoded.SaveTo(fs);
+                    return outPath;
+                }
+                finally
+                {
+                    if (ii.hbmColor != IntPtr.Zero) DeleteObject(ii.hbmColor);
+                    if (ii.hbmMask != IntPtr.Zero) DeleteObject(ii.hbmMask);
+                }
+            }
+            finally
+            {
+                DestroyIcon(hIcon);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static async Task<IReadOnlyList<OpenMouseGameCatalogEntry>> LoadMergedCatalogAsync()
     {
@@ -382,7 +525,8 @@ public static class InstalledGameScanner
                 if (!cands.Contains(primary, StringComparer.OrdinalIgnoreCase))
                     cands.Insert(0, primary);
 
-                results.Add(new ScannedGameEntry(entry.Name, "运行检测", dir, primary, cands, null, fullPath));
+                string? iconPath = ExtractExeIcon(fullPath);
+                results.Add(new ScannedGameEntry(entry.Name, "运行检测", dir, primary, cands, iconPath, fullPath));
             }
             catch { }
             finally
@@ -442,7 +586,8 @@ public static class InstalledGameScanner
 
         string? primaryFullPath = exes.FirstOrDefault(e =>
             string.Equals(Path.GetFileName(e), primaryName, StringComparison.OrdinalIgnoreCase));
-        results.Add(new ScannedGameEntry(gameName, platform, dir, primaryName, pickedNames, null, primaryFullPath));
+        string? iconPath = ExtractExeIcon(primaryFullPath);
+        results.Add(new ScannedGameEntry(gameName, platform, dir, primaryName, pickedNames, iconPath, primaryFullPath));
     }
 
     private static List<string> EnumerateTopExesBounded(string rootDir, int maxDepth)
@@ -515,5 +660,84 @@ public static class InstalledGameScanner
         try { return Directory.GetDirectories(dir); }
         catch { return []; }
     }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct SHFILEINFO
+    {
+        public IntPtr hIcon;
+        public int iIcon;
+        public uint dwAttributes;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szDisplayName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 80)]
+        public string szTypeName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ICONINFO
+    {
+        public bool fIcon;
+        public int xHotspot;
+        public int yHotspot;
+        public IntPtr hbmMask;
+        public IntPtr hbmColor;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BITMAP
+    {
+        public int bmType;
+        public int bmWidth;
+        public int bmHeight;
+        public int bmWidthBytes;
+        public ushort bmPlanes;
+        public ushort bmBitsPixel;
+        public IntPtr bmBits;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BITMAPINFOHEADER
+    {
+        public uint biSize;
+        public int biWidth;
+        public int biHeight;
+        public ushort biPlanes;
+        public ushort biBitCount;
+        public uint biCompression;
+        public uint biSizeImage;
+        public int biXPelsPerMeter;
+        public int biYPelsPerMeter;
+        public uint biClrUsed;
+        public uint biClrImportant;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint PrivateExtractIconsW(
+        string szFileName, int nIconIndex, int cxIcon, int cyIcon,
+        IntPtr[] phicon, uint[] piconid, uint nIcons, uint flags);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SHGetFileInfoW(string pszPath, uint dwFileAttributes, ref SHFILEINFO psfi, uint cbSizeFileInfo, uint uFlags);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetIconInfo(IntPtr hIcon, out ICONINFO piconinfo);
+
+    [DllImport("user32.dll")]
+    private static extern bool DestroyIcon(IntPtr hIcon);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetObjectW(IntPtr hgdiobj, int cbBuffer, ref BITMAP lpvObject);
+
+    [DllImport("gdi32.dll")]
+    private static extern int GetDIBits(IntPtr hdc, IntPtr hbmp, uint uStartScan, uint cScanLines, byte[] lpvBits, ref BITMAPINFOHEADER lpbi, uint uUsage);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteObject(IntPtr hObject);
 }
 

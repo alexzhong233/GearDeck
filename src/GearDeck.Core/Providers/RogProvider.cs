@@ -174,7 +174,7 @@ public sealed class RogProvider : ITunablePeripheralProvider
             if (ch == null) continue;
             var reply = Query(ch, 0xCC, 0x07);
             if (reply == null) continue;
-            Diag.Log($"ROG {pid:X4} headset raw={BitConverter.ToString(reply, 0, Math.Min(16, reply.Length))}");
+            Diag.Verbose($"ROG {pid:X4} headset raw={BitConverter.ToString(reply, 0, Math.Min(16, reply.Length))}");
             int percent = reply.Length > 6 ? reply[6] : 0;
             bool charging = false;
             var charge = Query(ch, 0xCC, 0x08);
@@ -209,7 +209,7 @@ public sealed class RogProvider : ITunablePeripheralProvider
 
         var paired = QueryOmniPairedPids(omni);
         if (paired.Count > 0)
-            Diag.Log($"ROG Omni 配对设备: {string.Join(",", paired.Select(p => p.ToString("X4")))}");
+            Diag.Verbose($"ROG Omni 配对设备: {string.Join(",", paired.Select(p => p.ToString("X4")))}");
 
         bool addedAny = false;
         var kbIface = omni.FirstOrDefault(d => d.DevicePath.Contains("col02", StringComparison.OrdinalIgnoreCase)) ?? omni[0];

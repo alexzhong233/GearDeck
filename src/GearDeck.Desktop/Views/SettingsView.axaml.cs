@@ -98,7 +98,9 @@ public partial class SettingsView : UserControl
         DebugSwitch.IsCheckedChanged += (_, _) =>
         {
             if (_binding) return;
-            App.Settings.Current.DebugModeEnabled = DebugSwitch.IsChecked == true;
+            bool debug = DebugSwitch.IsChecked == true;
+            App.Settings.Current.DebugModeEnabled = debug;
+            GearDeck.Core.Diag.VerboseEnabled = debug;
             App.Settings.Save();
             MainWindow.Instance?.UpdateDebugVisibility();
             MarkUnsaved();
@@ -258,6 +260,7 @@ public partial class SettingsView : UserControl
             s.GlobalLowBatteryNotificationEnabled = GlobalLowBatNotifySwitch.IsChecked == true;
             s.AutoYieldToVendorSoftware = AutoYieldSwitch.IsChecked == true;
             s.DebugModeEnabled = DebugSwitch.IsChecked == true;
+            GearDeck.Core.Diag.VerboseEnabled = s.DebugModeEnabled;
             s.CheckUpdateOnStartup = AutoCheckUpdateSwitch.IsChecked == true;
             s.GitHubMirrorUrl = GetSelectedMirrorUrl();
             s.UpdateRepoSlug = NormalizeRepoSlug(s.UpdateRepoSlug);

@@ -39,7 +39,7 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
             {
                 if (shorts.Count == 0 && longs.Count == 0)
                 {
-                    Diag.Log($"Logitech {pid:X4}: no channels");
+                    Diag.Verbose($"Logitech {pid:X4}: no channels");
                     continue;
                 }
                 var h = new Hidpp(shorts, longs);
@@ -48,7 +48,7 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                 bool passthrough = pid == 0xC54F;
                 bool knownSleepingReceiver = pid is 0xC54F or 0xC547 or 0xC54D or 0xC539 or 0xC53F or 0xC545 or 0xC548;
                 bool receiver = passthrough || product.Contains("Receiver", StringComparison.OrdinalIgnoreCase) || product.Contains("Lightspeed", StringComparison.OrdinalIgnoreCase);
-                Diag.Log($"Logitech {pid:X4}: shorts={shorts.Count} longs={longs.Count} product={product}");
+                Diag.Verbose($"Logitech {pid:X4}: shorts={shorts.Count} longs={longs.Count} product={product}");
 
                 var list = (passthrough ? new byte[] { 1 }
                     : receiver ? new byte[] { 1, 2, 3, 4, 5, 6 }
@@ -59,7 +59,7 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                 foreach (byte idx in list.Distinct())
                 {
                     var battery = ReadBattery(h, idx, out byte chargeStatus);
-                    Diag.Log($"Logitech {pid:X4}: idx={idx:X2} battery={battery}");
+                    Diag.Verbose($"Logitech {pid:X4}: idx={idx:X2} battery={battery}");
                     if (battery == null)
                         continue;
 

@@ -278,4 +278,27 @@ public class DesktopCompatibilityTests
         Assert.Equal("https://raw.githubusercontent.com/alexzhong233/GearDeck/assets/images/custom_asset.png", direct[1]);
         Assert.Equal(testUrl, direct[2]);
     }
+
+    [Fact]
+    public void InstalledGameScanner_ExtractExeIcon_CachesValidPngOnWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        string sampleExe = Path.Combine(Environment.SystemDirectory, "notepad.exe");
+        if (!File.Exists(sampleExe))
+            return;
+
+        string? pngPath = InstalledGameScanner.ExtractExeIcon(sampleExe);
+        Assert.False(string.IsNullOrWhiteSpace(pngPath));
+        Assert.True(File.Exists(pngPath));
+        Assert.EndsWith(".png", pngPath!, StringComparison.OrdinalIgnoreCase);
+
+        byte[] bytes = File.ReadAllBytes(pngPath!);
+        Assert.True(bytes.Length > 100);
+        Assert.Equal((byte)0x89, bytes[0]);
+        Assert.Equal((byte)'P', bytes[1]);
+        Assert.Equal((byte)'N', bytes[2]);
+        Assert.Equal((byte)'G', bytes[3]);
+    }
 }

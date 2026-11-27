@@ -382,15 +382,57 @@ public sealed class CatalogAndProtocolUpgradeTests
         passive[0] = 0x02;
         passive[1] = 0x12;
         passive[2] = 0x04;
-        passive[13] = 0x00; passive[14] = 81; // Right
-        passive[15] = 0x01; passive[16] = 74; // Left charging
+        passive[13] = 0x01; passive[14] = 74; // Left charging
+        passive[15] = 0x00; passive[16] = 81; // Right
         passive[17] = 0x00; passive[18] = 95; // Case
         var parsed = SonyInzoneProvider.TryParsePassiveBudsReport(passive);
         Assert.NotNull(parsed);
         Assert.Equal(74, parsed!.Value.Left);
         Assert.True(parsed.Value.LeftChg);
         Assert.Equal(81, parsed.Value.Right);
+        Assert.False(parsed.Value.RightChg);
         Assert.Equal(95, parsed.Value.Case);
+
+        byte[] part1 = [0x04, 0x00, 68, 0x00, 67, 0xFF, 97, 0, 21, 0xFF, 50, 3, 0xFF];
+        var p1Parsed = SonyInzoneProvider.TryParsePart1BudsBattery(part1);
+        Assert.NotNull(p1Parsed);
+        Assert.Equal(68, p1Parsed!.Value.Left);
+        Assert.Equal(67, p1Parsed.Value.Right);
+        Assert.Equal(97, p1Parsed.Value.Case);
+
+        // 真实实机回包格式: 02-0E-04-FF-0B-00-96-C3-12-01-10-0A-00-00-00-86
+        byte[] realTxConn = [0x02, 0x0E, 0x04, 0xFF, 0x0B, 0x00, 0x96, 0xC3, 0x12, 0x01, 0x10, 0x0A, 0x00, 0x00, 0x00, 0x86];
+        var txPayload = SonyInzoneProvider.TryParseHciEventPayload(realTxConn, 0x01, 0x0A, 0x10);
+        Assert.NotNull(txPayload);
+        Assert.Equal([0x00, 0x00], txPayload!);
+
+        // 真实 Buds 6 字节电量回包: 02-12-04-FF-0F-00-96-C3-14-04-10-05-00-00-64-00-5F-FF-50-cs
+        byte[] realBatEvent = [0x02, 0x12, 0x04, 0xFF, 0x0F, 0x00, 0x96, 0xC3, 0x14, 0x04, 0x10, 0x05, 0x00, 0x00, 100, 0x00, 95, 0xFF, 80, 0x00];
+        var batPayload = SonyInzoneProvider.TryParseHciEventPayload(realBatEvent, 0x04, 0x05, 0x10);
+        Assert.NotNull(batPayload);
+        Assert.Equal([0x00, 100, 0x00, 95, 0xFF, 80], batPayload!);
+    }
+
+    [Fact]
+    public void Diag_VerboseOnlyLogsWhenVerboseEnabled()
+    {
+        bool prev = GearDeck.Core.Diag.VerboseEnabled;
+        try
+        {
+            string tagOff = $"diag_off_{Guid.NewGuid():N}";
+            GearDeck.Core.Diag.VerboseEnabled = false;
+            GearDeck.Core.Diag.Verbose(tagOff);
+            Assert.DoesNotContain(GearDeck.Core.Diag.Snapshot(), l => l.Contains(tagOff, StringComparison.Ordinal));
+
+            string tagOn = $"diag_on_{Guid.NewGuid():N}";
+            GearDeck.Core.Diag.VerboseEnabled = true;
+            GearDeck.Core.Diag.Verbose(tagOn);
+            Assert.Contains(GearDeck.Core.Diag.Snapshot(), l => l.Contains(tagOn, StringComparison.Ordinal));
+        }
+        finally
+        {
+            GearDeck.Core.Diag.VerboseEnabled = prev;
+        }
     }
 
     [Fact]

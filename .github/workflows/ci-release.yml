@@ -311,10 +311,10 @@ jobs:
             - 如需读取键盘/鼠标 HID 与监听前台应用，请在「系统设置 → 隐私与安全性」授予 **输入监控（Input Monitoring）** 与 **辅助功能（Accessibility）** 权限。
 
           ### 本版亮点
-          - **跨平台桌面端 (`GearDeck.Desktop`)**：Win11 Mica / macOS AcrylicBlur 毛玻璃质感，兼容原有 `settings.json`
-          - **macOS 原生菜单栏状态平铺 & 硬件监控**：支持平铺展示多台外设电量与 12 项系统指标，点击弹窗快速调参，自动检测 `NSWorkspace` 前台应用切换游戏配置
-          - **LEOBOG Hi98C Pro 四页签专业管理控制台**：支持无线 `0x41` 读取键位、101 键交互式画布、5 层查看与 Mac 一键预设、17 种板载 RGB 与单键涂色预览（`0x08/0x88`）、有线防锁死安全写闪存及 JSON EEPROM 备份恢复
-          - **新增与完善协议**：名龙星球 `MLOONG MX301 PRO / PRO V2 / PRO X`、`LEOBOG Hi98C Pro` 三模识别与 macOS IOKit 原生直通；修复 macOS 无障碍遍历与异步防抖误写入问题
+          - **Sony INZONE Buds (WF-G700N) & 多品牌协议大升级**：新增/修复 Sony INZONE Buds & H5 & H9 II 降噪/环境音/侧音/ChatMix/语音提示/自动关机控制及佩戴防休眠误判；扩展 ROG 键鼠耳机、HyperX（含 Alpha 2 & Flight）、SteelSeries Nova 7、Corsair Bragi V2 与 QMK/VIA 键盘硬件调控
+          - **预渲染设备图库与镜像加速**：桌面端自动优先从 `assets` 分支拉取 256px 预渲染 PNG（支持 GitHub 加速镜像与 jsDelivr/原图兜底）
+          - **游戏库与 UI 交互优化**：恢复 Windows 扫描游戏 `.exe` 透明 PNG 图标自动提取与旧规则回填；重构单游戏弹窗卡片布局、设置双栏排版、设备协议与 Logitech 板载模式分层展示
+          - **零 SSD 磨损静默运行**：非调试模式下全面关闭日常 `diag.log` 落盘与高频 HID 枚举日志（仅崩溃写入 `crash.log`）
           EOF
           ls -la dist/*
 
