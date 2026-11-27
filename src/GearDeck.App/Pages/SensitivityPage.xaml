@@ -196,7 +196,7 @@
             <Expander x:Name="AdvancedExpander" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False">
                 <Expander.Header>
                     <TextBlock x:Name="AdvancedSummaryText" FontSize="14" FontWeight="SemiBold"
-                               Text="高级功能：DPI 与 分辨率（当前 800 DPI · 3840×2160 16:9）" />
+                               Text="高级功能：DPI 与 分辨率（当前 800 DPI · 1920×1080 16:9）" />
                 </Expander.Header>
                 <controls:ResponsiveWrapPanel Spacing="16" LineSpacing="12">
                     <StackPanel Spacing="10" MinWidth="320">

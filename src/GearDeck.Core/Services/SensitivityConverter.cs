@@ -63,11 +63,11 @@ public sealed record SensitivityConversionRequest(
     double TargetFov,
     double BaseDpi = 800,
     double TargetDpi = 800,
-    int BaseWidth = 3840,
-    int BaseHeight = 2160,
+    int BaseWidth = 1920,
+    int BaseHeight = 1080,
     bool BaseStretchedTo16By9 = false,
-    int TargetWidth = 3840,
-    int TargetHeight = 2160,
+    int TargetWidth = 1920,
+    int TargetHeight = 1080,
     bool TargetStretchedTo16By9 = false,
     SensitivityConversionMethod Method = SensitivityConversionMethod.Cm360);
 

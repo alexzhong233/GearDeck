@@ -1,6 +1,7 @@
 # GearDeck Workspace Rules
 
 ## 硬性安全与硬件约束
+- 严禁在代码、脚本、CI 与文档中写入用户本机绝对路径（个人盘符目录、本地项目路径、本地 IDE 路径）、用户名、主机名、个人软件安装盘符或本机特定分辨率默认值（统一用系统 API / 环境变量 / 相对路径，默认分辨率用通用 `1920×1080` 或运行时探测）。
 - 禁止修改 `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3` 或重启 `explorer.exe`。
 - 禁止带 `--preview` 参数启动 `GearDeck.Widget.exe`。
 - 禁止伪造从未观测过真实电量的设备百分比；休眠回退仅限 `LastKnownBatteries` 的真实历史采集值。

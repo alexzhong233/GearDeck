@@ -23,14 +23,59 @@ public sealed record VendorDriverLinks(
 /// <summary>各品牌官方本地设置软件与官方网页驱动（WebHID）注册目录。</summary>
 public static class VendorDriverCatalog
 {
+    private static string[] ExpandProgramFiles(bool includeAllFixedDrives, params string[] relativePaths)
+    {
+        if (!OperatingSystem.IsWindows())
+            return [];
+
+        var roots = new List<string>();
+        foreach (var root in new[]
+                 {
+                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                 })
+        {
+            if (!string.IsNullOrWhiteSpace(root))
+                roots.Add(root);
+        }
+
+        if (includeAllFixedDrives)
+        {
+            try
+            {
+                foreach (var drive in DriveInfo.GetDrives())
+                {
+                    if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
+                    string pf = Path.Combine(drive.RootDirectory.FullName, "Program Files");
+                    string pf86 = Path.Combine(drive.RootDirectory.FullName, "Program Files (x86)");
+                    roots.Add(pf);
+                    roots.Add(pf86);
+                }
+            }
+            catch { }
+        }
+
+        var candidates = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string root in roots)
+        {
+            foreach (string rel in relativePaths)
+            {
+                string full = Path.Combine(root, rel);
+                if (seen.Add(full))
+                    candidates.Add(full);
+            }
+        }
+        return [.. candidates];
+    }
+
     private static readonly LocalDriverInfo LogitechLocal = new(
         "logitech",
         "打开 Logitech G HUB",
         ["lghub", "lghub_ui", "lghub_agent"],
-        [
-            @"C:\Program Files\LGHUB\lghub.exe",
-            @"C:\Program Files\Logitech Gaming Software\LCore.exe",
-        ],
+        ExpandProgramFiles(false,
+            @"LGHUB\lghub.exe",
+            @"Logitech Gaming Software\LCore.exe"),
         ["Logitech G HUB"],
         null,
         "https://www.logitechg.com/innovation/g-hub.html");
@@ -48,11 +93,10 @@ public static class VendorDriverCatalog
         "razer",
         "打开 Razer 雷云 Synapse",
         ["RazerAppEngine", "Razer Synapse 3", "Razer Central"],
-        [
-            @"C:\Program Files\Razer\RazerAppEngine\RazerAppEngine.exe",
-            @"C:\Program Files\Razer\Razer Services\Razer Central\Razer Central.exe",
-            @"C:\Program Files (x86)\Razer\Synapse3\WPFUI\Framework\Razer Synapse 3 Host\Razer Synapse 3.exe",
-        ],
+        ExpandProgramFiles(false,
+            @"Razer\RazerAppEngine\RazerAppEngine.exe",
+            @"Razer\Razer Services\Razer Central\Razer Central.exe",
+            @"Razer\Synapse3\WPFUI\Framework\Razer Synapse 3 Host\Razer Synapse 3.exe"),
         ["Razer Synapse", "Razer Central"],
         null,
         "https://www.razer.com/synapse-4");
@@ -61,10 +105,7 @@ public static class VendorDriverCatalog
         "sony",
         "打开 Sony INZONE Hub",
         ["INZONEHub", "INZONE Hub"],
-        [
-            @"C:\Program Files\Sony\INZONE Hub\INZONEHub.exe",
-            @"C:\Program Files (x86)\Sony\INZONE Hub\INZONEHub.exe",
-        ],
+        ExpandProgramFiles(false, @"Sony\INZONE Hub\INZONEHub.exe"),
         ["INZONE Hub"],
         null,
         "https://www.sony.com/electronics/support/articles/00279263");
@@ -73,13 +114,9 @@ public static class VendorDriverCatalog
         "flydigi",
         "打开 飞智空间站",
         ["FlydigiSpaceStation", "SpaceStation", "飞智空间站"],
-        [
-            @"C:\Program Files\FlydigiSpaceStation\FlydigiSpaceStation.exe",
-            @"C:\Program Files (x86)\FlydigiSpaceStation\FlydigiSpaceStation.exe",
-            @"C:\Program Files\Flydigi\SpaceStation\FlydigiSpaceStation.exe",
-            @"C:\Program Files (x86)\Flydigi\SpaceStation\FlydigiSpaceStation.exe",
-            @"D:\Program Files\FlydigiSpaceStation\FlydigiSpaceStation.exe",
-        ],
+        ExpandProgramFiles(true,
+            @"FlydigiSpaceStation\FlydigiSpaceStation.exe",
+            @"Flydigi\SpaceStation\FlydigiSpaceStation.exe"),
         ["飞智空间站", "Flydigi Space Station", "Flydigi"],
         null,
         "https://www.flydigi.com/index/down");

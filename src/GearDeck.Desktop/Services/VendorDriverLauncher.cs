@@ -349,14 +349,18 @@ public static class VendorDriverLauncher
 
         if (preferChromium)
         {
-            string[] chromiumCandidates =
-            [
-                @"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Google\Chrome\Application\chrome.exe"),
-                @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                @"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-            ];
+            var chromiumCandidates = new List<string>();
+            foreach (var folder in new[]
+                     {
+                         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                     })
+            {
+                if (string.IsNullOrWhiteSpace(folder)) continue;
+                chromiumCandidates.Add(Path.Combine(folder, @"Google\Chrome\Application\chrome.exe"));
+                chromiumCandidates.Add(Path.Combine(folder, @"Microsoft\Edge\Application\msedge.exe"));
+            }
             foreach (string exe in chromiumCandidates)
             {
                 if (File.Exists(exe) && TryShellStart(exe, $"\"{url}\""))

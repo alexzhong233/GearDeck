@@ -62,12 +62,12 @@ public sealed class SensitivityConverterPrefs
     public double BaseDpi { get; set; } = 800;
     public bool SameDpi { get; set; } = true;
     public double TargetDpi { get; set; } = 800;
-    public int BaseWidth { get; set; } = 3840;
-    public int BaseHeight { get; set; } = 2160;
+    public int BaseWidth { get; set; } = 1920;
+    public int BaseHeight { get; set; } = 1080;
     public bool BaseStretched { get; set; }
     public bool SameResolution { get; set; } = true;
-    public int TargetWidth { get; set; } = 3840;
-    public int TargetHeight { get; set; } = 2160;
+    public int TargetWidth { get; set; } = 1920;
+    public int TargetHeight { get; set; } = 1080;
     public bool TargetStretched { get; set; }
     public Dictionary<string, double> PerGameFovs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

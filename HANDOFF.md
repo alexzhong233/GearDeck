@@ -1,14 +1,13 @@
 # GearDeck 项目交接文档（给下一个 AI / 开发者）
 
 > 更新时间：2026-11-23
-> 本地项目路径：`D:\projects\GearDeck`
 > GitHub 仓库：https://github.com/alexzhong233/GearDeck
 > 状态：**已发布 v1.0.4（怒喵 RACE 原生调校、ATK A9 Mini 全链路识别与 PAW3950Ultra/3955MASTER DPI 修正、左侧硬件状态 + 右上独立配置文件快切栏、实时 RT 按压力度条、0.1mm LOD 滑块、ROG UWP 奥创启动与飞智网页空间站、双耳两行贴片与历史电量回退、任务栏防闪烁防卡死、开机自启与全屏检测/回退修复、USB/HID 实时热插拔与双模充电设备归一）**
 
 ## 一、项目结构与产物
 
 - **解决方案**：`GearDeck.slnx` · **WinUI 主程序**：`src/GearDeck.App/GearDeck.App.csproj` · **任务栏贴片**：`src/GearDeck.Widget/GearDeck.Widget.csproj` · **集中版本控制**：`Directory.Build.props` (`1.0.4`)
-- **CI / 自动发布工作流**：[ci-release.yml](file:///d:/projects/GearDeck/.github/workflows/ci-release.yml)（基于 Windows runner + MSBuild + Inno Setup 6 自动生成并上传/发布安装包 `.exe`、绿色解压 `.zip`、增量补丁 `patch.zip` 与 `latest.json`）
+- **CI / 自动发布工作流**：[.github/workflows/ci-release.yml](.github/workflows/ci-release.yml)（基于 Windows runner + MSBuild + Inno Setup 6 自动生成并上传/发布安装包 `.exe`、绿色解压 `.zip`、增量补丁 `patch.zip` 与 `latest.json`）
 - **发布打包与安装包脚本**：`scripts/package-release.ps1`、`scripts/installer.iss`
 - **硬件协议栈 (`src/GearDeck.Core`)**：
   - `AngryMiaoRaceProtocol` & `AngryMiaoProvider`：怒喵 `AM Infinity .97` (`0E8D:0703`) 完整 Airoha RACE 协议电量、DPI 档位、回报率、LOD (`0.7..2.0 mm`)、防抖、Motion Sync / 直线修正 / 波纹控制读写，官方网页驱动更新为 `https://ammaster.angrymiao.com/mouse/devices`，产品图切换为单鼠标高清图 (`device-images.json` v4)。
