@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using GearDeck.Core.Models;
 
 namespace GearDeck.Core.Services;
@@ -12,8 +14,11 @@ public sealed class DeviceImageRule
     public string? VidPid { get; set; }
     public string? Vid { get; set; }
     public List<string> Keywords { get; set; } = [];
+    public string? NameRegex { get; set; }
+    public bool SharedReceiver { get; set; }
     public string? Kind { get; set; }
     public string? Preset { get; set; }
+    public string? OpenMouseSlug { get; set; }
     public string? CloudUrl { get; set; }
     public string? PiperSvg { get; set; }
     public string? AssetFile { get; set; }
@@ -56,6 +61,8 @@ public sealed record DeviceImageMatchResult(
 /// </summary>
 public static class DeviceImageRuleMatcher
 {
+    private static readonly ConcurrentDictionary<string, Regex?> RegexCache = new(StringComparer.Ordinal);
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -113,6 +120,7 @@ public static class DeviceImageRuleMatcher
                 baseById.TryGetValue(r.Id.Trim(), out var baseRule) &&
                 !string.IsNullOrWhiteSpace(baseRule.AssetFile) &&
                 string.Equals(r.CloudUrl ?? "", baseRule.CloudUrl ?? "", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(r.OpenMouseSlug ?? "", baseRule.OpenMouseSlug ?? "", StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(r.PiperSvg ?? "", baseRule.PiperSvg ?? "", StringComparison.OrdinalIgnoreCase))
             {
                 rules.Add(new DeviceImageRule
@@ -122,8 +130,11 @@ public static class DeviceImageRuleMatcher
                     VidPid = r.VidPid,
                     Vid = r.Vid,
                     Keywords = r.Keywords,
+                    NameRegex = r.NameRegex,
+                    SharedReceiver = r.SharedReceiver,
                     Kind = r.Kind,
                     Preset = r.Preset,
+                    OpenMouseSlug = r.OpenMouseSlug,
                     CloudUrl = r.CloudUrl,
                     PiperSvg = r.PiperSvg,
                     AssetFile = baseRule.AssetFile,
@@ -214,17 +225,34 @@ public static class DeviceImageRuleMatcher
             string rVidPid = NormalizeVidPid(rule.VidPid);
             string rVid = NormalizeHex4(rule.Vid);
 
-            // 1. 精确 VID:PID 匹配
-            if (!string.IsNullOrEmpty(rVidPid))
+            // 0. OpenMouse 风格：上报真实型号名称正则优先（规避共享接收器 PID 冲突）
+            if (!string.IsNullOrWhiteSpace(rule.NameRegex))
             {
-                if (!string.IsNullOrEmpty(devVidPid) && string.Equals(rVidPid, devVidPid, StringComparison.OrdinalIgnoreCase))
+                bool vidOk = string.IsNullOrEmpty(rVid) || devVid == rVid;
+                if (vidOk && MatchesRegex(rule.NameRegex, device.Name))
                 {
-                    int score = 1000;
+                    int score = 1100;
                     if (score > bestScore)
                     {
                         bestScore = score;
                         bestRule = rule;
                         bestExact = true;
+                    }
+                }
+                continue;
+            }
+
+            // 1. 精确 VID:PID 匹配（共享接收器降权，让 NameRegex / 关键词规则优先）
+            if (!string.IsNullOrEmpty(rVidPid))
+            {
+                if (!string.IsNullOrEmpty(devVidPid) && string.Equals(rVidPid, devVidPid, StringComparison.OrdinalIgnoreCase))
+                {
+                    int score = rule.SharedReceiver ? 450 : 1000;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestRule = rule;
+                        bestExact = !rule.SharedReceiver;
                     }
                 }
                 continue;
@@ -296,10 +324,39 @@ public static class DeviceImageRuleMatcher
         }
 
         string preset = !string.IsNullOrWhiteSpace(bestRule?.Preset) ? bestRule.Preset! : fallbackPreset;
-        string? cloudUrl = !string.IsNullOrWhiteSpace(bestRule?.CloudUrl) ? bestRule.CloudUrl : null;
+        string? cloudUrl = ResolveRuleCloudUrl(bestRule);
         string? piperSvg = !string.IsNullOrWhiteSpace(bestRule?.PiperSvg) ? bestRule.PiperSvg : null;
         string? assetFile = !string.IsNullOrWhiteSpace(bestRule?.AssetFile) ? bestRule.AssetFile : null;
         return new DeviceImageMatchResult(bestRule, preset, cloudUrl, piperSvg, bestExact, assetFile);
+    }
+
+    public static string? ResolveRuleCloudUrl(DeviceImageRule? rule)
+    {
+        if (rule == null) return null;
+        if (!string.IsNullOrWhiteSpace(rule.CloudUrl))
+            return rule.CloudUrl;
+        if (!string.IsNullOrWhiteSpace(rule.OpenMouseSlug))
+            return $"https://img.openmouse.app/{rule.OpenMouseSlug.Trim().TrimStart('/')}";
+        return null;
+    }
+
+    private static bool MatchesRegex(string pattern, string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return false;
+        var regex = RegexCache.GetOrAdd(pattern, static p =>
+        {
+            try
+            {
+                return new Regex(p, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+            }
+            catch
+            {
+                return null;
+            }
+        });
+        if (regex == null) return false;
+        try { return regex.IsMatch(input); }
+        catch { return false; }
     }
 
     public static bool TryExtractVidPid(PeripheralDevice d, out string vidHex, out string pidHex)
@@ -351,6 +408,7 @@ public static class DeviceImageRuleMatcher
                 "steelseries" => "1038",
                 "corsair" => "1b1c",
                 "hyperx" => "03f0",
+                "audeze" => "3329",
                 "wooting" => "31e3",
                 "keychron" => "3434",
                 "monsgeek" => "3151",

@@ -20,6 +20,10 @@ public sealed class SteelSeriesProvider : IPeripheralProvider, ITunablePeriphera
         0x220A, 0x22A7, 0x2298,
     ];
 
+    private static readonly HashSet<ushort> Nova5Pids = [0x2232, 0x2253];
+    private static readonly HashSet<ushort> Arctis7PlusPids = [0x220E, 0x2212, 0x2216, 0x2236];
+    private static readonly int[] Nova5SidetoneDisplay = [0, 16, 27, 38, 49, 60, 71, 82, 93, 104, 128];
+
     public string Name => ProviderName;
 
     public bool CanHandleDevice(string deviceId)
@@ -79,7 +83,16 @@ public sealed class SteelSeriesProvider : IPeripheralProvider, ITunablePeriphera
     public DeviceTuningCapabilities QueryCapabilities(string deviceId)
     {
         var caps = new DeviceTuningCapabilities { DeviceId = deviceId };
-        if (!TryParsePid(deviceId, out ushort pid) || !Nova7Pids.Contains(pid))
+        if (!TryParsePid(deviceId, out ushort pid))
+        {
+            caps.StatusMessage = "无效的 SteelSeries 设备标识。";
+            return caps;
+        }
+
+        bool isNova7 = Nova7Pids.Contains(pid);
+        bool isNova5 = Nova5Pids.Contains(pid);
+        bool is7Plus = Arctis7PlusPids.Contains(pid);
+        if (!isNova7 && !isNova5 && !is7Plus)
         {
             caps.StatusMessage = "当前 SteelSeries 设备仅支持电量监测。";
             return caps;
@@ -88,7 +101,7 @@ public sealed class SteelSeriesProvider : IPeripheralProvider, ITunablePeriphera
         using var ch = OpenNovaChannel(pid);
         if (ch == null)
         {
-            caps.StatusMessage = "未检测到可用的 Arctis Nova 7 (0xFFC0) 控制通道。";
+            caps.StatusMessage = "未检测到可用的 SteelSeries (0xFFC0) 控制通道。";
             return caps;
         }
 
@@ -102,8 +115,35 @@ public sealed class SteelSeriesProvider : IPeripheralProvider, ITunablePeriphera
                 chatMix = $"游戏 {r[4]}% / 语音 {r[5]}%";
         }
 
+        if (isNova5)
+        {
+            int curSt = 0;
+            var audioReq = new byte[Math.Max(ch.OutputLength, 64)];
+            audioReq[0] = 0x00; audioReq[1] = 0x20;
+            if (ch.WriteOutput(audioReq))
+            {
+                var ar = ch.Read(300);
+                if (ar != null && ar.Length > 62 && ar[62] < Nova5SidetoneDisplay.Length)
+                    curSt = ar[62];
+            }
+            caps.IsOnline = true;
+            caps.StatusMessage = "SteelSeries Arctis Nova 5/5X · 0xFFC0 控制通道";
+            caps.SupportsSidetone = true;
+            caps.SidetoneEnabled = curSt > 0;
+            caps.CurrentSidetoneLevel = curSt;
+            caps.MaxSidetoneLevel = 10;
+            caps.SupportsSleepTimeout = true;
+            caps.MinSleepSeconds = 300;
+            caps.MaxSleepSeconds = 3600;
+            caps.SupportedSleepSeconds = [300, 600, 900, 1800, 3600];
+            caps.ChatMixSummary = chatMix;
+            return caps;
+        }
+
         caps.IsOnline = true;
-        caps.StatusMessage = "SteelSeries Arctis Nova 7 · 0xFFC0 控制通道";
+        caps.StatusMessage = is7Plus
+            ? "SteelSeries Arctis 7+ · 0xFFC0 控制通道"
+            : "SteelSeries Arctis Nova 7 · 0xFFC0 控制通道";
         caps.SupportsSidetone = true;
         caps.SidetoneEnabled = true;
         caps.MaxSidetoneLevel = 3;
@@ -117,7 +157,13 @@ public sealed class SteelSeriesProvider : IPeripheralProvider, ITunablePeriphera
 
     public DeviceTuningResult ApplySettings(string deviceId, DeviceTuningUpdate update)
     {
-        if (!TryParsePid(deviceId, out ushort pid) || !Nova7Pids.Contains(pid))
+        if (!TryParsePid(deviceId, out ushort pid))
+            return new DeviceTuningResult(false, "无效的 SteelSeries 设备标识");
+
+        bool isNova7 = Nova7Pids.Contains(pid);
+        bool isNova5 = Nova5Pids.Contains(pid);
+        bool is7Plus = Arctis7PlusPids.Contains(pid);
+        if (!isNova7 && !isNova5 && !is7Plus)
             return new DeviceTuningResult(false, "当前 SteelSeries 设备不支持调参");
 
         var applied = new List<string>();
@@ -125,16 +171,24 @@ public sealed class SteelSeriesProvider : IPeripheralProvider, ITunablePeriphera
 
         using (var ch = OpenNovaChannel(pid))
         {
-            if (ch == null) return new DeviceTuningResult(false, "无法打开 SteelSeries Nova 7 控制通道");
+            if (ch == null) return new DeviceTuningResult(false, "无法打开 SteelSeries 控制通道");
 
             if (update.Sidetone is var (stOn, stLevel))
             {
-                byte level = stOn ? (byte)Math.Clamp(stLevel, 0, 3) : (byte)0;
+                byte maxLevel = isNova5 ? (byte)10 : (byte)3;
+                byte level = stOn ? (byte)Math.Clamp(stLevel, 0, maxLevel) : (byte)0;
                 if (WriteNovaCmd(ch, [0x00, 0x39, level]))
                 {
-                    if (pid == 0x227E)
+                    if (isNova5)
+                    {
                         WriteNovaCmd(ch, [0x00, 0x09]);
-                    applied.Add(level == 0 ? "侧音关闭" : $"侧音档位 {level}/3");
+                        WriteNovaCmd(ch, [0x00, 0x35, 0x01]);
+                    }
+                    else if (is7Plus || pid == 0x227E)
+                    {
+                        WriteNovaCmd(ch, [0x00, 0x09]);
+                    }
+                    applied.Add(level == 0 ? "侧音关闭" : $"侧音档位 {level}/{maxLevel}");
                 }
                 else
                 {
@@ -146,7 +200,11 @@ public sealed class SteelSeriesProvider : IPeripheralProvider, ITunablePeriphera
             {
                 byte mins = (byte)Math.Clamp((int)Math.Round(sec / 60.0), 1, 255);
                 if (WriteNovaCmd(ch, [0x00, 0xA3, mins]))
+                {
+                    if (is7Plus)
+                        WriteNovaCmd(ch, [0x00, 0x09]);
                     applied.Add($"休眠 {mins} 分钟");
+                }
                 else
                     errors.Add("自动休眠");
             }
@@ -176,13 +234,7 @@ public sealed class SteelSeriesProvider : IPeripheralProvider, ITunablePeriphera
     }
 
     private static bool TryParsePid(string deviceId, out ushort pid)
-    {
-        pid = 0;
-        var parts = deviceId.Split(':');
-        if (parts.Length < 2) return false;
-        var vp = parts[1].Split('-');
-        return vp.Length == 2 && ushort.TryParse(vp[1], System.Globalization.NumberStyles.HexNumber, null, out pid);
-    }
+        => ProviderIdHelper.TryParsePid(deviceId, out pid);
 
     private static string? ResolveModel(ushort pid, out DeviceKind kind)
     {

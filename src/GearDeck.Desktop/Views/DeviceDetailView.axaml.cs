@@ -183,6 +183,16 @@ public partial class DeviceDetailView : UserControl
     {
         try
         {
+            if (TopLevel.GetTopLevel(this) is MainWindow main)
+            {
+                main.OpenDevicesPage();
+                return;
+            }
+            if (MainWindow.Instance != null)
+            {
+                MainWindow.Instance.OpenDevicesPage();
+                return;
+            }
             var window = TopLevel.GetTopLevel(this) as Window;
             var host = window?.GetVisualDescendants()
                 .OfType<ContentControl>()
@@ -823,7 +833,7 @@ public partial class DeviceDetailView : UserControl
             bool anyControl = caps.SupportsHostModeSwitch || caps.SupportsDpi
                 || caps.SupportedPollingRates.Count > 0 || hasLod || hasAsym || hasDebounce || hasAngle
                 || caps.SupportsSleepTimeout || hasLowBat || hasPerfModes || hasSwitches
-                || caps.ButtonBindings.Count > 0 || caps.SupportsAnalogSwitchTuning
+                || caps.ButtonBindings.Count > 0 || caps.SupportsOnboardMacroUpload || caps.SupportsAnalogSwitchTuning
                 || caps.SupportsSidetone || caps.SupportsAncMode || caps.SupportsVoicePrompt
                 || caps.SupportsEqualizer || caps.SupportsLighting || !string.IsNullOrWhiteSpace(caps.ChatMixSummary);
             FallbackCard.IsVisible = !anyControl;
@@ -1699,12 +1709,15 @@ public partial class DeviceDetailView : UserControl
     private void BindButtonMappingsAndQuickMacros(DeviceTuningCapabilities caps)
     {
         if (!caps.IsOnline)
-            MacroNoteText.Text = "设备当前处于无线休眠或待唤醒状态（按键板载映射需唤醒后读取；宏库编排在左侧「鼠标宏中心」永久可用）。";
+            MacroNoteText.Text = "设备当前处于无线休眠或待唤醒状态（按键板载映射需唤醒后读取；软件宏绑定与宏库编排永久可用）。";
         else if (!string.IsNullOrWhiteSpace(caps.MacroCapabilityNote))
             MacroNoteText.Text = caps.MacroCapabilityNote;
+        else if (caps.SupportsOnboardMacroUpload)
+            MacroNoteText.Text = "支持「绑定软件宏」或「写入硬件宏」（写入板载宏存在风险，建议优先使用官方驱动/网页驱动）。";
         else
-            MacroNoteText.Text = "可在「鼠标宏中心」统一录制与编辑动作，再在下方快速绑定或写入本设备。";
+            MacroNoteText.Text = "当前设备暂不支持写入硬件板载宏，仅支持通过 GearDeck「绑定软件宏」（如需板载宏请使用厂商官方驱动/网页驱动）。";
 
+        QuickUploadHardwareMacroBtn.IsVisible = caps.IsOnline && caps.SupportsOnboardMacroUpload;
         ButtonBindingsSection.IsVisible = caps.ButtonBindings.Count > 0;
         ButtonBindingsPanel.Children.Clear();
 
@@ -1795,12 +1808,28 @@ public partial class DeviceDetailView : UserControl
     {
         QuickMacroCombo.Items.Clear();
         foreach (var m in App.Settings.Current.Macros)
-            QuickMacroCombo.Items.Add(new ComboBoxItem { Content = $"{m.Name} ({m.Steps.Count} 步)", Tag = m.Id });
+        {
+            int actionCount = m.Steps.Count(s => s.KeyCode != 0);
+            QuickMacroCombo.Items.Add(new ComboBoxItem { Content = $"{m.Name} ({actionCount} 动作)", Tag = m.Id });
+        }
         if (QuickMacroCombo.Items.Count > 0) QuickMacroCombo.SelectedIndex = 0;
 
         QuickMacroBtnCombo.Items.Clear();
-        foreach (var (key, label) in MacroExecutionService.SoftwareTriggerButtons)
-            QuickMacroBtnCombo.Items.Add(new ComboBoxItem { Content = label, Tag = key });
+        var currentDev = App.LastDevices.FirstOrDefault(d => string.Equals(d.Id, _deviceId, StringComparison.OrdinalIgnoreCase));
+        bool isKeyboardOnboard = currentDev?.Kind == DeviceKind.Keyboard && _caps is { SupportsOnboardMacroUpload: true };
+        QuickBindSoftwareMacroBtn.IsVisible = !isKeyboardOnboard;
+
+        if (isKeyboardOnboard && _caps != null)
+        {
+            int slots = Math.Clamp(_caps.OnboardMacroSlotCount, 1, 32);
+            for (int i = 0; i < slots; i++)
+                QuickMacroBtnCombo.Items.Add(new ComboBoxItem { Content = $"板载宏槽位 M{i}", Tag = $"Slot:{i}" });
+        }
+        else
+        {
+            foreach (var (key, label) in MacroExecutionService.SoftwareTriggerButtons)
+                QuickMacroBtnCombo.Items.Add(new ComboBoxItem { Content = label, Tag = key });
+        }
         if (QuickMacroBtnCombo.Items.Count > 0) QuickMacroBtnCombo.SelectedIndex = 0;
 
         RefreshDeviceMacroBindingsSummary();
@@ -1848,42 +1877,112 @@ public partial class DeviceDetailView : UserControl
         }
     }
 
-    private async void OnQuickEnrollMacro(object? sender, RoutedEventArgs e)
+    private bool TryGetQuickMacroSelection(out OnboardMacroDefinition macro, out string triggerKey)
+    {
+        macro = null!;
+        triggerKey = (QuickMacroBtnCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "XButton1";
+        if (string.IsNullOrWhiteSpace(_deviceId))
+            return false;
+
+        if (QuickMacroCombo.SelectedItem is not ComboBoxItem mItem || mItem.Tag is not string macroId)
+        {
+            ShowStatus("请先前往「鼠标宏中心」创建一个宏。", InfoBarSeverity.Warning);
+            return false;
+        }
+
+        var found = App.Settings.Current.Macros.FirstOrDefault(m => m.Id == macroId);
+        if (found == null || found.Steps.Count == 0)
+        {
+            ShowStatus("所选宏暂无动作步骤，请先在「鼠标宏中心」录制或添加动作。", InfoBarSeverity.Warning);
+            return false;
+        }
+
+        macro = found;
+        return true;
+    }
+
+    private void OnQuickBindSoftwareMacro(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || !btn.IsEnabled) return;
         btn.IsEnabled = false;
         try
         {
-            if (string.IsNullOrWhiteSpace(_deviceId)) return;
-            if (QuickMacroCombo.SelectedItem is not ComboBoxItem mItem || mItem.Tag is not string macroId)
-            {
-                ShowStatus("请先前往「鼠标宏中心」创建一个宏。", InfoBarSeverity.Warning);
+            if (!TryGetQuickMacroSelection(out var macro, out string triggerKey))
                 return;
-            }
-            var macro = App.Settings.Current.Macros.FirstOrDefault(m => m.Id == macroId);
-            if (macro == null || macro.Steps.Count == 0) return;
-
-            string triggerKey = (QuickMacroBtnCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "XButton1";
-            if (_caps is { IsOnline: true, SupportsOnboardMacroUpload: true })
-            {
-                int wireSlot = triggerKey switch { "Middle" => 3, "XButton2" => 5, _ => 4 };
-                var res = await App.Devices.ApplySettingsAsync(_deviceId, new DeviceTuningUpdate
-                {
-                    UploadMacro = (0, wireSlot, macro),
-                });
-                ShowStatus(res.Message, res.Success ? InfoBarSeverity.Success : InfoBarSeverity.Error);
-                return;
-            }
 
             App.Settings.Current.LocalButtonMacroBindings[$"{_deviceId}|{triggerKey}"] = macro.Id;
             App.Settings.Save();
             App.MacroRunner?.SyncHookState();
             RefreshDeviceMacroBindingsSummary();
-            ShowStatus($"已将宏「{macro.Name}」绑定到本设备的 {triggerKey} 按键。", InfoBarSeverity.Success);
+            ShowStatus($"已将软件宏「{macro.Name}」绑定到本设备的 {triggerKey} 按键。", InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {
-            ShowStatus($"绑定宏失败：{ex.Message}", InfoBarSeverity.Error);
+            ShowStatus($"绑定软件宏失败：{ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            btn.IsEnabled = true;
+        }
+    }
+
+    private async void OnQuickUploadHardwareMacro(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || !btn.IsEnabled) return;
+        btn.IsEnabled = false;
+        try
+        {
+            if (!TryGetQuickMacroSelection(out var macro, out string triggerKey))
+                return;
+
+            if (_caps is not { IsOnline: true, SupportsOnboardMacroUpload: true })
+            {
+                ShowStatus("当前设备离线或不支持写入硬件板载宏，请改用「绑定软件宏」。", InfoBarSeverity.Warning);
+                return;
+            }
+
+            var dlg = new ContentDialog
+            {
+                Title = "写入硬件宏风险提示",
+                Content = new TextBlock
+                {
+                    Text = $"即将向设备板载存储写入宏「{macro.Name}」（槽位：{triggerKey}）。\n\n"
+                        + "⚠️ 风险说明：直接向设备内部 Flash/EEPROM 写入板载宏存在一定风险，若固件版本或协议布局存在差异，可能导致板载配置异常、按键失灵甚至需要重新恢复出厂设置。\n\n"
+                        + "建议：强烈建议前往厂商官方网站或使用官方驱动/网页驱动写入板载宏；或改用更安全的「绑定软件宏」（仅在电脑端生效，不改动设备固件与板载存储）。",
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 440,
+                },
+                PrimaryButtonText = "仍要写入硬件宏",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Close,
+            };
+
+            if (await dlg.ShowAsync() != ContentDialogResult.Primary)
+                return;
+
+            int macroSlot;
+            int wireSlot;
+            if (triggerKey.StartsWith("Slot:", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(triggerKey.AsSpan(5), out int parsedSlot))
+            {
+                macroSlot = Math.Max(0, parsedSlot);
+                wireSlot = macroSlot;
+            }
+            else
+            {
+                wireSlot = triggerKey switch { "Middle" => 3, "XButton2" => 5, _ => 4 };
+                macroSlot = wireSlot - 3;
+            }
+
+            var res = await App.Devices.ApplySettingsAsync(_deviceId!, new DeviceTuningUpdate
+            {
+                UploadMacro = (macroSlot, wireSlot, macro),
+            });
+            ShowStatus(res.Message, res.Success ? InfoBarSeverity.Success : InfoBarSeverity.Error);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"写入硬件宏失败：{ex.Message}", InfoBarSeverity.Error);
         }
         finally
         {

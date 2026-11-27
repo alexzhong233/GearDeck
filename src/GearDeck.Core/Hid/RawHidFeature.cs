@@ -80,6 +80,14 @@ public sealed class RawHidFeature : IDisposable
         return null;
     }
 
+    public byte[]? GetInputReport(int length, byte reportId = 0)
+    {
+        if (length <= 0 || _handle == null) return null;
+        var buffer = new byte[length];
+        buffer[0] = reportId;
+        return HidD_GetInputReport(_handle, buffer, (uint)buffer.Length) ? buffer : null;
+    }
+
     public void Dispose()
     {
         _handle?.Dispose();
@@ -95,4 +103,7 @@ public sealed class RawHidFeature : IDisposable
 
     [DllImport("hid.dll", SetLastError = true)]
     private static extern bool HidD_GetFeature(SafeFileHandle handle, byte[] buffer, uint length);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    private static extern bool HidD_GetInputReport(SafeFileHandle handle, byte[] buffer, uint length);
 }

@@ -188,6 +188,8 @@ public sealed class AppSettings
 
     public Dictionary<string, CachedDeviceOnboardManifest> DeviceOnboardManifests { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public bool SoftwareMacrosEnabled { get; set; } = true;
+
     public List<OnboardMacroDefinition> Macros { get; set; } = [];
 
     /// <summary>Key = "{deviceId}|{slotIndex}", Value = macroId（仅用于无板载多步宏闪存的鼠标做本地软件宏绑定）。</summary>

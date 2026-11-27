@@ -257,15 +257,7 @@ public sealed class HyperXProvider : IPeripheralProvider, ITunablePeripheralProv
     }
 
     private static bool TryParseVidPid(string deviceId, out ushort vid, out ushort pid)
-    {
-        vid = 0; pid = 0;
-        var parts = deviceId.Split(':');
-        if (parts.Length < 2) return false;
-        var vp = parts[1].Split('-');
-        return vp.Length == 2
-            && ushort.TryParse(vp[0], System.Globalization.NumberStyles.HexNumber, null, out vid)
-            && ushort.TryParse(vp[1], System.Globalization.NumberStyles.HexNumber, null, out pid);
-    }
+        => ProviderIdHelper.TryParseVidPid(deviceId, out vid, out pid);
 
     private static string? ResolveModel(ushort vid, ushort pid)
     {

@@ -88,10 +88,10 @@ jobs:
                       im = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
                   else:
                       im = Image.open(io.BytesIO(raw)).convert("RGBA")
-                  im.thumbnail((256, 256), Image.Resampling.LANCZOS)
-                  canvas = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
-                  ox = (256 - im.width) // 2
-                  oy = (256 - im.height) // 2
+                  im.thumbnail((340, 340), Image.Resampling.LANCZOS)
+                  canvas = Image.new("RGBA", (340, 340), (0, 0, 0, 0))
+                  ox = (340 - im.width) // 2
+                  oy = (340 - im.height) // 2
                   canvas.paste(im, (ox, oy), im)
                   canvas.save(dest, format="PNG", optimize=True)
                   url_cache[url] = filename
@@ -100,10 +100,17 @@ jobs:
                   failures.append(f"{url}: {exc}")
                   return None
 
+          OPENMOUSE_IMG_BASE = "https://img.openmouse.app/"
+
           for rule in data.get("rules", []):
-              is_piper = bool(not rule.get("cloudUrl") and rule.get("piperSvg"))
-              src = rule.get("cloudUrl") or (PIPER_BASE + rule["piperSvg"] if rule.get("piperSvg") else None)
+              is_piper = bool(not rule.get("cloudUrl") and not rule.get("openMouseSlug") and rule.get("piperSvg"))
+              src = (
+                  rule.get("cloudUrl")
+                  or (OPENMOUSE_IMG_BASE + rule["openMouseSlug"].lstrip("/") if rule.get("openMouseSlug") else None)
+                  or (PIPER_BASE + rule["piperSvg"] if rule.get("piperSvg") else None)
+              )
               if not src:
+                  out_rules.append(dict(rule))
                   continue
               png_file = fetch_to_png(src, is_piper_svg=is_piper)
               if png_file:

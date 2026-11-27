@@ -115,12 +115,6 @@ public partial class MonitorView : UserControl
             });
             var title = new StackPanel { Spacing = 1, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
             title.Children.Add(new TextBlock { Text = def.FullName, FontWeight = FontWeight.SemiBold });
-            title.Children.Add(new TextBlock
-            {
-                Text = $"简写 {def.ShortLabel}",
-                FontSize = 11,
-                Foreground = ResolveBrush("TextFillColorSecondaryBrush", Brushes.Gray),
-            });
             Grid.SetColumn(title, 1);
             head.Children.Add(title);
             stack.Children.Add(head);

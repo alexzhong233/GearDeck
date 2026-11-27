@@ -9,6 +9,52 @@ namespace GearDeck.Core.Hid;
 /// </summary>
 public static class HidSafe
 {
+    private static readonly object SnapshotLock = new();
+    private static List<HidDevice>? _scanSnapshot;
+    private static int _snapshotDepth;
+
+    /// <summary>
+    /// 在单轮全量设备扫描期间缓存一次系统 HID 列表快照，避免 20 个 Provider 重复穿透底层枚举。
+    /// 支持嵌套调用，引用计数归零后自动释放快照。
+    /// </summary>
+    public static IDisposable BeginScanSnapshot()
+    {
+        lock (SnapshotLock)
+        {
+            if (_snapshotDepth == 0 || _scanSnapshot == null)
+            {
+                try
+                {
+                    _scanSnapshot = DeviceList.Local.GetHidDevices()
+                        .DistinctBy(d => d.DevicePath)
+                        .ToList();
+                }
+                catch
+                {
+                    _scanSnapshot = [];
+                }
+            }
+            _snapshotDepth++;
+        }
+        return new ScanSnapshotScope();
+    }
+
+    private sealed class ScanSnapshotScope : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+            lock (SnapshotLock)
+            {
+                if (_snapshotDepth > 0 && --_snapshotDepth == 0)
+                    _scanSnapshot = null;
+            }
+        }
+    }
+
     public static string ProductName(HidDevice d)
     {
         try { return d.GetProductName() ?? ""; }
@@ -67,6 +113,12 @@ public static class HidSafe
 
     public static List<HidDevice> EnumerateDevices()
     {
+        List<HidDevice>? snap;
+        lock (SnapshotLock)
+            snap = _scanSnapshot;
+        if (snap != null)
+            return snap.ToList();
+
         try
         {
             return DeviceList.Local.GetHidDevices()
@@ -81,6 +133,12 @@ public static class HidSafe
 
     public static List<HidDevice> EnumerateDevices(int vendorId, int productId)
     {
+        List<HidDevice>? snap;
+        lock (SnapshotLock)
+            snap = _scanSnapshot;
+        if (snap != null)
+            return snap.Where(d => d.VendorID == vendorId && d.ProductID == productId).ToList();
+
         try
         {
             return DeviceList.Local.GetHidDevices(vendorId, productId)
@@ -95,6 +153,12 @@ public static class HidSafe
 
     public static List<HidDevice> EnumerateDevicesByVendor(int vendorId)
     {
+        List<HidDevice>? snap;
+        lock (SnapshotLock)
+            snap = _scanSnapshot;
+        if (snap != null)
+            return snap.Where(d => d.VendorID == vendorId).ToList();
+
         try
         {
             return DeviceList.Local.GetHidDevices(vendorId)

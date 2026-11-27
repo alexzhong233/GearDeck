@@ -53,6 +53,10 @@ public static class HidKeyCatalog
     public const byte MouseMiddleCode = 0xF2;
     public const byte MouseXButton1Code = 0xF3;
     public const byte MouseXButton2Code = 0xF4;
+    public const byte MouseWheelUpCode = 0xF5;
+    public const byte MouseWheelDownCode = 0xF6;
+
+    public static bool IsWheelCode(byte code) => code is MouseWheelUpCode or MouseWheelDownCode;
 
     public const byte ModLeftCtrl = 0x01;
     public const byte ModLeftShift = 0x02;
@@ -72,6 +76,8 @@ public static class HidKeyCatalog
             new(MouseMiddleCode, "鼠标中键", 0x04),
             new(MouseXButton1Code, "鼠标侧键4 (后退)", 0x05),
             new(MouseXButton2Code, "鼠标侧键5 (前进)", 0x06),
+            new(MouseWheelUpCode, "鼠标滚轮向上", 0),
+            new(MouseWheelDownCode, "鼠标滚轮向下", 0),
         };
         for (int i = 0; i < 26; i++)
             list.Add(new((byte)(0x04 + i), ((char)('A' + i)).ToString(), 'A' + i));

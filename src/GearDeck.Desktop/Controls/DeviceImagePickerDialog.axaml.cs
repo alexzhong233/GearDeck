@@ -10,6 +10,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using GearDeck.Core.Models;
+using GearDeck.Core.Services;
 using GearDeck.Desktop.Services;
 
 namespace GearDeck.Desktop.Controls;
@@ -89,16 +90,15 @@ public partial class DeviceImagePickerDialog : Window
 
         foreach (var r in manifest.Rules)
         {
-            string? url = !string.IsNullOrWhiteSpace(r.CloudUrl)
-                ? r.CloudUrl
-                : (!string.IsNullOrWhiteSpace(r.PiperSvg) ? $"{DeviceImageService.PiperSvgBaseUrl}{r.PiperSvg}" : null);
+            string? url = DeviceImageRuleMatcher.ResolveRuleCloudUrl(r)
+                ?? (!string.IsNullOrWhiteSpace(r.PiperSvg) ? $"{DeviceImageService.PiperSvgBaseUrl}{r.PiperSvg}" : null);
             if (string.IsNullOrWhiteSpace(url) || !seenUrls.Add(url))
                 continue;
 
             bool isSvg = !string.IsNullOrWhiteSpace(r.PiperSvg) || url.Contains(".svg", StringComparison.OrdinalIgnoreCase);
             string brand = !string.IsNullOrWhiteSpace(r.Name) ? r.Name.Split(' ')[0] : "Custom";
-            string hint = $"{r.VidPid} {r.Vid} {string.Join(" ", r.Keywords)} {r.Kind}";
-            list.Add(new CloudPresetImageItem($"rule_{r.Id}", r.Name, brand, hint, url, isSvg));
+            string hint = $"{r.VidPid} {r.Vid} {string.Join(" ", r.Keywords)} {r.NameRegex} {r.Kind}";
+            list.Add(new CloudPresetImageItem($"rule_{r.Id}", r.Name, brand, hint, url, isSvg, r.AssetFile));
         }
 
         return list;

@@ -13,6 +13,7 @@ public sealed class DeviceManager : IDisposable
     private readonly Dictionary<IPeripheralProvider, List<PeripheralDevice>> _lastRawByProvider = new();
     private readonly Dictionary<string, string> _activeTransportRouting = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _hidLock = new(1, 1);
+    private readonly SemaphoreSlim _scanConcurrency = new(4, 4);
     private Timer? _timer;
     private Timer? _hotplugDebounceTimer;
     private bool _hotplugSubscribed;
@@ -146,32 +147,52 @@ public sealed class DeviceManager : IDisposable
                         Diag.Log(line);
                 }
 
-                // 控制扫描并发度避免阻塞式 HID 探测瞬间拉起过多线程池线程，总超时 6 秒
-                var scanConcurrency = new SemaphoreSlim(4, 4);
-                var tasks = _providers.Select(async p =>
+                // 单轮扫描复用一次系统 HID 列表快照，避免 20 个 Provider 重复穿透底层设备树；总超时 6 秒
+                Task<bool> ScanWithSnapshotAsync()
                 {
-                    bool slotTaken = false;
-                    try
+                    using (GearDeck.Core.Hid.HidSafe.BeginScanSnapshot())
                     {
-                        await scanConcurrency.WaitAsync().ConfigureAwait(false);
-                        slotTaken = true;
-                        var items = await Task.Run(() => p.Enumerate()).ConfigureAwait(false);
-                        Diag.Verbose($"{p.Name}: {items.Count} 台");
-                        return (Provider: p, Succeeded: true, Items: (IReadOnlyList<PeripheralDevice>)items);
+                        var providerTasks = _providers.Select(async p =>
+                        {
+                            bool slotTaken = false;
+                            try
+                            {
+                                await _scanConcurrency.WaitAsync().ConfigureAwait(false);
+                                slotTaken = true;
+                                var items = await Task.Run(() => p.Enumerate()).ConfigureAwait(false);
+                                Diag.Verbose($"{p.Name}: {items.Count} 台");
+                                return (Provider: p, Succeeded: true, Items: (IReadOnlyList<PeripheralDevice>)items);
+                            }
+                            catch (ObjectDisposedException)
+                            {
+                                return (Provider: p, Succeeded: false, Items: (IReadOnlyList<PeripheralDevice>)Array.Empty<PeripheralDevice>());
+                            }
+                            catch (Exception ex)
+                            {
+                                Diag.Log($"{p.Name} 扫描异常: {ex.Message}");
+                                return (Provider: p, Succeeded: false, Items: (IReadOnlyList<PeripheralDevice>)Array.Empty<PeripheralDevice>());
+                            }
+                            finally
+                            {
+                                if (slotTaken)
+                                {
+                                    try { _scanConcurrency.Release(); } catch (ObjectDisposedException) { }
+                                }
+                            }
+                        }).ToArray();
+                        return WaitAllAsync(providerTasks);
                     }
-                    catch (Exception ex)
-                    {
-                        Diag.Log($"{p.Name} 扫描异常: {ex.Message}");
-                        return (Provider: p, Succeeded: false, Items: (IReadOnlyList<PeripheralDevice>)Array.Empty<PeripheralDevice>());
-                    }
-                    finally
-                    {
-                        if (slotTaken)
-                            scanConcurrency.Release();
-                    }
-                }).ToArray();
-                var allTasks = Task.WhenAll(tasks);
-                bool allDone = await Task.WhenAny(allTasks, Task.Delay(TimeSpan.FromSeconds(6))) == allTasks;
+                }
+
+                Task<(IPeripheralProvider Provider, bool Succeeded, IReadOnlyList<PeripheralDevice> Items)>[]? tasks = null;
+                async Task<bool> WaitAllAsync(Task<(IPeripheralProvider Provider, bool Succeeded, IReadOnlyList<PeripheralDevice> Items)>[] providerTasks)
+                {
+                    tasks = providerTasks;
+                    var allTasks = Task.WhenAll(providerTasks);
+                    return await Task.WhenAny(allTasks, Task.Delay(TimeSpan.FromSeconds(6))) == allTasks;
+                }
+
+                bool allDone = await ScanWithSnapshotAsync().ConfigureAwait(false);
                 if (!allDone)
                     Diag.Log("部分设备提供器扫描超过 6s 超时，已先汇总已完成项");
 
@@ -179,10 +200,13 @@ public sealed class DeviceManager : IDisposable
                 lock (_gate)
                 {
                     if (_disposed) return;
-                    foreach (var t in tasks)
+                    if (tasks != null)
                     {
-                        if (t.IsCompletedSuccessfully && t.Result.Succeeded)
-                            _lastRawByProvider[t.Result.Provider] = t.Result.Items.ToList();
+                        foreach (var t in tasks)
+                        {
+                            if (t.IsCompletedSuccessfully && t.Result.Succeeded)
+                                _lastRawByProvider[t.Result.Provider] = t.Result.Items.ToList();
+                        }
                     }
 
                     var allRaw = _lastRawByProvider.Values.SelectMany(x => x).ToList();
@@ -384,5 +408,6 @@ public sealed class DeviceManager : IDisposable
         _disposed = true;
         Stop();
         _hidLock.Dispose();
+        _scanConcurrency.Dispose();
     }
 }

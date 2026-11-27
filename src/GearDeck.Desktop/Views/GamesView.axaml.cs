@@ -705,7 +705,6 @@ public partial class GamesView : UserControl
                         options,
                         rule.PerMouseTargets,
                         isEnabled: true,
-                        allowMacro: true,
                         onBeforeSave: () =>
                         {
                             EnsurePersisted();
@@ -1335,13 +1334,10 @@ public partial class GamesView : UserControl
         List<TargetOption> options,
         Dictionary<string, string> targetMap,
         bool isEnabled = true,
-        bool allowMacro = false,
         Action? onBeforeSave = null,
         Action? onAfterSave = null,
         bool stacked = false)
     {
-        bool showMacro = allowMacro && (App.Settings.Current.Macros?.Count ?? 0) > 0;
-
         var titleText = new TextBlock
         {
             Text = displayName,
@@ -1397,58 +1393,8 @@ public partial class GamesView : UserControl
             onAfterSave?.Invoke();
         };
 
-        ComboBox? macroCombo = null;
-        if (showMacro)
-        {
-            // 软件宏：按 "{deviceId}|{slotIndex}" 绑定到本地软件宏（无板载多步宏闪存的设备使用）
-            var bindingsMap = App.Settings.Current.LocalButtonMacroBindings
-                ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var macroItems = new List<ComboBoxItem> { new() { Content = "不绑定软件宏", Tag = "" } };
-            foreach (var macro in App.Settings.Current.Macros ?? [])
-                macroItems.Add(new ComboBoxItem { Content = macro.Name, Tag = macro.Id });
-
-            macroCombo = new ComboBox
-            {
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                ItemsSource = macroItems,
-                IsEnabled = isEnabled && macroItems.Count > 1,
-                Margin = new Thickness(8, 0, 0, 0),
-            };
-            bindingsMap.TryGetValue(MacroKey(), out string? boundMacro);
-            int macroIdx = macroItems.FindIndex(i => string.Equals(i.Tag as string, boundMacro ?? "", StringComparison.OrdinalIgnoreCase));
-            macroCombo.SelectedIndex = macroIdx >= 0 ? macroIdx : 0;
-
-            macroCombo.SelectionChanged += (_, _) =>
-            {
-                if (_binding) return;
-                if (macroCombo.SelectedItem is not ComboBoxItem item) return;
-                string id = item.Tag as string ?? "";
-                var map = App.Settings.Current.LocalButtonMacroBindings
-                    ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                string key = MacroKey();
-                if (string.IsNullOrEmpty(id))
-                    map.Remove(key);
-                else
-                    map[key] = id;
-                App.Settings.Save();
-                onAfterSave?.Invoke();
-            };
-        }
-
         if (stacked)
         {
-            var inputsGrid = new Grid();
-            inputsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.25, GridUnitType.Star) });
-            if (macroCombo != null)
-                inputsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.95, GridUnitType.Star) });
-
-            inputsGrid.Children.Add(combo);
-            if (macroCombo != null)
-            {
-                Grid.SetColumn(macroCombo, 1);
-                inputsGrid.Children.Add(macroCombo);
-            }
-
             return new Border
             {
                 CornerRadius = new CornerRadius(6),
@@ -1459,7 +1405,7 @@ public partial class GamesView : UserControl
                 Child = new StackPanel
                 {
                     Spacing = 6,
-                    Children = { titleText, inputsGrid },
+                    Children = { titleText, combo },
                 },
             };
         }
@@ -1467,17 +1413,10 @@ public partial class GamesView : UserControl
         var row = new Grid();
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
-        if (macroCombo != null)
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.85, GridUnitType.Star) });
 
         row.Children.Add(titleText);
         Grid.SetColumn(combo, 1);
         row.Children.Add(combo);
-        if (macroCombo != null)
-        {
-            Grid.SetColumn(macroCombo, 2);
-            row.Children.Add(macroCombo);
-        }
 
         return row;
     }

@@ -185,13 +185,7 @@ public sealed class CorsairProvider : IPeripheralProvider, ITunablePeripheralPro
     }
 
     private static bool TryParsePid(string deviceId, out ushort pid)
-    {
-        pid = 0;
-        var parts = deviceId.Split(':');
-        if (parts.Length < 2) return false;
-        var vp = parts[1].Split('-');
-        return vp.Length == 2 && ushort.TryParse(vp[1], System.Globalization.NumberStyles.HexNumber, null, out pid);
-    }
+        => ProviderIdHelper.TryParsePid(deviceId, out pid);
 
     private static (string Name, DeviceKind Kind) ResolveMeta(ushort pid, string fallback) => pid switch
     {

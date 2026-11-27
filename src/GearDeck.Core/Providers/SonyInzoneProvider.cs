@@ -5,9 +5,8 @@ using GearDeck.Core.Models;
 namespace GearDeck.Core.Providers;
 
 /// <summary>
-/// 索尼 Sony INZONE 系列无线耳机 / Buds 协议提供器（VID 0x054C）：
-/// 支持 INZONE Buds (0x0EC2) 与 INZONE H5 (0x0EBF) / H7 (0x0DF4) / H9 (0x0DF5) / H9 II (0x0FA8)
-/// 电量、降噪/环境音、Sidetone、自动休眠、语音提示与 ChatMix 平衡读写。
+/// 索尼 Sony INZONE 系列与 PULSE 3D 无线耳机/Buds 协议提供器（VID 0x054C）：
+/// 支持 INZONE Buds (0x0EC2)、INZONE H5/H7/H9/H9 II 电量与降噪/侧音/休眠/语音/ChatMix，及 PULSE 3D (0x0D5E) 被动状态帧电量。
 /// </summary>
 public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheralProvider
 {
@@ -18,6 +17,11 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
     public const ushort InzoneH7Pid = 0x0DF4;
     public const ushort InzoneH9Pid = 0x0DF5;
     public const ushort InzoneH9IiPid = 0x0FA8;
+    public const ushort Pulse3DPid = 0x0D5E;
+
+    private static readonly object Pulse3DLock = new();
+    private static (int? Level, bool Charging, bool Connected)? _lastPulse3D;
+    private static DateTimeOffset _lastPulse3DUtc = DateTimeOffset.MinValue;
 
     private const byte AddrPcToTx = 0x21;
     private const byte AddrPcToRx = 0x41;
@@ -44,6 +48,7 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
         [InzoneH7Pid] = "Sony INZONE H7",
         [InzoneH5Pid] = "Sony INZONE H5",
         [InzoneH9IiPid] = "Sony INZONE H9 II",
+        [Pulse3DPid] = "Sony PULSE 3D",
     };
 
     private static readonly object BudsStateLock = new();
@@ -74,6 +79,30 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
             (int? Left, bool LeftChg, int? Right, bool RightChg, int? Case, bool CaseChg)? budsHit = null;
             bool? budsLinkConnected = null;
             (int Percent, bool Charging)? headsetHit = null;
+
+            if (pid == Pulse3DPid)
+            {
+                var p3d = ProbePulse3D(devs);
+                results.Add(new PeripheralDevice
+                {
+                    Id = $"sony:{SonyVid:X4}-{pid:X4}",
+                    VendorId = SonyVid,
+                    ProductId = pid,
+                    Name = modelName,
+                    Kind = DeviceKind.Headset,
+                    Provider = ProviderName,
+                    Connected = true,
+                    IsSleeping = p3d == null || !p3d.Value.Connected,
+                    Transport = "2.4G",
+                    BatteryPercent = p3d?.Connected == true ? p3d.Value.Level : null,
+                    State = p3d is { Connected: true, Charging: true }
+                        ? BatteryState.Charging
+                        : (p3d is { Connected: true, Level: not null } ? BatteryState.Normal : BatteryState.Unknown),
+                    Note = p3d == null || !p3d.Value.Connected ? "2.4G 接收器已连接（PULSE 3D 休眠或待按键唤醒）" : null,
+                    LastUpdated = DateTimeOffset.Now,
+                });
+                continue;
+            }
 
             foreach (var iface in OrderCandidates(devs))
             {
@@ -148,7 +177,7 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
     public DeviceTuningCapabilities QueryCapabilities(string deviceId)
     {
         var caps = new DeviceTuningCapabilities { DeviceId = deviceId };
-        if (!TryParsePid(deviceId, out ushort pid) || !InzoneHeadsets.TryGetValue(pid, out string? model))
+        if (!TryParsePid(deviceId, out ushort pid) || !InzoneHeadsets.TryGetValue(pid, out string? model) || pid == Pulse3DPid)
         {
             caps.StatusMessage = "当前 Sony 设备仅支持电量监测。";
             return caps;
@@ -353,13 +382,7 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
     }
 
     private static bool TryParsePid(string deviceId, out ushort pid)
-    {
-        pid = 0;
-        var parts = deviceId.Split(':');
-        if (parts.Length < 2) return false;
-        var vp = parts[1].Split('-');
-        return vp.Length == 2 && ushort.TryParse(vp[1], System.Globalization.NumberStyles.HexNumber, null, out pid);
-    }
+        => ProviderIdHelper.TryParsePid(deviceId, out pid);
 
     private static PeripheralDevice BuildBudsDevice(
         ushort pid,
@@ -627,5 +650,57 @@ public sealed class SonyInzoneProvider : IPeripheralProvider, ITunablePeripheral
         if (left == null && right == null && box == null)
             return null;
         return (left, lChg, right, rChg, box, cChg);
+    }
+
+    private static (int? Level, bool Charging, bool Connected)? ProbePulse3D(List<HidDevice> devs)
+    {
+        var iface = devs.FirstOrDefault(d => HidSafe.PrimaryUsage(d) == (0xFF01, 0x0020))
+            ?? devs.FirstOrDefault(d => HidSafe.PrimaryUsage(d).UsagePage == 0xFF01 && HidSafe.MaxInputLen(d) >= 8);
+        if (iface == null) return null;
+
+        using var ch = HidChannel.TryOpen(iface);
+        if (ch == null) return null;
+
+        (int? Level, bool Charging, bool Connected)? latest = null;
+        for (int i = 0; i < 32; i++)
+        {
+            var r = ch.Read(35);
+            if (r == null) break;
+            if (ParsePulse3DReport(r) is { } parsed)
+                latest = parsed;
+        }
+
+        lock (Pulse3DLock)
+        {
+            if (latest is { } hit)
+            {
+                if (!hit.Connected)
+                    _lastPulse3D = hit;
+                else
+                    _lastPulse3D = (hit.Level ?? _lastPulse3D?.Level, hit.Charging, true);
+                _lastPulse3DUtc = DateTimeOffset.UtcNow;
+                return _lastPulse3D;
+            }
+
+            if (_lastPulse3D is { Connected: true } cached && (DateTimeOffset.UtcNow - _lastPulse3DUtc) < TimeSpan.FromHours(2))
+                return cached;
+        }
+        return null;
+    }
+
+    /// <summary>解析 Sony PULSE 3D 被动 8 字节状态报告 (Report ID 0xB0, UsagePage 0xFF01 / Usage 0x0020)。</summary>
+    internal static (int? Level, bool Charging, bool Connected)? ParsePulse3DReport(ReadOnlySpan<byte> report)
+    {
+        if (report.Length < 8 || report[0] != 0xB0)
+            return null;
+        bool connected = (report[4] & 0x08) != 0;
+        byte rawLevel = report[3];
+        if (!connected)
+            return (null, false, false);
+        if (rawLevel == 0x80)
+            return (null, true, true);
+        if (rawLevel <= 100)
+            return (rawLevel, false, true);
+        return (null, false, true);
     }
 }

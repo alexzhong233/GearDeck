@@ -850,13 +850,5 @@ public sealed partial class LeobogProvider : ITunablePeripheralProvider
     }
 
     private static bool TryParseVidPid(string deviceId, out ushort vid, out ushort pid)
-    {
-        vid = 0; pid = 0;
-        var p = deviceId.Split(':');
-        if (p.Length < 2) return false;
-        var vp = p[1].Split('-');
-        return vp.Length == 2
-            && ushort.TryParse(vp[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out vid)
-            && ushort.TryParse(vp[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid);
-    }
+        => ProviderIdHelper.TryParseVidPid(deviceId, out vid, out pid);
 }

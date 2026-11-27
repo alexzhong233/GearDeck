@@ -37,6 +37,8 @@ public sealed class CompXProvider : ITunablePeripheralProvider
         0x3710, // Pulsar (OpenMouseProvider)
         0x3367, // Endgame Gear (OpenMouseProvider)
         0x361D, // Finalmouse (OpenMouseProvider)
+        0x1915, // Ninjutso legacy (OpenMouseProvider)
+        0x3329, // Audeze (AudezeProvider)
         0x3434, // Keychron (ViaKeyboardProvider)
         0x31E3, // Wooting (ViaKeyboardProvider)
         0x03EB, // Wooting legacy (ViaKeyboardProvider)
@@ -266,6 +268,8 @@ public sealed class CompXProvider : ITunablePeripheralProvider
         if (ClaimedVids.Contains(vid)) return true;
         if (vid == 0x0E8D && d.ProductID == 0x0703) return true; // Angry Miao AM Infinity .97
         if (vid == 0x258A && d.ProductID == 0x010C) return true; // LEOBOG Hi98C Pro Wired
+        if (vid == SinowealthProvider.VendorId && SinowealthProvider.IsSupportedPid((ushort)d.ProductID)) return true;
+        if (vid == RedragonProvider.VendorId && RedragonProvider.IsSupportedPid((ushort)d.ProductID)) return true;
         if (vid == 0x3554 && d.ProductID == 0xFA07) return true; // LEOBOG Hi98C Pro Bluetooth
         string upper = HidSafe.ProductName(d).ToUpperInvariant();
         if (upper.Contains("AULA") || upper.Contains("MCHOSE") || upper.Contains("ATK ") || upper.Contains("VXE ") ||
@@ -372,15 +376,7 @@ public sealed class CompXProvider : ITunablePeripheralProvider
     }
 
     private static bool TryParseVidPid(string deviceId, out ushort vid, out ushort pid)
-    {
-        vid = 0; pid = 0;
-        var p = deviceId.Split(':');
-        if (p.Length < 2) return false;
-        var vp = p[1].Split('-');
-        return vp.Length == 2
-            && ushort.TryParse(vp[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out vid)
-            && ushort.TryParse(vp[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid);
-    }
+        => ProviderIdHelper.TryParseVidPid(deviceId, out vid, out pid);
 
     private static byte[] PadFeature(byte[] request, int featureLength)
     {

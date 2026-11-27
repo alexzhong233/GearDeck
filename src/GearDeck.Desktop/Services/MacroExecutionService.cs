@@ -18,11 +18,18 @@ public sealed class MacroExecutionService : IDisposable
     private const int WhKeyboardLl = 13;
     private const int WhMouseLl = 14;
     private const int WmKeyDown = 0x0100;
+    private const int WmKeyUp = 0x0101;
     private const int WmSysKeyDown = 0x0104;
+    private const int WmSysKeyUp = 0x0105;
+    private const int WmLButtonDown = 0x0201;
+    private const int WmLButtonUp = 0x0202;
+    private const int WmRButtonDown = 0x0204;
+    private const int WmRButtonUp = 0x0205;
     private const int WmMButtonDown = 0x0207;
     private const int WmMButtonUp = 0x0208;
     private const int WmXButtonDown = 0x020B;
     private const int WmXButtonUp = 0x020C;
+    private const int WmMouseWheel = 0x020A;
     private const int WmInput = 0x00FF;
     private const int LlhfInjected = 0x00000001;
     private const int LlkhfInjected = 0x00000010;
@@ -41,6 +48,8 @@ public sealed class MacroExecutionService : IDisposable
     private const uint MouseeventfMiddleup = 0x0040;
     private const uint MouseeventfXdown = 0x0080;
     private const uint MouseeventfXup = 0x0100;
+    private const uint MouseeventfWheel = 0x0800;
+    private const int WheelDelta = 120;
 
     private const uint RidevInputsink = 0x00000100;
     private const uint RidInput = 0x10000003;
@@ -88,6 +97,18 @@ public sealed class MacroExecutionService : IDisposable
     private long _lastRawTickMs;
     private bool _subscribedDevices;
     private volatile bool _disposed;
+
+    private readonly object _recGate = new();
+    private Thread? _recHookThread;
+    private uint _recHookThreadId;
+    private IntPtr _recMouseHookHandle;
+    private IntPtr _recKbdHookHandle;
+    private HookProc? _recMouseHookProc;
+    private HookProc? _recKbdHookProc;
+    private Action<byte, bool>? _recCallback;
+    private Func<int, int, bool>? _recIgnorePoint;
+    private readonly HashSet<byte> _recPressedKeys = [];
+    private readonly HashSet<byte> _recIgnoredMouseDown = [];
 
     public static IReadOnlyList<(string Key, string Label)> SoftwareTriggerButtons { get; } =
     [
@@ -144,7 +165,7 @@ public sealed class MacroExecutionService : IDisposable
             {
                 UseShellExecute = true,
                 Verb = "runas",
-                Arguments = "--page=macros",
+                Arguments = "--page=macros --wait-restart",
             });
             App.Exit();
             return true;
@@ -173,7 +194,11 @@ public sealed class MacroExecutionService : IDisposable
             return;
         }
 
-        bool needHook = _snapshot.Bindings.Count > 0;
+        bool enabled = App.Settings?.Current.SoftwareMacrosEnabled ?? true;
+        if (!enabled)
+            CancelPlayback();
+
+        bool needHook = enabled && _snapshot.Bindings.Count > 0;
         if (needHook && _hookThread == null)
             StartHook();
         else if (!needHook && _hookThread != null)
@@ -258,15 +283,21 @@ public sealed class MacroExecutionService : IDisposable
                 foreach (var step in macro.Steps)
                 {
                     if (cts.Token.IsCancellationRequested) break;
-                    SendSingleStep(step.KeyCode, step.IsPress);
-                    if (step.IsPress)
+                    if (step.KeyCode != 0)
                     {
-                        if (!pressedCodes.Contains(step.KeyCode))
-                            pressedCodes.Add(step.KeyCode);
-                    }
-                    else
-                    {
-                        pressedCodes.Remove(step.KeyCode);
+                        SendSingleStep(step.KeyCode, step.IsPress);
+                        if (!HidKeyCatalog.IsWheelCode(step.KeyCode))
+                        {
+                            if (step.IsPress)
+                            {
+                                if (!pressedCodes.Contains(step.KeyCode))
+                                    pressedCodes.Add(step.KeyCode);
+                            }
+                            else
+                            {
+                                pressedCodes.Remove(step.KeyCode);
+                            }
+                        }
                     }
 
                     if (step.DelayMs > 0)
@@ -449,6 +480,181 @@ public sealed class MacroExecutionService : IDisposable
         _hookThreadId = 0;
     }
 
+    /// <summary>
+    /// 启动全局只读录制钩子（支持全屏幕范围内的键盘按下/抬起与鼠标左/右/中/侧键按下/抬起，不拦截系统输入）。
+    /// </summary>
+    public void StartRecordingCapture(Action<byte, bool> onEvent, Func<int, int, bool>? shouldIgnoreMouseAtScreenPoint = null)
+    {
+        if (_disposed || !OperatingSystem.IsWindows()) return;
+
+        StopRecordingCapture();
+        lock (_recGate)
+        {
+            _recCallback = onEvent;
+            _recIgnorePoint = shouldIgnoreMouseAtScreenPoint;
+            _recPressedKeys.Clear();
+            _recIgnoredMouseDown.Clear();
+            _recMouseHookProc ??= RecMouseHookCallback;
+            _recKbdHookProc ??= RecKeyboardHookCallback;
+
+            _recHookThread = new Thread(() =>
+            {
+                _recHookThreadId = GetCurrentThreadId();
+                _recMouseHookHandle = SetWindowsHookExW(WhMouseLl, _recMouseHookProc, IntPtr.Zero, 0);
+                _recKbdHookHandle = SetWindowsHookExW(WhKeyboardLl, _recKbdHookProc, IntPtr.Zero, 0);
+
+                while (GetMessageW(out MSG msg, IntPtr.Zero, 0, 0) > 0)
+                {
+                    TranslateMessage(ref msg);
+                    DispatchMessageW(ref msg);
+                }
+
+                if (_recMouseHookHandle != IntPtr.Zero) UnhookWindowsHookEx(_recMouseHookHandle);
+                if (_recKbdHookHandle != IntPtr.Zero) UnhookWindowsHookEx(_recKbdHookHandle);
+                _recMouseHookHandle = IntPtr.Zero;
+                _recKbdHookHandle = IntPtr.Zero;
+                _recHookThreadId = 0;
+            })
+            {
+                IsBackground = true,
+                Name = "GearDeck.MacroRecorderHook",
+            };
+            _recHookThread.Start();
+        }
+    }
+
+    /// <summary>停止并卸载全局录制钩子。</summary>
+    public void StopRecordingCapture()
+    {
+        Thread? oldThread;
+        lock (_recGate)
+        {
+            _recCallback = null;
+            _recIgnorePoint = null;
+            oldThread = _recHookThread;
+            if (_recHookThreadId != 0)
+                PostThreadMessageW(_recHookThreadId, 0x0012 /* WM_QUIT */, IntPtr.Zero, IntPtr.Zero);
+            _recHookThread = null;
+            _recHookThreadId = 0;
+        }
+        if (oldThread != null && oldThread.IsAlive && Thread.CurrentThread != oldThread)
+        {
+            try { oldThread.Join(250); } catch { }
+        }
+    }
+
+    private IntPtr RecKeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0)
+        {
+            int msg = wParam.ToInt32();
+            bool? isPress = msg switch
+            {
+                WmKeyDown or WmSysKeyDown => true,
+                WmKeyUp or WmSysKeyUp => false,
+                _ => null,
+            };
+
+            if (isPress is { } down)
+            {
+                var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+                if ((info.flags & LlkhfInjected) == 0)
+                {
+                    byte? usage = (int)info.vkCode switch
+                    {
+                        0xA1 => (byte)0xE1, // VK_RSHIFT -> Shift
+                        0xA3 => (byte)0xE0, // VK_RCONTROL -> Ctrl
+                        0xA5 => (byte)0xE2, // VK_RMENU -> Alt
+                        0x5C => (byte)0xE3, // VK_RWIN -> Win
+                        int vk => HidKeyCatalog.UsageFromVirtualKey(vk),
+                    };
+
+                    if (usage is { } u && u != 0)
+                    {
+                        bool emit = down ? _recPressedKeys.Add(u) : (_recPressedKeys.Remove(u) || true);
+                        var cb = _recCallback;
+                        if (emit && cb != null)
+                            App.UiPost(() => cb(u, down));
+                    }
+                }
+            }
+        }
+        return CallNextHookEx(_recKbdHookHandle, nCode, wParam, lParam);
+    }
+
+    private IntPtr RecMouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0)
+        {
+            var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+            if ((info.flags & LlhfInjected) == 0)
+            {
+                int msg = wParam.ToInt32();
+                if (msg == WmMouseWheel)
+                {
+                    short delta = unchecked((short)((info.mouseData >> 16) & 0xFFFF));
+                    if (delta != 0)
+                    {
+                        byte wheelCode = delta > 0 ? HidKeyCatalog.MouseWheelUpCode : HidKeyCatalog.MouseWheelDownCode;
+                        var wcb = _recCallback;
+                        if (wcb != null)
+                            App.UiPost(() => wcb(wheelCode, true));
+                    }
+                    return CallNextHookEx(_recMouseHookHandle, nCode, wParam, lParam);
+                }
+
+                (byte Code, bool Down)? evt = msg switch
+                {
+                    WmLButtonDown => (HidKeyCatalog.MouseLeftCode, true),
+                    WmLButtonUp => (HidKeyCatalog.MouseLeftCode, false),
+                    WmRButtonDown => (HidKeyCatalog.MouseRightCode, true),
+                    WmRButtonUp => (HidKeyCatalog.MouseRightCode, false),
+                    WmMButtonDown => (HidKeyCatalog.MouseMiddleCode, true),
+                    WmMButtonUp => (HidKeyCatalog.MouseMiddleCode, false),
+                    WmXButtonDown => (info.mouseData >> 16) switch
+                    {
+                        1 => (HidKeyCatalog.MouseXButton1Code, true),
+                        2 => (HidKeyCatalog.MouseXButton2Code, true),
+                        _ => ((byte, bool)?)null,
+                    },
+                    WmXButtonUp => (info.mouseData >> 16) switch
+                    {
+                        1 => (HidKeyCatalog.MouseXButton1Code, false),
+                        2 => (HidKeyCatalog.MouseXButton2Code, false),
+                        _ => ((byte, bool)?)null,
+                    },
+                    _ => null,
+                };
+
+                if (evt is { } m)
+                {
+                    bool skip = false;
+                    if (m.Down)
+                    {
+                        if (_recIgnorePoint?.Invoke(info.pt.x, info.pt.y) == true)
+                        {
+                            _recIgnoredMouseDown.Add(m.Code);
+                            skip = true;
+                        }
+                        else
+                        {
+                            _recIgnoredMouseDown.Remove(m.Code);
+                        }
+                    }
+                    else if (_recIgnoredMouseDown.Remove(m.Code))
+                    {
+                        skip = true;
+                    }
+
+                    var cb = _recCallback;
+                    if (!skip && cb != null)
+                        App.UiPost(() => cb(m.Code, m.Down));
+                }
+            }
+        }
+        return CallNextHookEx(_recMouseHookHandle, nCode, wParam, lParam);
+    }
+
     private IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
         if (nCode >= 0)
@@ -564,7 +770,16 @@ public sealed class MacroExecutionService : IDisposable
     private static void SendSingleStep(byte keyCode, bool isPress)
     {
         INPUT input;
-        if (keyCode is HidKeyCatalog.MouseLeftCode or HidKeyCatalog.MouseRightCode or HidKeyCatalog.MouseMiddleCode
+        if (HidKeyCatalog.IsWheelCode(keyCode))
+        {
+            int delta = keyCode == HidKeyCatalog.MouseWheelUpCode ? WheelDelta : -WheelDelta;
+            input = new INPUT
+            {
+                type = InputMouse,
+                U = new InputUnion { mi = new MOUSEINPUT { mouseData = unchecked((uint)delta), dwFlags = MouseeventfWheel } },
+            };
+        }
+        else if (keyCode is HidKeyCatalog.MouseLeftCode or HidKeyCatalog.MouseRightCode or HidKeyCatalog.MouseMiddleCode
             or HidKeyCatalog.MouseXButton1Code or HidKeyCatalog.MouseXButton2Code)
         {
             uint mouseData = keyCode switch
@@ -626,6 +841,7 @@ public sealed class MacroExecutionService : IDisposable
             _subscribedDevices = false;
         }
         CancelPlayback();
+        StopRecordingCapture();
         StopHook();
     }
 

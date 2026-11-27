@@ -76,7 +76,6 @@ public partial class SettingsView : UserControl
     {
         // Value 与 IsChecked 在 LoadSettings() 中用代码写入，避免 AXAML 内联 Value 与变更事件冲突。
         PollIntervalBox.ValueChanged += (_, _) => MarkUnsaved();
-        GamePollIntervalBox.ValueChanged += (_, _) => MarkUnsaved();
         LowBatteryThresholdBox.ValueChanged += (_, _) => MarkUnsaved();
 
         CloseToTraySwitch.IsCheckedChanged += (_, _) => ApplySimpleToggle(s => s.CloseToTray = CloseToTraySwitch.IsChecked == true);
@@ -92,7 +91,7 @@ public partial class SettingsView : UserControl
             App.Settings.Current.AutoYieldToVendorSoftware = value;
             ExternalConfiguratorGuard.AutoYieldEnabled = value;
             App.Settings.Save();
-            MarkUnsaved();
+            ShowAutoSavedHint();
         };
 
         DebugSwitch.IsCheckedChanged += (_, _) =>
@@ -103,7 +102,7 @@ public partial class SettingsView : UserControl
             GearDeck.Core.Diag.VerboseEnabled = debug;
             App.Settings.Save();
             MainWindow.Instance?.UpdateDebugVisibility();
-            MarkUnsaved();
+            ShowAutoSavedHint();
         };
 
         StartupSwitch.IsCheckedChanged += (_, _) => ApplyStartupToggle();
@@ -129,7 +128,6 @@ public partial class SettingsView : UserControl
     {
         _binding = true;
         SetNumberBox(PollIntervalBox, 5, 300, Math.Clamp(App.Settings.Current.PollIntervalSeconds, 5, 300));
-        SetNumberBox(GamePollIntervalBox, 250, 5000, Math.Clamp(App.Settings.Current.GameAutoPollIntervalMs, 250, 5000));
         SetNumberBox(LowBatteryThresholdBox, 5, 80, Math.Clamp(App.Settings.Current.LowBatteryThreshold, 5, 80));
         CloseToTraySwitch.IsChecked = App.Settings.Current.CloseToTray;
         LaunchMinimizedSwitch.IsChecked = App.Settings.Current.LaunchMinimizedToTray;
@@ -145,6 +143,8 @@ public partial class SettingsView : UserControl
 
         UpdateStatusText.Text = $"当前版本 v{AppUpdateService.CurrentVersion}";
         StartupHintText.Text = StartupStateHint(App.Settings.Current.LaunchOnStartup, "", withDetail: false);
+        if (string.IsNullOrWhiteSpace(ImageSyncHintText.Text))
+            ImageSyncHintText.Text = "未同步时默认使用内置设备图库规则";
         SavedHintText.Text = "";
     }
 
@@ -179,10 +179,34 @@ public partial class SettingsView : UserControl
     private string GetSelectedMirrorUrl()
         => (MirrorChannelCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
 
+    private bool HasUnsavedPendingEdits()
+    {
+        var s = App.Settings.Current;
+        int savedPoll = Math.Clamp(s.PollIntervalSeconds, 5, 300);
+        int savedLowBat = Math.Clamp(s.LowBatteryThreshold, 5, 80);
+        int curPoll = (int)Math.Round(Math.Clamp(ReadNumberBox(PollIntervalBox, savedPoll), 5, 300));
+        int curLowBat = (int)Math.Round(Math.Clamp(ReadNumberBox(LowBatteryThresholdBox, savedLowBat), 5, 80));
+        string curCloudUrl = CloudManifestUrlBox.Text?.Trim() ?? "";
+        string savedCloudUrl = s.CustomCloudGalleryManifestUrl?.Trim() ?? "";
+        return curPoll != savedPoll
+            || curLowBat != savedLowBat
+            || !string.Equals(curCloudUrl, savedCloudUrl, StringComparison.Ordinal);
+    }
+
     private void MarkUnsaved()
     {
-        if (!_binding)
-            SavedHintText.Text = "有未保存的更改，请点击「保存设置」。";
+        if (_binding) return;
+        SavedHintText.Text = HasUnsavedPendingEdits()
+            ? "有未保存的更改，请点击「保存设置」。"
+            : "";
+    }
+
+    private void ShowAutoSavedHint()
+    {
+        if (_binding) return;
+        SavedHintText.Text = HasUnsavedPendingEdits()
+            ? "有未保存的更改，请点击「保存设置」。"
+            : $"已自动保存 ({DateTime.Now:HH:mm:ss})";
     }
 
     private void ApplySimpleToggle(Action<AppSettings> write)
@@ -190,7 +214,7 @@ public partial class SettingsView : UserControl
         if (_binding) return;
         write(App.Settings.Current);
         App.Settings.Save();
-        MarkUnsaved();
+        ShowAutoSavedHint();
     }
 
     /// <summary>开机自启：写入 Registry(Win) / LaunchAgent(macOS)，写入失败时回滚开关。</summary>
@@ -212,7 +236,7 @@ public partial class SettingsView : UserControl
         App.Settings.Current.LaunchOnStartup = enable;
         App.Settings.Save();
         StartupHintText.Text = StartupStateHint(enable, detail, withDetail: true);
-        MarkUnsaved();
+        ShowAutoSavedHint();
     }
 
     private static string StartupStateHint(bool enable, string detail, bool withDetail)
@@ -246,12 +270,10 @@ public partial class SettingsView : UserControl
         try
         {
             int hidSeconds = (int)Math.Round(Math.Clamp(ReadNumberBox(PollIntervalBox, 15), 5, 300));
-            int gameMs = (int)Math.Round(Math.Clamp(ReadNumberBox(GamePollIntervalBox, 1000), 250, 5000));
             int lowBat = (int)Math.Round(Math.Clamp(ReadNumberBox(LowBatteryThresholdBox, 20), 5, 80));
 
             var s = App.Settings.Current;
             s.PollIntervalSeconds = hidSeconds;
-            s.GameAutoPollIntervalMs = gameMs;
             s.LowBatteryThreshold = lowBat;
             s.CloseToTray = CloseToTraySwitch.IsChecked == true;
             s.LaunchMinimizedToTray = LaunchMinimizedSwitch.IsChecked == true;
@@ -272,11 +294,10 @@ public partial class SettingsView : UserControl
             MainWindow.Instance?.UpdateDebugVisibility();
             MainWindow.Instance?.UpdateVersionBadge();
             App.Devices.Start(s.PollIntervalSeconds);
-            App.GameAuto?.UpdatePollInterval(s.GameAutoPollIntervalMs);
             App.RefreshWidget();
 
             SavedHintText.Text = startupOk
-                ? $"已保存 ({DateTime.Now:HH:mm:ss})：轮询 {hidSeconds} 秒 · 游戏监测 {gameMs} 毫秒 · 低电阈值 {lowBat}%"
+                ? $"已保存 ({DateTime.Now:HH:mm:ss})：轮询 {hidSeconds} 秒 · 低电阈值 {lowBat}%"
                 : $"设置已保存，但开机自启写入失败：{startupDetail}";
             StartupHintText.Text = StartupStateHint(s.LaunchOnStartup, startupDetail, !startupOk);
         }

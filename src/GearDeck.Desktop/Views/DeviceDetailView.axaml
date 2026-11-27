@@ -512,8 +512,10 @@
                                     <ComboBox x:Name="QuickMacroBtnCombo" Grid.Column="2" HorizontalAlignment="Stretch" />
                                 </Grid>
                                 <WrapPanel>
-                                    <Button x:Name="QuickEnrollMacroBtn" Content="绑定到本设备" Classes="accent"
-                                            Margin="0,0,8,4" Click="OnQuickEnrollMacro" />
+                                    <Button x:Name="QuickBindSoftwareMacroBtn" Content="绑定软件宏" Classes="accent"
+                                            Margin="0,0,8,4" Click="OnQuickBindSoftwareMacro" />
+                                    <Button x:Name="QuickUploadHardwareMacroBtn" Content="写入硬件宏" IsVisible="False"
+                                            Margin="0,0,8,4" Click="OnQuickUploadHardwareMacro" />
                                     <Button x:Name="OpenMacroHubBtn" Content="打开鼠标宏中心"
                                             Margin="0,0,0,4" Click="OnOpenMacroHub" />
                                 </WrapPanel>

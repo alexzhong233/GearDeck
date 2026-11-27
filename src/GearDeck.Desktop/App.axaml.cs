@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
@@ -30,6 +31,7 @@ public partial class App : Application
     private static FileStream? _macLockStream;
     private static EventWaitHandle? _activateEvent;
     private static DispatcherTimer? _commandTimer;
+    private static FileSystemWatcher? _commandWatcher;
     private static long _lastCommandSeq;
     private static long _lastPositionSeq;
     private static DateTime _lastCommandWriteUtc;
@@ -67,11 +69,21 @@ public partial class App : Application
         };
         MacAccessibilityGuard.Initialize();
 
+        var cmdArgs = Environment.GetCommandLineArgs();
+        bool waitRestart = cmdArgs.Any(a => string.Equals(a, "--wait-restart", StringComparison.OrdinalIgnoreCase));
+
         if (OperatingSystem.IsWindows())
         {
             _singleInstance = new Mutex(true, @"Local\GearDeck.SingleInstance", out bool created);
+            if (!created && waitRestart)
+            {
+                try { created = _singleInstance.WaitOne(TimeSpan.FromSeconds(5)); }
+                catch (AbandonedMutexException) { created = true; }
+            }
             if (!created)
             {
+                _singleInstance.Dispose();
+                _singleInstance = null;
                 WakeExistingInstance();
                 if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d)
                     d.Shutdown(0);
@@ -97,7 +109,6 @@ public partial class App : Application
         AtkModelCatalog.SeedPersistentReceiverModels(Settings.Current.KnownReceiverModels);
         ReceiverModelRegistry.Seed(Settings.Current.KnownReceiverModels, Settings.Current.DeviceCustomNames);
 
-        var cmdArgs = Environment.GetCommandLineArgs();
         var mirrorArg = cmdArgs.FirstOrDefault(a => a.StartsWith("--mirror=", StringComparison.OrdinalIgnoreCase));
         if (mirrorArg is { Length: > 9 })
             Settings.Current.GitHubMirrorUrl = mirrorArg[9..];
@@ -122,8 +133,11 @@ public partial class App : Application
             new CorsairProvider(),
             new SteelSeriesProvider(),
             new HyperXProvider(),
+            new AudezeProvider(),
             new MloongProvider(),
             new LeobogProvider(),
+            new SinowealthProvider(),
+            new RedragonProvider(),
             new OpenMouseProvider(),
             new ViaKeyboardProvider(),
             new GamepadBatteryProvider(),
@@ -132,6 +146,12 @@ public partial class App : Application
         Devices.DevicesUpdated += OnDevicesUpdated;
         Devices.ScanCompleted += FlushDiag;
         Devices.Start(Settings.Current.PollIntervalSeconds);
+
+        GameAuto = new GameProfileAutoService();
+        GameAuto.Start();
+
+        MacroRunner = new MacroExecutionService();
+        MacroRunner.SyncHookState();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -172,12 +192,6 @@ public partial class App : Application
             catch { }
         }
 
-        GameAuto = new GameProfileAutoService();
-        GameAuto.Start();
-
-        MacroRunner = new MacroExecutionService();
-        MacroRunner.SyncHookState();
-
         if (OperatingSystem.IsWindows())
         {
             StartActivateListener();
@@ -195,6 +209,13 @@ public partial class App : Application
                     await Updater.CheckAsync();
             });
         }
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(8000);
+            if (!IsExiting && _mainWindow == null)
+                TrimIdleProcessMemory();
+        });
 
         base.OnFrameworkInitializationCompleted();
     }
@@ -268,7 +289,24 @@ public partial class App : Application
         _lastPositionSeq = ReadInitialSeq(posPath);
         try { if (File.Exists(cmdPath)) _lastCommandWriteUtc = File.GetLastWriteTimeUtc(cmdPath); } catch { }
         try { if (File.Exists(posPath)) _lastPositionWriteUtc = File.GetLastWriteTimeUtc(posPath); } catch { }
-        _commandTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+
+        try
+        {
+            Directory.CreateDirectory(StateDir);
+            _commandWatcher = new FileSystemWatcher(StateDir, "widget-*.json")
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime,
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true,
+            };
+            FileSystemEventHandler onFs = (_, _) => UiPost(() => { PollCommand(); PollPosition(); });
+            _commandWatcher.Changed += onFs;
+            _commandWatcher.Created += onFs;
+            _commandWatcher.Renamed += (_, _) => UiPost(() => { PollCommand(); PollPosition(); });
+        }
+        catch { }
+
+        _commandTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
         _commandTimer.Tick += (_, _) => { PollCommand(); PollPosition(); };
         _commandTimer.Start();
     }
@@ -600,17 +638,30 @@ public partial class App : Application
             await Task.Delay(500);
             if (IsExiting || _mainWindow is not null)
                 return;
-            try
-            {
-                GC.Collect(2, GCCollectionMode.Optimized, blocking: false);
-                if (OperatingSystem.IsWindows())
-                {
-                    using var proc = Process.GetCurrentProcess();
-                    _ = SetProcessWorkingSetSize(proc.Handle, (IntPtr)(-1), (IntPtr)(-1));
-                }
-            }
-            catch { }
+            TrimIdleProcessMemory();
         });
+    }
+
+    private void TrimIdleProcessMemory()
+    {
+        if (IsExiting || _mainWindow is not null)
+            return;
+        try
+        {
+            bool noOpenWindows = ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime d
+                || d.Windows.Count == 0;
+            if (noOpenWindows)
+                DeviceImageService.ClearBitmapCache();
+
+            GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            if (OperatingSystem.IsWindows())
+            {
+                using var proc = Process.GetCurrentProcess();
+                _ = SetProcessWorkingSetSize(proc.Handle, (IntPtr)(-1), (IntPtr)(-1));
+            }
+        }
+        catch { }
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -621,9 +672,14 @@ public partial class App : Application
         if (IsExiting) return;
         IsExiting = true;
 
+        try { _singleInstance?.ReleaseMutex(); } catch { }
+        try { _singleInstance?.Dispose(); _singleInstance = null; } catch { }
+
         try
         {
             _commandTimer?.Stop();
+            _commandWatcher?.Dispose();
+            _commandWatcher = null;
             _activateEvent?.Set();
             _activateEvent?.Dispose();
             NativeNotificationService.Unregister();
@@ -644,8 +700,6 @@ public partial class App : Application
         }
 
         try { Settings?.Save(); } catch { }
-        try { _singleInstance?.ReleaseMutex(); } catch { }
-        try { _singleInstance?.Dispose(); } catch { }
         try { _macLockStream?.Dispose(); _macLockStream = null; } catch { }
 
         if (invokeDesktopShutdown && ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

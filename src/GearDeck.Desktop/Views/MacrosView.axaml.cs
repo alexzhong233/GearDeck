@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -18,18 +19,23 @@ using GearDeck.Desktop.Services;
 
 namespace GearDeck.Desktop.Views;
 
+/// <summary>
+/// 鼠标宏中心：一级视图展示宏预设卡片列表，二级视图采用草稿隔离方式进行新建与编辑。
+/// </summary>
 public partial class MacrosView : UserControl
 {
-    // 视图由 MainWindow 缓存复用；开关状态按进程保存，不改动其他服务的持久化结构。
-    private static bool s_globalEnabled = true;
     private static readonly Dictionary<string, byte> AvaloniaKeyUsageMap = BuildAvaloniaKeyUsageMap();
 
-    private string? _selectedMacroId;
+    private string? _editingMacroId;
+    private OnboardMacroDefinition? _draftMacro;
+    private UniformGrid? _libraryGrid;
     private bool _binding = true;
     private bool _recording;
     private bool _busyTest;
     private bool _busyImport;
     private bool _busyExport;
+    private int _stopBtnMinX, _stopBtnMinY, _stopBtnMaxX, _stopBtnMaxY;
+    private bool _hasStopBtnBounds;
     private readonly Stopwatch _recWatch = new();
     private long _lastRecMs;
 
@@ -38,30 +44,17 @@ public partial class MacrosView : UserControl
         _binding = true;
         InitializeComponent();
         WireEvents();
-        EnsureAtLeastOneMacro();
         PopulateManualKeyCombo();
         LoadGlobalState();
         UpdatePlatformBanners();
         RenderMacroLibrary();
-        BindEditorFields();
+        ShowListView();
+        Loaded += (_, _) => UpdatePlatformBanners();
         Unloaded += OnUnloaded;
         _binding = false;
     }
 
-    // App.MacroRunner 没有 IsElevated 属性，统一走 MacroExecutionService.IsProcessElevated() 做 UIPI 检测。
-    private static bool IsRunnerElevated => App.MacroRunner != null && MacroExecutionService.IsProcessElevated();
-
-    private OnboardMacroDefinition? CurrentMacro
-    {
-        get
-        {
-            var list = App.Settings.Current.Macros;
-            if (list.Count == 0) return null;
-            return list.FirstOrDefault(m => m.Id == _selectedMacroId) ?? list[0];
-        }
-    }
-
-    // ── 初始化与事件接线 ─────────────────────────────────────────────────────
+    private static bool IsRunnerElevated => MacroExecutionService.IsProcessElevated();
 
     private void WireEvents()
     {
@@ -73,56 +66,42 @@ public partial class MacrosView : UserControl
             UpdatePlatformBanners();
         };
 
-        NewMacroBtn.Click += OnNewMacro;
-        CopyMacroBtn.Click += OnCopyMacro;
-        DeleteMacroBtn.Click += OnDeleteMacro;
+        NewMacroBtn.Click += OnNewMacroClick;
         ImportBtn.Click += OnImportClick;
         ExportBtn.Click += OnExportClick;
+        MacroLibraryHost.SizeChanged += (_, _) => UpdateLibraryColumns();
 
-        MacroNameBox.TextChanged += (_, _) => { if (!_binding) CommitMacroName(); };
+        BackToListBtn.Click += (_, _) => ExitEditorWithoutSaving();
+        CancelEditBtn.Click += (_, _) => ExitEditorWithoutSaving();
+        SaveMacroBtn.Click += OnSaveMacro;
+
+        MacroNameBox.TextChanged += (_, _) =>
+        {
+            if (!_binding && _draftMacro != null)
+                _draftMacro.Name = MacroNameBox.Text ?? "";
+        };
         MacroLoopCombo.SelectionChanged += OnLoopModeChanged;
-        // Value 在 BindEditorFields() 中用代码赋值，避免在 AXAML 内联 Value 与 ValueChanged 冲突。
         MacroRepeatBox.ValueChanged += (_, _) => OnRepeatValueChanged();
 
         RecordMacroBtn.Click += OnRecordClick;
-        AddKeyPressBtn.Click += OnAddKeyPress;
-        AddKeyReleaseBtn.Click += OnAddKeyRelease;
-        AddLeftClickBtn.Click += OnAddLeftClick;
-        AddRightClickBtn.Click += OnAddRightClick;
-        AddMiddleClickBtn.Click += OnAddMiddleClick;
+        AddKeyPressBtn.Click += (_, _) => AddDraftStep(SelectedManualUsage, true);
+        AddKeyReleaseBtn.Click += (_, _) => AddDraftStep(SelectedManualUsage, false);
+        AddLeftClickBtn.Click += (_, _) => AddDraftClickPair(HidKeyCatalog.MouseLeftCode);
+        AddRightClickBtn.Click += (_, _) => AddDraftClickPair(HidKeyCatalog.MouseRightCode);
+        AddMiddleClickBtn.Click += (_, _) => AddDraftClickPair(HidKeyCatalog.MouseMiddleCode);
+        AddWheelUpBtn.Click += (_, _) => AddDraftWheelStep(HidKeyCatalog.MouseWheelUpCode);
+        AddWheelDownBtn.Click += (_, _) => AddDraftWheelStep(HidKeyCatalog.MouseWheelDownCode);
         AddDelayBtn.Click += OnAddDelay;
         ClearStepsBtn.Click += OnClearSteps;
 
-        RecordFocusTrap.KeyDown += OnRecorderKeyDown;
-        RecordFocusTrap.KeyUp += OnRecorderKeyUp;
-        RecordFocusTrap.PointerPressed += OnRecorderPointerPressed;
-        RecordFocusTrap.PointerReleased += OnRecorderPointerReleased;
+        RecordCaptureBanner.AddHandler(InputElement.KeyDownEvent, OnRecorderKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+        RecordCaptureBanner.AddHandler(InputElement.KeyUpEvent, OnRecorderKeyUp, RoutingStrategies.Tunnel, handledEventsToo: true);
+        RecordCaptureBanner.AddHandler(InputElement.PointerPressedEvent, OnRecorderPointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        RecordCaptureBanner.AddHandler(InputElement.PointerReleasedEvent, OnRecorderPointerReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
+        RecordCaptureBanner.AddHandler(InputElement.PointerWheelChangedEvent, OnRecorderPointerWheelChanged, RoutingStrategies.Tunnel, handledEventsToo: true);
 
-        SaveMacroBtn.Click += OnSaveMacro;
-        TestPlayBtn.Click += OnTestPlayClick;
+        TestPlayBtn.Click += OnTestPlayDraftClick;
         StopPlayBtn.Click += OnStopPlayClick;
-
-        WorkspaceGrid.SizeChanged += OnWorkspaceSizeChanged;
-    }
-
-    private static void EnsureAtLeastOneMacro()
-    {
-        if (App.Settings.Current.Macros.Count > 0) return;
-        var def = new OnboardMacroDefinition
-        {
-            Name = "示例：Ctrl+C 复制宏",
-            LoopMode = MacroLoopMode.RepeatCount,
-            RepeatCount = 1,
-            Steps =
-            [
-                new MacroStep(0xE0, true, 12),
-                new MacroStep(0x06, true, 15),
-                new MacroStep(0x06, false, 12),
-                new MacroStep(0xE0, false, 12),
-            ],
-        };
-        App.Settings.Current.Macros.Add(def);
-        App.Settings.Save();
     }
 
     private void PopulateManualKeyCombo()
@@ -136,14 +115,14 @@ public partial class MacrosView : UserControl
 
     private void LoadGlobalState()
     {
-        WithBinding(() => GlobalEnableSwitch.IsChecked = s_globalEnabled);
+        WithBinding(() => GlobalEnableSwitch.IsChecked = App.Settings.Current.SoftwareMacrosEnabled);
         UpdateGlobalUi();
     }
 
     private void UpdatePlatformBanners()
     {
         bool windows = OperatingSystem.IsWindows();
-        bool supported = App.MacroRunner?.IsPlaybackSupported ?? false;
+        bool supported = App.MacroRunner?.IsPlaybackSupported ?? windows;
         AdminBanner.IsVisible = windows && !IsRunnerElevated;
         MacOsBanner.IsVisible = !windows || !supported;
         if (!windows)
@@ -151,7 +130,7 @@ public partial class MacrosView : UserControl
             bool trusted = MacroExecutionService.IsMacAccessibilityTrusted();
             MacOsNoticeText.Text = trusted
                 ? "已获得 macOS「辅助功能」权限（仅开放本地宏创建、编辑、导入导出与板载录入；macOS 暂不启用全局软件回放）。"
-                : MacroExecutionService.MacOsPlaybackNotice + "。当前未授予「辅助功能」权限，可点击下方按钮在系统设置中授权。";
+                : MacroExecutionService.MacOsPlaybackNotice + "。当前未授予「辅助功能」权限，可点击右侧按钮在系统设置中授权。";
             OpenMacAccessibilityBtn.IsVisible = !trusted;
         }
         else
@@ -164,11 +143,12 @@ public partial class MacrosView : UserControl
 
     private void UpdateGlobalUi()
     {
-        GlobalStateText.Text = s_globalEnabled
-            ? "全局宏已启用：试播与录制可正常使用，侧键绑定按各宏的触发方式生效。"
-            : "全局宏已禁用：试播与录制已暂停，已保存的宏与绑定仍保留。";
-        TestPlayBtn.IsEnabled = s_globalEnabled;
-        RecordMacroBtn.IsEnabled = s_globalEnabled;
+        bool enabled = App.Settings.Current.SoftwareMacrosEnabled;
+        GlobalStateText.Text = enabled
+            ? "侧键接管已开启：后台监听目标鼠标的已绑定侧键/中键，拦截原生功能并触发对应软件宏（键盘/鼠标板载宏不受此开关影响）。"
+            : "侧键接管已关闭：已卸载后台键鼠钩子，鼠标侧键已恢复原生功能；您仍可正常新建、编辑与录制宏。";
+        TestPlayBtn.IsEnabled = enabled;
+        RecordMacroBtn.IsEnabled = true;
     }
 
     private void WithBinding(Action action)
@@ -179,22 +159,23 @@ public partial class MacrosView : UserControl
         finally { _binding = previous; }
     }
 
-    private void OnUnloaded(object? sender, RoutedEventArgs e) => StopRecording();
+    private void OnUnloaded(object? sender, RoutedEventArgs e)
+    {
+        StopRecording(saveDraft: false);
+        App.MacroRunner?.CancelPlayback();
+    }
 
     // ── 全局开关与管理员重启 ─────────────────────────────────────────────────
 
     private void OnGlobalEnableChanged(object? sender, RoutedEventArgs e)
     {
         if (_binding) return;
-        s_globalEnabled = GlobalEnableSwitch.IsChecked == true;
-        if (s_globalEnabled) App.MacroRunner?.SyncHookState();
-        else
-        {
-            App.MacroRunner?.CancelPlayback();
-            StopRecording();
-            PlaybackBar.IsVisible = false;
-            PlaybackBar.IsIndeterminate = false;
-        }
+        bool enabled = GlobalEnableSwitch.IsChecked == true;
+        App.Settings.Current.SoftwareMacrosEnabled = enabled;
+        App.Settings.Save();
+        App.MacroRunner?.SyncHookState();
+        if (!enabled)
+            SetPlaybackBars(active: false);
         UpdateGlobalUi();
     }
 
@@ -204,87 +185,293 @@ public partial class MacrosView : UserControl
             ShowStatus("已取消管理员重启，或启动失败。", InfoBarSeverity.Warning);
     }
 
-    // ── 宏库 ─────────────────────────────────────────────────────────────────
+    // ── 一级列表视图 ─────────────────────────────────────────────────────────
+
+    private void ShowListView()
+    {
+        MacroEditorView.IsVisible = false;
+        MacroListView.IsVisible = true;
+        RootScrollViewer.Offset = new Vector(0, 0);
+    }
+
+    private void EnterEditorView(OnboardMacroDefinition? source)
+    {
+        StopRecording(saveDraft: false);
+        App.MacroRunner?.CancelPlayback();
+
+        if (source == null)
+        {
+            _editingMacroId = null;
+            _draftMacro = new OnboardMacroDefinition
+            {
+                Name = $"自定义宏 {App.Settings.Current.Macros.Count + 1}",
+                LoopMode = MacroLoopMode.PlayOnce,
+                RepeatCount = 1,
+                Steps = [],
+            };
+            EditorTitleText.Text = "新建鼠标宏";
+            EditorSubText.Text = "配置名称、触发方式与动作步骤后，点击右上角「保存并返回」写入宏库";
+        }
+        else
+        {
+            _editingMacroId = source.Id;
+            _draftMacro = new OnboardMacroDefinition
+            {
+                Id = source.Id,
+                Name = source.Name,
+                LoopMode = source.LoopMode,
+                RepeatCount = source.RepeatCount,
+                Steps = NormalizeStepsForEditor(source.Steps),
+            };
+            EditorTitleText.Text = $"编辑宏 · {source.Name}";
+            EditorSubText.Text = "当前在隔离草稿中修改，点击「保存并返回」生效，「取消」或返回将放弃未保存更改";
+        }
+
+        BindDraftEditorFields();
+        MacroListView.IsVisible = false;
+        MacroEditorView.IsVisible = true;
+        RootScrollViewer.Offset = new Vector(0, 0);
+    }
+
+    private void ExitEditorWithoutSaving()
+    {
+        StopRecording(saveDraft: false);
+        App.MacroRunner?.CancelPlayback();
+        SetPlaybackBars(active: false);
+        _editingMacroId = null;
+        _draftMacro = null;
+        ShowListView();
+    }
+
+    private int ComputeLibraryColumns()
+    {
+        double w = MacroLibraryHost.Bounds.Width;
+        if (w <= 1) return 2;
+        return w >= 1060 ? 3 : (w >= 660 ? 2 : 1);
+    }
+
+    private void UpdateLibraryColumns()
+    {
+        if (_libraryGrid == null) return;
+        int cols = ComputeLibraryColumns();
+        if (_libraryGrid.Columns != cols)
+            _libraryGrid.Columns = cols;
+    }
 
     private void RenderMacroLibrary()
     {
         var macros = App.Settings.Current.Macros;
-        if (macros.Count > 0 && (string.IsNullOrEmpty(_selectedMacroId) || macros.All(m => m.Id != _selectedMacroId)))
-            _selectedMacroId = macros[0].Id;
-
         MacroLibraryHost.Children.Clear();
-        foreach (var macro in macros.ToList())
+
+        if (macros.Count == 0)
         {
-            bool selected = macro.Id == _selectedMacroId;
-            string loopText = macro.LoopMode switch
+            _libraryGrid = null;
+            MacroLibraryHost.Children.Add(new Border
             {
-                MacroLoopMode.PlayOnce => "单次触发",
-                MacroLoopMode.WhileHeld => "按住触发",
-                MacroLoopMode.ToggleUntilKey => "切换触发 (+Esc 停)",
-                _ => $"指定 {macro.RepeatCount} 次",
-            };
-            string bound = DescribeBindingsForMacro(macro.Id);
-            string summary = $"{macro.Steps.Count} 步 · {macro.Steps.Sum(s => s.DelayMs)} ms · {loopText}";
-
-            var content = new StackPanel { Spacing = 6 };
-            content.Children.Add(new TextBlock
-            {
-                Text = macro.Name,
-                FontSize = 14,
-                FontWeight = FontWeight.SemiBold,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            });
-            content.Children.Add(new TextBlock { Text = summary, FontSize = 12, Foreground = Brushes.Gray });
-            if (!string.IsNullOrEmpty(bound))
-                content.Children.Add(new TextBlock
+                Padding = new Thickness(24, 28),
+                CornerRadius = new CornerRadius(10),
+                Background = ResolveBrush("CardBackgroundFillColorDefaultBrush", Brushes.Transparent),
+                BorderBrush = ResolveBrush("CardStrokeColorDefaultBrush", Brushes.Gray),
+                BorderThickness = new Thickness(1),
+                Child = new StackPanel
                 {
-                    Text = $"已绑：{bound}",
-                    FontSize = 11,
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = Brushes.CornflowerBlue,
-                });
-
-            var buttons = new WrapPanel { Margin = new Thickness(0, 2, 0, 0) };
-            var editBtn = ToolButton("编辑");
-            editBtn.Click += (_, _) => SelectMacro(macro.Id);
-            var playBtn = ToolButton("试播");
-            playBtn.Click += (_, _) => _ = PlayMacroSafeAsync(macro, playBtn);
-            var dupBtn = ToolButton("复制");
-            dupBtn.Click += (_, _) => DuplicateMacro(macro);
-            var delBtn = ToolButton("删除");
-            delBtn.IsEnabled = macros.Count > 1;
-            delBtn.Click += (_, _) => DeleteMacro(macro);
-            buttons.Children.Add(editBtn);
-            buttons.Children.Add(playBtn);
-            buttons.Children.Add(dupBtn);
-            buttons.Children.Add(delBtn);
-            content.Children.Add(buttons);
-
-            var card = new Border
-            {
-                Width = 236,
-                Margin = new Thickness(0, 0, 10, 10),
-                Padding = new Thickness(12),
-                CornerRadius = new CornerRadius(8),
-                Background = selected
-                    ? new SolidColorBrush(Color.FromArgb(32, 56, 189, 248))
-                    : Brushes.Transparent,
-                BorderBrush = selected ? Brushes.CornflowerBlue : Brushes.Gray,
-                BorderThickness = new Thickness(selected ? 2 : 1),
-                Child = content,
-            };
-            MacroLibraryHost.Children.Add(card);
+                    Spacing = 6,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "当前宏库为空",
+                            FontSize = 15,
+                            FontWeight = FontWeight.SemiBold,
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                        },
+                        new TextBlock
+                        {
+                            Text = "点击右上角「+ 新建宏」进入录制与编排界面，支持键盘按键与鼠标全键位动作。",
+                            FontSize = 12,
+                            Foreground = ResolveBrush("TextFillColorSecondaryBrush", Brushes.Gray),
+                            TextWrapping = TextWrapping.Wrap,
+                            HorizontalAlignment = HorizontalAlignment.Center,
+                        },
+                    },
+                },
+            });
+            return;
         }
 
-        DeleteMacroBtn.IsEnabled = macros.Count > 1;
-        CopyMacroBtn.IsEnabled = CurrentMacro != null;
+        _libraryGrid = new UniformGrid
+        {
+            Columns = ComputeLibraryColumns(),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+
+        IBrush cardBg = ResolveBrush("CardBackgroundFillColorDefaultBrush", Brushes.Transparent);
+        IBrush cardStroke = ResolveBrush("CardStrokeColorDefaultBrush", Brushes.Gray);
+        IBrush pillBg = ResolveBrush("SubtleFillColorSecondaryBrush", Brushes.Transparent);
+        IBrush secondaryText = ResolveBrush("TextFillColorSecondaryBrush", Brushes.Gray);
+        IBrush accentBrush = ResolveBrush("AccentFillColorDefaultBrush", Brushes.CornflowerBlue);
+
+        foreach (var macro in macros.ToList())
+        {
+            string loopText = macro.LoopMode switch
+            {
+                MacroLoopMode.PlayOnce => "单次",
+                MacroLoopMode.WhileHeld => "按住循环",
+                MacroLoopMode.ToggleUntilKey => "切换 (+Esc)",
+                _ => $"循环 {macro.RepeatCount} 次",
+            };
+            string bound = DescribeBindingsForMacro(macro.Id);
+            int actionCount = macro.Steps.Count(s => s.KeyCode != 0);
+            string summary = $"{actionCount} 个动作 · 共 {macro.Steps.Sum(s => s.DelayMs)} ms";
+            string preview = BuildStepsPreview(macro.Steps);
+
+            var header = new Grid();
+            header.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+            header.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            header.Children.Add(new TextBlock
+            {
+                Text = macro.Name,
+                FontSize = 15,
+                FontWeight = FontWeight.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            var modeBadge = new Border
+            {
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(8, 3),
+                Margin = new Thickness(8, 0, 0, 0),
+                Background = pillBg,
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock { Text = loopText, FontSize = 11, Foreground = secondaryText },
+            };
+            Grid.SetColumn(modeBadge, 1);
+            header.Children.Add(modeBadge);
+
+            var content = new StackPanel { Spacing = 8 };
+            content.Children.Add(header);
+            content.Children.Add(new TextBlock
+            {
+                Text = summary,
+                FontSize = 12,
+                Foreground = secondaryText,
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = preview,
+                FontSize = 12,
+                FontFamily = new FontFamily("Consolas,Menlo,monospace"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = secondaryText,
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = $"侧键绑定：{bound}",
+                FontSize = 11,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = bound.StartsWith("（") ? secondaryText : accentBrush,
+            });
+
+            var actions = new Grid();
+            actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1.2, GridUnitType.Star)));
+            actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+            actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+            actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+
+            var editBtn = ActionButton("编辑", accent: true, marginRight: 6);
+            editBtn.Click += (_, _) => EnterEditorView(macro);
+
+            var playBtn = ActionButton("试播", accent: false, marginRight: 6);
+            playBtn.Click += (_, _) => _ = PlayMacroSafeAsync(macro, playBtn, fromList: true);
+
+            var dupBtn = ActionButton("复制", accent: false, marginRight: 6);
+            dupBtn.Click += (_, _) => DuplicateMacro(macro);
+
+            var delBtn = ActionButton("删除", accent: false, marginRight: 0);
+            delBtn.Click += (_, _) => DeleteMacro(macro);
+
+            Grid.SetColumn(editBtn, 0);
+            Grid.SetColumn(playBtn, 1);
+            Grid.SetColumn(dupBtn, 2);
+            Grid.SetColumn(delBtn, 3);
+            actions.Children.Add(editBtn);
+            actions.Children.Add(playBtn);
+            actions.Children.Add(dupBtn);
+            actions.Children.Add(delBtn);
+            content.Children.Add(actions);
+
+            _libraryGrid.Children.Add(new Border
+            {
+                Margin = new Thickness(0, 0, 12, 12),
+                Padding = new Thickness(16),
+                CornerRadius = new CornerRadius(10),
+                Background = cardBg,
+                BorderBrush = cardStroke,
+                BorderThickness = new Thickness(1),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Child = content,
+            });
+        }
+
+        MacroLibraryHost.Children.Add(_libraryGrid);
     }
 
-    private static Button ToolButton(string content)
-        => new() { Content = content, Padding = new Thickness(10, 5), FontSize = 12 };
+    private static Button ActionButton(string content, bool accent, double marginRight)
+    {
+        var btn = new Button
+        {
+            Content = content,
+            Padding = new Thickness(8, 5),
+            FontSize = 12,
+            Margin = new Thickness(0, 0, marginRight, 0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        if (accent)
+            btn.Classes.Add("accent");
+        return btn;
+    }
+
+    private static string BuildStepsPreview(IReadOnlyList<MacroStep> steps)
+    {
+        if (steps.Count == 0)
+            return "动作序列：（暂无步骤，点击「编辑」添加或录制）";
+
+        var parts = steps.Take(7).Select(s =>
+            s.KeyCode == 0
+                ? $"[{s.DelayMs}ms]"
+                : HidKeyCatalog.IsWheelCode(s.KeyCode)
+                    ? (s.KeyCode == HidKeyCatalog.MouseWheelUpCode ? "滚轮↑" : "滚轮↓")
+                    : $"{s.DisplayName}{(s.IsPress ? "↓" : "↑")}");
+        string text = string.Join(" → ", parts);
+        if (steps.Count > 7)
+            text += $" … (+{steps.Count - 7})";
+        return text;
+    }
+
+    private static List<MacroStep> NormalizeStepsForEditor(IReadOnlyList<MacroStep> source)
+    {
+        var result = new List<MacroStep>(source.Count * 2);
+        for (int i = 0; i < source.Count; i++)
+        {
+            var s = source[i];
+            if (s.KeyCode == 0)
+            {
+                if (s.DelayMs > 0)
+                    result.Add(new MacroStep(0, false, s.DelayMs));
+                continue;
+            }
+            result.Add(new MacroStep(s.KeyCode, s.IsPress, 0));
+            if (s.DelayMs > 0 && i < source.Count - 1)
+                result.Add(new MacroStep(0, false, s.DelayMs));
+        }
+        return result;
+    }
 
     private static string DescribeBindingsForMacro(string macroId)
     {
+        if (string.IsNullOrWhiteSpace(macroId)) return "（未绑定侧键）";
         var matches = App.Settings.Current.LocalButtonMacroBindings
             .Where(kv => string.Equals(kv.Value, macroId, StringComparison.OrdinalIgnoreCase))
             .Select(kv => kv.Key.Contains('|') ? kv.Key.Split('|')[1] : kv.Key)
@@ -293,31 +480,21 @@ public partial class MacrosView : UserControl
         return matches.Count == 0 ? "（未绑定侧键）" : string.Join(", ", matches);
     }
 
-    private void SelectMacro(string id)
+    private static IBrush ResolveBrush(string key, IBrush fallback)
     {
-        _selectedMacroId = id;
-        RenderMacroLibrary();
-        BindEditorFields();
-    }
-
-    private void OnNewMacro(object? sender, RoutedEventArgs e)
-    {
-        var macro = new OnboardMacroDefinition
+        try
         {
-            Name = $"自定义宏 {App.Settings.Current.Macros.Count + 1}",
-            LoopMode = MacroLoopMode.PlayOnce,
-            RepeatCount = 1,
-        };
-        App.Settings.Current.Macros.Add(macro);
-        _selectedMacroId = macro.Id;
-        PersistAndSync();
-        ShowStatus($"已新建宏「{macro.Name}」。", InfoBarSeverity.Success);
+            if (Application.Current != null &&
+                Application.Current.TryGetResource(key, Application.Current.ActualThemeVariant, out var value) &&
+                value is IBrush brush)
+                return brush;
+        }
+        catch { }
+        return fallback;
     }
 
-    private void OnCopyMacro(object? sender, RoutedEventArgs e)
-    {
-        if (CurrentMacro is { } source) DuplicateMacro(source);
-    }
+    private void OnNewMacroClick(object? sender, RoutedEventArgs e)
+        => EnterEditorView(source: null);
 
     private void DuplicateMacro(OnboardMacroDefinition source)
     {
@@ -331,23 +508,14 @@ public partial class MacrosView : UserControl
         };
         int index = App.Settings.Current.Macros.IndexOf(source);
         App.Settings.Current.Macros.Insert(Math.Max(0, index + 1), copy);
-        _selectedMacroId = copy.Id;
-        PersistAndSync();
+        App.Settings.Save();
+        App.MacroRunner?.SyncHookState();
+        RenderMacroLibrary();
         ShowStatus($"已复制为「{copy.Name}」。", InfoBarSeverity.Success);
-    }
-
-    private void OnDeleteMacro(object? sender, RoutedEventArgs e)
-    {
-        if (CurrentMacro is { } macro) DeleteMacro(macro);
     }
 
     private void DeleteMacro(OnboardMacroDefinition macro)
     {
-        if (App.Settings.Current.Macros.Count <= 1)
-        {
-            ShowStatus("至少需要保留一个宏。", InfoBarSeverity.Warning);
-            return;
-        }
         App.Settings.Current.Macros.Remove(macro);
         var keys = App.Settings.Current.LocalButtonMacroBindings
             .Where(kv => string.Equals(kv.Value, macro.Id, StringComparison.OrdinalIgnoreCase))
@@ -355,34 +523,20 @@ public partial class MacrosView : UserControl
             .ToList();
         foreach (string key in keys)
             App.Settings.Current.LocalButtonMacroBindings.Remove(key);
-        _selectedMacroId = App.Settings.Current.Macros[0].Id;
-        PersistAndSync();
-        ShowStatus($"已删除宏「{macro.Name}」及其绑定。", InfoBarSeverity.Informational);
-    }
-
-    private void PersistAndSync()
-    {
         App.Settings.Save();
         App.MacroRunner?.SyncHookState();
         RenderMacroLibrary();
-        BindEditorFields();
+        ShowStatus($"已删除宏「{macro.Name}」及其绑定。", InfoBarSeverity.Informational);
     }
 
-    // ── 编辑器字段 ───────────────────────────────────────────────────────────
+    // ── 二级草稿编辑器 ───────────────────────────────────────────────────────
 
-    private void BindEditorFields()
+    private void BindDraftEditorFields()
     {
-        var macro = CurrentMacro;
+        var macro = _draftMacro;
         WithBinding(() =>
         {
-            if (macro == null)
-            {
-                EditorTitleText.Text = "宏动作录制与编辑";
-                MacroNameBox.Text = "";
-                return;
-            }
-
-            EditorTitleText.Text = $"宏动作编辑 · {macro.Name}";
+            if (macro == null) return;
             MacroNameBox.Text = macro.Name;
             MacroRepeatBox.Value = Math.Clamp(macro.RepeatCount, 1, 99);
             MacroRepeatBox.IsEnabled = macro.LoopMode == MacroLoopMode.RepeatCount;
@@ -402,53 +556,31 @@ public partial class MacrosView : UserControl
             MacroLoopCombo.SelectedIndex = selected;
         });
         RenderSteps(macro);
-        BindingSummaryText.Text = DescribeBindingsForMacro(macro?.Id ?? "");
-    }
-
-    private void CommitMacroName()
-    {
-        var macro = CurrentMacro;
-        if (macro == null) return;
-        if (!string.IsNullOrWhiteSpace(MacroNameBox.Text))
-            macro.Name = MacroNameBox.Text.Trim();
-        App.Settings.Save();
-        RenderMacroLibrary();
-        EditorTitleText.Text = $"宏动作编辑 · {macro.Name}";
+        BindingSummaryText.Text = _editingMacroId == null
+            ? "新建宏保存后，可在宏中心卡片或外设侧键重映射中绑定此宏。"
+            : $"侧键绑定：{DescribeBindingsForMacro(_editingMacroId)}";
     }
 
     private void OnLoopModeChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (_binding || CurrentMacro is not { } macro) return;
+        if (_binding || _draftMacro is not { } macro) return;
         if (MacroLoopCombo.SelectedItem is ComboBoxItem item &&
             Enum.TryParse<MacroLoopMode>(item.Tag as string, out var mode))
             macro.LoopMode = mode;
         MacroRepeatBox.IsEnabled = macro.LoopMode == MacroLoopMode.RepeatCount;
-        App.Settings.Save();
-        App.MacroRunner?.SyncHookState();
-        RenderMacroLibrary();
     }
 
     private void OnRepeatValueChanged()
     {
         double raw = MacroRepeatBox.Value;
-        if (_binding || CurrentMacro is not { } macro || double.IsNaN(raw)) return;
+        if (_binding || _draftMacro is not { } macro || double.IsNaN(raw)) return;
         macro.RepeatCount = Math.Clamp((int)Math.Round(raw), 1, 99);
-        App.Settings.Save();
-        App.MacroRunner?.SyncHookState();
-        RenderMacroLibrary();
     }
 
     private static int ReadStepDelay(NumberBox box)
         => double.IsFinite(box.Value)
             ? Math.Clamp((int)Math.Round(box.Value), 5, 5000)
             : 25;
-
-    // ── 动作序列 ─────────────────────────────────────────────────────────────
-
-    private static string StepDescription(int index, MacroStep step)
-        => step.KeyCode == 0
-            ? $"#{index + 1}  延时等待 → {step.DelayMs} ms"
-            : $"#{index + 1}  {step.DisplayName}  {(step.IsPress ? "按下 ↓" : "松开 ↑")}  → 延迟 {step.DelayMs} ms";
 
     private void RenderSteps(OnboardMacroDefinition? macro)
     {
@@ -457,55 +589,86 @@ public partial class MacrosView : UserControl
         {
             MacroStepsPanel.Children.Add(new TextBlock
             {
-                Text = "当前宏暂无动作步骤；可先录制，或用上方按钮逐个添加按键按下/抬起、鼠标点击与延时。",
+                Text = "当前草稿暂无动作步骤；点击「开始录制键鼠动作」或使用上方工具栏添加按键/点击/滚轮/间隔。",
                 FontSize = 12,
-                Foreground = Brushes.Gray,
+                Foreground = ResolveBrush("TextFillColorSecondaryBrush", Brushes.Gray),
                 TextWrapping = TextWrapping.Wrap,
             });
             return;
         }
 
+        IBrush secondaryText = ResolveBrush("TextFillColorSecondaryBrush", Brushes.Gray);
         for (int i = 0; i < macro.Steps.Count; i++)
         {
             int index = i;
             var step = macro.Steps[i];
+            bool isInterval = step.KeyCode == 0;
+            bool isWheel = HidKeyCatalog.IsWheelCode(step.KeyCode);
+
+            string kindLabel = isInterval
+                ? "⏱ 间隔"
+                : isWheel
+                    ? (step.KeyCode == HidKeyCatalog.MouseWheelUpCode ? "鼠标滚轮向上 ⬆" : "鼠标滚轮向下 ⬇")
+                    : $"{step.DisplayName}  {(step.IsPress ? "↓ 按下" : "↑ 抬起")}";
 
             var left = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
-                Spacing = 8,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Spacing = 10,
+                VerticalAlignment = VerticalAlignment.Center,
             };
             left.Children.Add(new TextBlock
             {
-                Text = StepDescription(index, step),
+                Text = $"#{index + 1}",
+                Width = 32,
                 FontSize = 12,
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Foreground = secondaryText,
+                VerticalAlignment = VerticalAlignment.Center,
             });
-            var delayBox = new NumberBox { Width = 104, Minimum = 0, Maximum = 5000 };
-            delayBox.Value = step.DelayMs;
-            delayBox.ValueChanged += (_, _) =>
+            left.Children.Add(new TextBlock
             {
-                if (_binding) return;
-                if (double.IsFinite(delayBox.Value))
-                    step.DelayMs = Math.Clamp((int)Math.Round(delayBox.Value), 0, 5000);
-            };
-            left.Children.Add(delayBox);
+                Text = kindLabel,
+                MinWidth = isInterval ? 64 : 170,
+                FontSize = 13,
+                FontWeight = isInterval ? FontWeight.Normal : FontWeight.Medium,
+                Foreground = isInterval ? secondaryText : ResolveBrush("TextFillColorPrimaryBrush", Brushes.White),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+
+            if (isInterval)
+            {
+                var delayBox = new NumberBox { Width = 106, Maximum = 10000, Minimum = 1 };
+                delayBox.Value = Math.Clamp(step.DelayMs, 1, 10000);
+                delayBox.ValueChanged += (_, _) =>
+                {
+                    if (_binding) return;
+                    if (double.IsFinite(delayBox.Value))
+                        step.DelayMs = Math.Clamp((int)Math.Round(delayBox.Value), 1, 10000);
+                };
+                left.Children.Add(delayBox);
+                left.Children.Add(new TextBlock
+                {
+                    Text = "ms",
+                    FontSize = 12,
+                    Foreground = secondaryText,
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            }
 
             var actions = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 Spacing = 4,
                 Margin = new Thickness(8, 0, 0, 0),
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Right,
             };
-            var up = new Button { Content = "↑", FontSize = 12, Padding = new Thickness(8, 2, 8, 2), IsEnabled = index > 0 };
-            up.Click += (_, _) => MoveStep(index, -1);
-            var down = new Button { Content = "↓", FontSize = 12, Padding = new Thickness(8, 2, 8, 2), IsEnabled = index < macro.Steps.Count - 1 };
-            down.Click += (_, _) => MoveStep(index, 1);
-            var remove = new Button { Content = "删", FontSize = 12, Padding = new Thickness(8, 2, 8, 2) };
-            remove.Click += (_, _) => RemoveStep(index);
+            var up = new Button { Content = "↑", FontSize = 12, Padding = new Thickness(8, 3), IsEnabled = index > 0 };
+            up.Click += (_, _) => MoveDraftStep(index, -1);
+            var down = new Button { Content = "↓", FontSize = 12, Padding = new Thickness(8, 3), IsEnabled = index < macro.Steps.Count - 1 };
+            down.Click += (_, _) => MoveDraftStep(index, 1);
+            var remove = new Button { Content = "删除", FontSize = 12, Padding = new Thickness(8, 3) };
+            remove.Click += (_, _) => RemoveDraftStep(index);
             actions.Children.Add(up);
             actions.Children.Add(down);
             actions.Children.Add(remove);
@@ -520,29 +683,21 @@ public partial class MacrosView : UserControl
         }
     }
 
-    private void MoveStep(int index, int delta)
+    private void MoveDraftStep(int index, int delta)
     {
-        if (CurrentMacro is not { } macro) return;
+        if (_draftMacro is not { } macro) return;
         int target = index + delta;
         if (target < 0 || target >= macro.Steps.Count) return;
         (macro.Steps[index], macro.Steps[target]) = (macro.Steps[target], macro.Steps[index]);
-        CommitSteps(macro);
+        RenderSteps(macro);
     }
 
-    private void RemoveStep(int index)
+    private void RemoveDraftStep(int index)
     {
-        if (CurrentMacro is not { } macro) return;
+        if (_draftMacro is not { } macro) return;
         if (index < 0 || index >= macro.Steps.Count) return;
         macro.Steps.RemoveAt(index);
-        CommitSteps(macro);
-    }
-
-    private void CommitSteps(OnboardMacroDefinition macro)
-    {
-        App.Settings.Save();
-        App.MacroRunner?.SyncHookState();
         RenderSteps(macro);
-        RenderMacroLibrary();
     }
 
     private byte SelectedManualUsage
@@ -550,72 +705,96 @@ public partial class MacrosView : UserControl
             ? usage
             : (byte)0x04;
 
-    private void OnAddKeyPress(object? sender, RoutedEventArgs e) => AddStep(SelectedManualUsage, true);
+    private void AddDraftStep(byte usage, bool isPress)
+    {
+        if (_draftMacro is not { } macro) return;
+        macro.Steps.Add(new MacroStep(usage, isPress, 0));
+        RenderSteps(macro);
+    }
 
-    private void OnAddKeyRelease(object? sender, RoutedEventArgs e) => AddStep(SelectedManualUsage, false);
+    private void AddDraftWheelStep(byte wheelCode)
+    {
+        if (_draftMacro is not { } macro) return;
+        macro.Steps.Add(new MacroStep(wheelCode, true, 0));
+        RenderSteps(macro);
+    }
 
-    private void OnAddLeftClick(object? sender, RoutedEventArgs e) => AddClickPair(HidKeyCatalog.MouseLeftCode);
-
-    private void OnAddRightClick(object? sender, RoutedEventArgs e) => AddClickPair(HidKeyCatalog.MouseRightCode);
-
-    private void OnAddMiddleClick(object? sender, RoutedEventArgs e) => AddClickPair(HidKeyCatalog.MouseMiddleCode);
+    private void AddDraftClickPair(byte usage)
+    {
+        if (_draftMacro is not { } macro) return;
+        int gap = ReadStepDelay(StepDelayBox);
+        macro.Steps.Add(new MacroStep(usage, true, 0));
+        if (gap > 0)
+            macro.Steps.Add(new MacroStep(0, false, gap));
+        macro.Steps.Add(new MacroStep(usage, false, 0));
+        RenderSteps(macro);
+    }
 
     private void OnAddDelay(object? sender, RoutedEventArgs e)
     {
-        if (CurrentMacro is not { } macro) return;
+        if (_draftMacro is not { } macro) return;
         macro.Steps.Add(new MacroStep(0, false, ReadStepDelay(StepDelayBox)));
-        CommitSteps(macro);
-    }
-
-    private void AddStep(byte usage, bool isPress)
-    {
-        if (CurrentMacro is not { } macro) return;
-        macro.Steps.Add(new MacroStep(usage, isPress, ReadStepDelay(StepDelayBox)));
-        CommitSteps(macro);
-    }
-
-    private void AddClickPair(byte usage)
-    {
-        if (CurrentMacro is not { } macro) return;
-        int delay = ReadStepDelay(StepDelayBox);
-        macro.Steps.Add(new MacroStep(usage, true, delay));
-        macro.Steps.Add(new MacroStep(usage, false, delay));
-        CommitSteps(macro);
+        RenderSteps(macro);
     }
 
     private void OnClearSteps(object? sender, RoutedEventArgs e)
     {
-        if (CurrentMacro is not { } macro) return;
+        if (_draftMacro is not { } macro) return;
         macro.Steps.Clear();
-        CommitSteps(macro);
+        RenderSteps(macro);
     }
 
     private void OnSaveMacro(object? sender, RoutedEventArgs e)
     {
-        if (CurrentMacro is not { } macro) return;
-        if (!string.IsNullOrWhiteSpace(MacroNameBox.Text))
-            macro.Name = MacroNameBox.Text.Trim();
-        PersistAndSync();
-        ShowStatus($"宏「{macro.Name}」已保存并同步触发配置。", InfoBarSeverity.Success);
+        if (_draftMacro is not { } draft) return;
+        StopRecording(saveDraft: false);
+
+        string name = string.IsNullOrWhiteSpace(MacroNameBox.Text)
+            ? $"自定义宏 {App.Settings.Current.Macros.Count + 1}"
+            : MacroNameBox.Text.Trim();
+        draft.Name = name;
+
+        var existing = _editingMacroId != null
+            ? App.Settings.Current.Macros.FirstOrDefault(m => m.Id == _editingMacroId)
+            : null;
+
+        if (existing != null)
+        {
+            existing.Name = draft.Name;
+            existing.LoopMode = draft.LoopMode;
+            existing.RepeatCount = Math.Clamp(draft.RepeatCount, 1, 99);
+            existing.Steps = draft.Steps.Select(s => new MacroStep(s.KeyCode, s.IsPress, s.DelayMs)).ToList();
+        }
+        else
+        {
+            App.Settings.Current.Macros.Add(new OnboardMacroDefinition
+            {
+                Id = Guid.NewGuid().ToString("N")[..10],
+                Name = draft.Name,
+                LoopMode = draft.LoopMode,
+                RepeatCount = Math.Clamp(draft.RepeatCount, 1, 99),
+                Steps = draft.Steps.Select(s => new MacroStep(s.KeyCode, s.IsPress, s.DelayMs)).ToList(),
+            });
+        }
+
+        App.Settings.Save();
+        App.MacroRunner?.SyncHookState();
+        RenderMacroLibrary();
+        _editingMacroId = null;
+        _draftMacro = null;
+        ShowListView();
+        ShowStatus($"宏「{name}」已保存并同步触发配置。", InfoBarSeverity.Success);
     }
 
-    // ── 录制 ─────────────────────────────────────────────────────────────────
+    // ── 录制（仅写入草稿） ─────────────────────────────────────────────────
 
     private void OnRecordClick(object? sender, RoutedEventArgs e)
     {
         if (_binding) return;
         if (RecordMacroBtn.IsChecked == true)
-        {
-            if (!s_globalEnabled)
-            {
-                ShowStatus("全局宏已禁用，请先在上方启用后再录制。", InfoBarSeverity.Warning);
-                RecordMacroBtn.IsChecked = false;
-                return;
-            }
             StartRecording();
-        }
         else
-            StopRecording();
+            StopRecording(saveDraft: true);
     }
 
     private void StartRecording()
@@ -624,31 +803,67 @@ public partial class MacrosView : UserControl
         _recWatch.Restart();
         _lastRecMs = 0;
         RecordMacroBtn.Content = "停止录制";
-        RecordFocusTrap.IsVisible = true;
-        RecordFocusTrap.Focus();
+        RecordCaptureBanner.IsVisible = true;
+
+        if (OperatingSystem.IsWindows() && App.MacroRunner != null)
+        {
+            CacheStopButtonScreenBounds();
+            RecordStatusText.Text = "正在全局监听键鼠事件：屏幕任意位置的键盘按键、鼠标左/右/中/侧键按下抬起及滚轮滚动都会记录，并在动作之间插入真实毫秒间隔（已排除停止按钮本身），完成后点击上方「停止录制」。";
+            App.MacroRunner.StartRecordingCapture(
+                (usage, isPress) =>
+                {
+                    if (_recording)
+                        RecordCodeEvent(usage, isPress);
+                },
+                IsPointInsideStopButton);
+        }
+        else
+        {
+            RecordCaptureBanner.MinHeight = 68;
+            RecordStatusText.Text = "录制中：请在此高亮区域内按键、点击鼠标左/右/中/侧键或滑动滚轮，动作之间将自动插入真实毫秒间隔。";
+            RecordCaptureBanner.Focus();
+        }
     }
 
-    private void StopRecording()
+    private void CacheStopButtonScreenBounds()
+    {
+        try
+        {
+            var p0 = RecordMacroBtn.PointToScreen(new Point(0, 0));
+            var p1 = RecordMacroBtn.PointToScreen(new Point(RecordMacroBtn.Bounds.Width, RecordMacroBtn.Bounds.Height));
+            _stopBtnMinX = Math.Min(p0.X, p1.X) - 6;
+            _stopBtnMinY = Math.Min(p0.Y, p1.Y) - 6;
+            _stopBtnMaxX = Math.Max(p0.X, p1.X) + 6;
+            _stopBtnMaxY = Math.Max(p0.Y, p1.Y) + 6;
+            _hasStopBtnBounds = _stopBtnMaxX > _stopBtnMinX && _stopBtnMaxY > _stopBtnMinY;
+        }
+        catch
+        {
+            _hasStopBtnBounds = false;
+        }
+    }
+
+    private bool IsPointInsideStopButton(int x, int y)
+        => _hasStopBtnBounds && x >= _stopBtnMinX && x <= _stopBtnMaxX && y >= _stopBtnMinY && y <= _stopBtnMaxY;
+
+    private void StopRecording(bool saveDraft)
     {
         if (!_recording) return;
         _recording = false;
+        _hasStopBtnBounds = false;
+        App.MacroRunner?.StopRecordingCapture();
         _recWatch.Stop();
         RecordMacroBtn.IsChecked = false;
-        RecordMacroBtn.Content = "开始录制键盘按键与鼠标点击";
-        RecordFocusTrap.IsVisible = false;
-        App.Settings.Save();
-        App.MacroRunner?.SyncHookState();
-        var macro = CurrentMacro;
-        if (macro != null)
-        {
-            RenderSteps(macro);
-            RenderMacroLibrary();
-        }
+        RecordMacroBtn.Content = "开始录制键鼠动作";
+        RecordCaptureBanner.IsVisible = false;
+        RecordCaptureBanner.MinHeight = 0;
+        if (saveDraft && _draftMacro != null)
+            RenderSteps(_draftMacro);
     }
 
     private void OnRecorderKeyDown(object? sender, KeyEventArgs e)
     {
-        if (!_recording || CurrentMacro == null) return;
+        if (!_recording || _draftMacro == null || OperatingSystem.IsWindows()) return;
         e.Handled = true;
         if (AvaloniaKeyUsageMap.TryGetValue(e.Key.ToString(), out byte usage))
             RecordCodeEvent(usage, isPress: true);
@@ -656,7 +871,7 @@ public partial class MacrosView : UserControl
 
     private void OnRecorderKeyUp(object? sender, KeyEventArgs e)
     {
-        if (!_recording || CurrentMacro == null) return;
+        if (!_recording || _draftMacro == null || OperatingSystem.IsWindows()) return;
         e.Handled = true;
         if (AvaloniaKeyUsageMap.TryGetValue(e.Key.ToString(), out byte usage))
             RecordCodeEvent(usage, isPress: false);
@@ -664,10 +879,10 @@ public partial class MacrosView : UserControl
 
     private void OnRecorderPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (!_recording || CurrentMacro == null) return;
+        if (!_recording || _draftMacro == null || OperatingSystem.IsWindows()) return;
         e.Handled = true;
-        RecordFocusTrap.Focus();
-        byte? code = e.GetCurrentPoint(RecordFocusTrap).Properties.PointerUpdateKind switch
+        RecordCaptureBanner.Focus();
+        byte? code = e.GetCurrentPoint(RecordCaptureBanner).Properties.PointerUpdateKind switch
         {
             PointerUpdateKind.LeftButtonPressed => HidKeyCatalog.MouseLeftCode,
             PointerUpdateKind.RightButtonPressed => HidKeyCatalog.MouseRightCode,
@@ -681,9 +896,9 @@ public partial class MacrosView : UserControl
 
     private void OnRecorderPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
-        if (!_recording || CurrentMacro == null) return;
+        if (!_recording || _draftMacro == null || OperatingSystem.IsWindows()) return;
         e.Handled = true;
-        byte? code = e.GetCurrentPoint(RecordFocusTrap).Properties.PointerUpdateKind switch
+        byte? code = e.GetCurrentPoint(RecordCaptureBanner).Properties.PointerUpdateKind switch
         {
             PointerUpdateKind.LeftButtonReleased => HidKeyCatalog.MouseLeftCode,
             PointerUpdateKind.RightButtonReleased => HidKeyCatalog.MouseRightCode,
@@ -695,14 +910,25 @@ public partial class MacrosView : UserControl
         if (code is { } c) RecordCodeEvent(c, isPress: false);
     }
 
+    private void OnRecorderPointerWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (!_recording || _draftMacro == null || OperatingSystem.IsWindows()) return;
+        e.Handled = true;
+        if (Math.Abs(e.Delta.Y) < 0.01) return;
+        byte code = e.Delta.Y > 0 ? HidKeyCatalog.MouseWheelUpCode : HidKeyCatalog.MouseWheelDownCode;
+        RecordCodeEvent(code, isPress: true);
+    }
+
     private void RecordCodeEvent(byte usage, bool isPress)
     {
-        if (CurrentMacro is not { } macro) return;
+        if (_draftMacro is not { } macro) return;
         long now = _recWatch.ElapsedMilliseconds;
-        int delay = macro.Steps.Count > 0 ? Math.Clamp((int)(now - _lastRecMs), 5, 5000) : 15;
         if (macro.Steps.Count > 0)
-            macro.Steps[^1].DelayMs = delay;
-        macro.Steps.Add(new MacroStep(usage, isPress, 15));
+        {
+            int gapMs = Math.Clamp((int)(now - _lastRecMs), 1, 10000);
+            macro.Steps.Add(new MacroStep(0, false, gapMs));
+        }
+        macro.Steps.Add(new MacroStep(usage, isPress, 0));
         _lastRecMs = now;
         RenderSteps(macro);
     }
@@ -761,11 +987,11 @@ public partial class MacrosView : UserControl
 
     // ── 试播 ─────────────────────────────────────────────────────────────────
 
-    private async void OnTestPlayClick(object? sender, RoutedEventArgs e)
+    private async void OnTestPlayDraftClick(object? sender, RoutedEventArgs e)
     {
         try
         {
-            await PlayMacroSafeAsync(CurrentMacro, sender as Button);
+            await PlayMacroSafeAsync(_draftMacro, sender as Button, fromList: false);
         }
         catch (Exception ex)
         {
@@ -776,22 +1002,29 @@ public partial class MacrosView : UserControl
     private void OnStopPlayClick(object? sender, RoutedEventArgs e)
     {
         App.MacroRunner?.CancelPlayback();
-        PlaybackBar.IsIndeterminate = false;
-        PlaybackBar.IsVisible = false;
+        SetPlaybackBars(active: false);
         ShowStatus("已停止回放。", InfoBarSeverity.Informational);
     }
 
-    private async Task PlayMacroSafeAsync(OnboardMacroDefinition? macro, Button? button)
+    private void SetPlaybackBars(bool active)
+    {
+        PlaybackBar.IsVisible = active;
+        PlaybackBar.IsIndeterminate = active;
+        ListPlaybackBar.IsVisible = active;
+        ListPlaybackBar.IsIndeterminate = active;
+    }
+
+    private async Task PlayMacroSafeAsync(OnboardMacroDefinition? macro, Button? button, bool fromList)
     {
         if (_busyTest) return;
         if (macro == null || macro.Steps.Count == 0)
         {
-            ShowStatus("请先选择包含动作步骤的宏。", InfoBarSeverity.Warning);
+            ShowStatus("当前宏没有可执行步骤，请先添加步骤。", InfoBarSeverity.Warning);
             return;
         }
-        if (!s_globalEnabled)
+        if (!App.Settings.Current.SoftwareMacrosEnabled)
         {
-            ShowStatus("全局宏已禁用，请先在上方启用。", InfoBarSeverity.Warning);
+            ShowStatus("侧键接管当前已关闭，请先在列表页开启后再试播。", InfoBarSeverity.Warning);
             return;
         }
         if (App.MacroRunner == null || !App.MacroRunner.IsPlaybackSupported)
@@ -802,8 +1035,16 @@ public partial class MacrosView : UserControl
 
         _busyTest = true;
         if (button != null) button.IsEnabled = false;
-        PlaybackBar.IsVisible = true;
-        PlaybackBar.IsIndeterminate = true;
+        if (fromList)
+        {
+            ListPlaybackBar.IsVisible = true;
+            ListPlaybackBar.IsIndeterminate = true;
+        }
+        else
+        {
+            PlaybackBar.IsVisible = true;
+            PlaybackBar.IsIndeterminate = true;
+        }
         try
         {
             await App.MacroRunner.PlayMacroAsync(macro);
@@ -817,8 +1058,7 @@ public partial class MacrosView : UserControl
         {
             _busyTest = false;
             if (button != null) button.IsEnabled = true;
-            PlaybackBar.IsIndeterminate = false;
-            PlaybackBar.IsVisible = false;
+            SetPlaybackBars(active: false);
         }
     }
 
@@ -872,8 +1112,9 @@ public partial class MacrosView : UserControl
                 });
                 count++;
             }
-            _selectedMacroId = App.Settings.Current.Macros.LastOrDefault()?.Id;
-            PersistAndSync();
+            App.Settings.Save();
+            App.MacroRunner?.SyncHookState();
+            RenderMacroLibrary();
             ShowStatus($"已导入 {count} 个宏。", InfoBarSeverity.Success);
         }
         catch (Exception ex)
@@ -933,30 +1174,7 @@ public partial class MacrosView : UserControl
         }
     }
 
-    // ── 响应式布局与状态 ─────────────────────────────────────────────────────
-
-    private void OnWorkspaceSizeChanged(object? sender, SizeChangedEventArgs e)
-    {
-        if (WorkspaceGrid.ColumnDefinitions.Count < 2) return;
-        if (e.NewSize.Width < 900)
-        {
-            WorkspaceGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
-            WorkspaceGrid.ColumnDefinitions[1].Width = new GridLength(0);
-            Grid.SetRow(EditorPane, 1);
-            Grid.SetColumn(EditorPane, 0);
-            EditorPane.Margin = new Thickness(0, 14, 0, 0);
-        }
-        else
-        {
-            WorkspaceGrid.ColumnDefinitions[0].Width = new GridLength(1.05, GridUnitType.Star);
-            WorkspaceGrid.ColumnDefinitions[1].Width = new GridLength(1.25, GridUnitType.Star);
-            Grid.SetRow(EditorPane, 0);
-            Grid.SetColumn(EditorPane, 1);
-            EditorPane.Margin = new Thickness(16, 0, 0, 0);
-        }
-    }
-
-    private void ShowStatus(string message, InfoBarSeverity severity)
+    private static void ShowStatus(string message, InfoBarSeverity severity)
     {
         if (string.IsNullOrWhiteSpace(message))
             MainWindow.HideToast();

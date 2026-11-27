@@ -127,7 +127,7 @@ public static class WidgetProcess
                 var groups = new List<WidgetChipOut>();
                 foreach (var cfg in settings.TaskbarGroups.Where(g => g.Visible))
                 {
-                    var members = MembersOf(cfg.GroupId, devices);
+                    var members = TaskbarGroupHelper.GetMembers(cfg.GroupId, devices, connectedOnly: true);
                     var def = BatteryHistoryHelper.SelectGroupDisplayDevice(members, cfg.DefaultDeviceId);
                     string label = cfg.GroupId switch
                     {
@@ -198,6 +198,7 @@ public static class WidgetProcess
                 var state = new WidgetStateOut
                 {
                     MainExe = Environment.ProcessPath ?? "",
+                    Debug = settings.DebugModeEnabled,
                     Embedded = settings.WidgetEmbedded,
                     FlyoutOnHover = settings.WidgetFlyoutOnHover,
                     Align = settings.WidgetAlignment,
@@ -240,23 +241,10 @@ public static class WidgetProcess
         }
     }
 
-    private static List<PeripheralDevice> MembersOf(string groupId, IReadOnlyList<PeripheralDevice> devices)
-    {
-        IEnumerable<PeripheralDevice> q = groupId switch
-        {
-            "builtin:mouse" => devices.Where(d => d.Kind == DeviceKind.Mouse),
-            "builtin:keyboard" => devices.Where(d => d.Kind == DeviceKind.Keyboard),
-            "builtin:headset" => devices.Where(d => d.Kind == DeviceKind.Headset),
-            "builtin:controller" => devices.Where(d => d.Kind == DeviceKind.Controller),
-            _ => devices.Where(d => App.Settings.Current.CustomGroups
-                .FirstOrDefault(g => g.Id == groupId)?.MemberIds.Contains(d.Id) == true),
-        };
-        return q.Where(d => d.Connected).ToList();
-    }
-
     private sealed class WidgetStateOut
     {
         public string MainExe { get; set; } = "";
+        public bool Debug { get; set; }
         public bool Embedded { get; set; } = true;
         public bool FlyoutOnHover { get; set; }
         public string Align { get; set; } = "right";

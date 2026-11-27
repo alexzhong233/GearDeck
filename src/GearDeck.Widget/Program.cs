@@ -14,7 +14,19 @@ internal static class Program
 
     internal static readonly string LogPath = Path.Combine(BaseDir, "logs", "widget.log");
 
+    private static volatile bool _debugLogEnabled;
+
+    internal static void SetDebugLogEnabled(bool enabled) => _debugLogEnabled = enabled;
+
     internal static void Log(string message)
+    {
+        if (!_debugLogEnabled) return;
+        WriteLogLine(message);
+    }
+
+    internal static void LogFatal(string message) => WriteLogLine(message);
+
+    private static void WriteLogLine(string message)
     {
         try
         {
@@ -50,6 +62,8 @@ internal static class Program
         }
 
         bool isBg = args.Any(a => string.Equals(a, "--widget-bg", StringComparison.OrdinalIgnoreCase));
+        if (args.Any(a => string.Equals(a, "--debug", StringComparison.OrdinalIgnoreCase)))
+            SetDebugLogEnabled(true);
         if (!isBg)
         {
             if (TryWakeMainApp())
@@ -91,14 +105,12 @@ internal static class Program
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
-            File.WriteAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} start\n");
             using var widget = new TaskbarWindow();
             widget.RunMessageLoop();
         }
         catch (Exception ex)
         {
-            Log("FATAL: " + ex);
+            LogFatal("FATAL: " + ex);
         }
     }
 
@@ -106,7 +118,7 @@ internal static class Program
     {
         try
         {
-            if (EventWaitHandle.TryOpenExisting(@"Local\GearDeck.Activate", out var ev))
+            if (EventWaitHandle.TryOpenExisting(@"Local\GearDeck.Desktop.Activate", out var ev))
             {
                 using (ev)
                 {
@@ -382,6 +394,7 @@ internal readonly record struct IntRect(int X, int Y, int Width, int Height)
 internal sealed class WidgetState
 {
     public string MainExe { get; set; } = "";
+    public bool Debug { get; set; }
     public bool Embedded { get; set; } = true;
     public bool FlyoutOnHover { get; set; }
     public string Align { get; set; } = "right";
@@ -570,16 +583,35 @@ internal static class TaskbarRenderer
         LcdRenderText = false,
     };
 
-    private static (SKPaint Icon, SKPaint Text, SKPaint Small, SKPaint TwoLine) CreatePaints(int fontSizeDip, double scale)
+    [ThreadStatic]
+    private static (int FontSize, int ScaleKey, SKPaint Icon, SKPaint Text, SKPaint Small, SKPaint TwoLine)? _paintCache;
+
+    private static (SKPaint Icon, SKPaint Text, SKPaint Small, SKPaint TwoLine) GetCachedPaints(int fontSizeDip, double scale)
     {
         int clamped = Math.Clamp(fontSizeDip, 9, 20);
+        int scaleKey = (int)Math.Round(scale * 100);
+        if (_paintCache is { } cached && cached.FontSize == clamped && cached.ScaleKey == scaleKey)
+            return (cached.Icon, cached.Text, cached.Small, cached.TwoLine);
+
+        if (_paintCache is { } old)
+        {
+            old.Icon.Dispose();
+            old.Text.Dispose();
+            old.Small.Dispose();
+            old.TwoLine.Dispose();
+        }
+
         float fontPx = clamped * (float)scale;
-        return (
+        var next = (
+            clamped,
+            scaleKey,
             CreatePaint(IconTypeface, fontPx * 1.12f),
             CreatePaint(TextTypeface, fontPx),
             CreatePaint(TextTypeface, Math.Max(9f * (float)scale, fontPx * 0.82f)),
             CreatePaint(TextTypeface, Math.Max(7.5f * (float)scale, fontPx * 0.74f))
         );
+        _paintCache = next;
+        return (next.Item3, next.Item4, next.Item5, next.Item6);
     }
 
     private static readonly SystemMetricsSnapshot RefSnapshot = new()
@@ -615,11 +647,7 @@ internal static class TaskbarRenderer
         int blockGap = (int)Math.Round(2 * scale);
         int minBlockW = (int)Math.Round(Math.Clamp(state.BlockWidth, 48, 220) * scale);
 
-        var (iconPaint, textPaint, smallPaint, twoLinePaint) = CreatePaints(state.FontSize, scale);
-        using var _1 = iconPaint;
-        using var _2 = textPaint;
-        using var _3 = smallPaint;
-        using var _4 = twoLinePaint;
+        var (iconPaint, textPaint, smallPaint, twoLinePaint) = GetCachedPaints(state.FontSize, scale);
 
         int iconPx = Math.Max(14, (int)Math.Round(Math.Clamp(state.FontSize, 9, 20) * scale * 1.25));
         int x = edgePad;
@@ -702,11 +730,7 @@ internal static class TaskbarRenderer
             canvas.DrawRoundRect(pillRect, pillRadius, pillRadius, borderPaint);
         }
 
-        var (iconPaint, textPaint, smallPaint, twoLinePaint) = CreatePaints(layout.FontSize, scale);
-        using var _1 = iconPaint;
-        using var _2 = textPaint;
-        using var _3 = smallPaint;
-        using var _4 = twoLinePaint;
+        var (iconPaint, textPaint, smallPaint, twoLinePaint) = GetCachedPaints(layout.FontSize, scale);
 
         var primaryColor = light ? new SKColor(20, 20, 20, 255) : new SKColor(246, 246, 246, 255);
         var dimColor = light ? new SKColor(58, 58, 58, 205) : new SKColor(205, 205, 205, 195);
@@ -906,6 +930,10 @@ internal sealed class TaskbarWindow : IDisposable
     private const int WmMouseLeave = 0x02A3;
     private const int WmUser = 0x0400;
     private const int WmFallbackReevaluate = WmUser + 42;
+    private const int WmStateChanged = WmUser + 43;
+    private const int WmForegroundChanged = WmUser + 44;
+    private const uint TimerIdMain = 1;
+    private const uint TimerIdHover = 2;
     private const int MaNoActivate = 3;
     private const int SwHide = 0;
     private const uint TmeLeave = 0x00000002;
@@ -962,6 +990,21 @@ internal sealed class TaskbarWindow : IDisposable
     private long _lastStateLength = -1;
     private long _lastStateSeq = -1;
     private long _lastStatsTick;
+    private readonly long _startTick;
+    private long _lastTrimTick;
+    private bool _initialTrimDone;
+    private long _cachedLightTick;
+    private bool _cachedLightVal = true;
+    private static long s_win11CenteredTick;
+    private static bool s_win11CenteredVal;
+    private static IntPtr s_win11CenteredTray;
+    private IntPtr _dibScreenDc;
+    private IntPtr _dibMemDc;
+    private IntPtr _hDib;
+    private IntPtr _oldDibBmp;
+    private IntPtr _dibBitsPtr;
+    private int _dibW;
+    private int _dibH;
     private SystemMetricsSnapshot _metrics = new();
     private bool _lastLight = true;
     private int _hover = -1;
@@ -979,6 +1022,10 @@ internal sealed class TaskbarWindow : IDisposable
     private WinEventDelegate? _winEventProc;
     private IntPtr _hookFg;
     private long _lastZCheckTick;
+    private FileSystemWatcher? _stateWatcher;
+    private int _stateNotifyPending;
+    private int _fgNotifyPending;
+    private uint _mainTimerMs;
 
     public IntPtr Handle => _hwnd;
     private bool IsHandleCreated => _hwnd != IntPtr.Zero && !_disposed;
@@ -987,10 +1034,9 @@ internal sealed class TaskbarWindow : IDisposable
     {
         _testMode = testMode;
         _childLayeredFailed = !testMode;
-
-        _metrics = SystemMetricsEngine.Sample();
-        _lastStatsTick = Environment.TickCount64;
-        _lastLight = IsLight();
+        _startTick = Environment.TickCount64;
+        _lastTrimTick = _startTick;
+        _lastLight = IsLightCached();
 
         _hInstance = Program.GetModuleHandleW(null);
         _className = $"GearDeckWidgetWnd_{Guid.NewGuid():N}";
@@ -1019,9 +1065,15 @@ internal sealed class TaskbarWindow : IDisposable
         {
             InitTooltip();
             EnsureWinEventHooks();
+            StartStateWatcher();
             ReadStateIfChanged();
+            if (_state.Monitor)
+            {
+                _metrics = SystemMetricsEngine.Sample(SystemMetricsEngine.FromMetricIds(_state.MonitorTop, _state.MonitorBottom));
+                _lastStatsTick = Environment.TickCount64;
+            }
             EnsureModeAndPosition(forceRender: true);
-            SetTimer(_hwnd, 1, 100, IntPtr.Zero);
+            UpdateMainTimerCadence();
         }
     }
 
@@ -1104,17 +1156,46 @@ internal sealed class TaskbarWindow : IDisposable
                 return new IntPtr(MaNoActivate);
 
             case WmTimer:
-                if (wParam.ToInt64() == 1 && !_testMode)
-                    TickLoop();
+                if (!_testMode)
+                {
+                    long tid = wParam.ToInt64();
+                    if (tid == TimerIdMain)
+                        TickLoop();
+                    else if (tid == TimerIdHover)
+                        HandleHoverTimer();
+                }
                 return IntPtr.Zero;
 
             case WmFallbackReevaluate:
                 EnsureModeAndPosition(forceRender: true);
                 return IntPtr.Zero;
 
+            case WmStateChanged:
+                Interlocked.Exchange(ref _stateNotifyPending, 0);
+                if (ReadStateIfChanged())
+                {
+                    _dirtyRender = true;
+                    UpdateMainTimerCadence();
+                    EnsureModeAndPosition(forceRender: false);
+                }
+                return IntPtr.Zero;
+
+            case WmForegroundChanged:
+                Interlocked.Exchange(ref _fgNotifyPending, 0);
+                if (!_testMode)
+                    EnsureModeAndPosition(forceRender: false);
+                return IntPtr.Zero;
+
             case 0x02E0 /* WM_DPICHANGED */:
                 _dirtyRender = true;
                 EnsureModeAndPosition(forceRender: true);
+                return IntPtr.Zero;
+
+            case 0x001A /* WM_SETTINGCHANGE */:
+            case 0x031A /* WM_THEMECHANGED */:
+                _cachedLightTick = 0;
+                s_win11CenteredTick = 0;
+                _dirtyRender = true;
                 return IntPtr.Zero;
 
             case WmLButtonDown:
@@ -1156,12 +1237,69 @@ internal sealed class TaskbarWindow : IDisposable
             }
 
             case WmDestroy:
-                KillTimer(hwnd, 1);
+                KillTimer(hwnd, TimerIdMain);
+                KillTimer(hwnd, TimerIdHover);
                 if (!_testMode)
                     PostQuitMessage(0);
                 return IntPtr.Zero;
         }
         return Program.DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    private void StartStateWatcher()
+    {
+        if (_stateWatcher != null || !IsHandleCreated) return;
+        try
+        {
+            Directory.CreateDirectory(Program.BaseDir);
+            _stateWatcher = new FileSystemWatcher(Program.BaseDir, "widget-state.json")
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.CreationTime,
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true,
+            };
+            FileSystemEventHandler onChanged = (_, _) =>
+            {
+                if (!IsHandleCreated) return;
+                if (Interlocked.Exchange(ref _stateNotifyPending, 1) == 0)
+                    PostMessageW(_hwnd, WmStateChanged, IntPtr.Zero, IntPtr.Zero);
+            };
+            RenamedEventHandler onRenamed = (_, _) =>
+            {
+                if (!IsHandleCreated) return;
+                if (Interlocked.Exchange(ref _stateNotifyPending, 1) == 0)
+                    PostMessageW(_hwnd, WmStateChanged, IntPtr.Zero, IntPtr.Zero);
+            };
+            _stateWatcher.Changed += onChanged;
+            _stateWatcher.Created += onChanged;
+            _stateWatcher.Renamed += onRenamed;
+        }
+        catch { }
+    }
+
+    private void UpdateMainTimerCadence()
+    {
+        if (!IsHandleCreated || _testMode) return;
+        uint desired = _state.Monitor ? 1000u : 3000u;
+        if (desired == _mainTimerMs) return;
+        _mainTimerMs = desired;
+        SetTimer(_hwnd, TimerIdMain, desired, IntPtr.Zero);
+    }
+
+    private void HandleHoverTimer()
+    {
+        KillTimer(Handle, TimerIdHover);
+        if (_testMode || !_state.FlyoutOnHover || _dragging || _monitorHoverSent || _hover < 0 || _hover >= _blocks.Count)
+            return;
+
+        _monitorHoverSent = true;
+        var hb = _blocks[_hover];
+        var pt = new POINT { X = hb.Bounds.X, Y = hb.Bounds.Y };
+        ClientToScreen(Handle, ref pt);
+        string cmd = hb.Kind == BlockKind.Monitor
+            ? "__monitor_hover__"
+            : $"__group_hover__:{hb.GroupId}";
+        WriteCommand(cmd, pt.X, pt.Y, hb.Bounds.Width, hb.Bounds.Height);
     }
 
     private void EnsureWinEventHooks()
@@ -1177,49 +1315,31 @@ internal sealed class TaskbarWindow : IDisposable
 
     private void OnWinEvent(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
     {
-        if (!IsHandleCreated || _testMode || !_state.Embedded || _usingChildMode || _hiddenByFullscreen)
+        if (!IsHandleCreated || _testMode || !_state.Embedded || _usingChildMode)
             return;
         if (IsPopupFlyoutOpen())
             return;
-        IntPtr tray = FindWindow("Shell_TrayWnd", null);
-        if (tray == IntPtr.Zero) tray = FindWindow("Shell_SecondaryTrayWnd", null);
-        if (tray != IntPtr.Zero && !IsWindowAbove(Handle, tray))
-        {
-            uint flags = SwpNoMove | SwpNoSize | SwpNoActivate | (IsWindowVisible(Handle) ? 0u : SwpShowWindow);
-            SetWindowPos(Handle, HwndTopMost, 0, 0, 0, 0, flags);
-        }
+        if (Interlocked.Exchange(ref _fgNotifyPending, 1) == 0)
+            PostMessageW(Handle, WmForegroundChanged, IntPtr.Zero, IntPtr.Zero);
     }
 
     private void TickLoop()
     {
         if (ReadStateIfChanged())
+        {
             _dirtyRender = true;
+            UpdateMainTimerCadence();
+        }
 
         long now = Environment.TickCount64;
-        if (_state.Monitor && now - _lastStatsTick >= 1000)
+        if (_state.Monitor && (_lastStatsTick == 0 || now - _lastStatsTick >= 1000))
         {
-            _metrics = SystemMetricsEngine.Sample();
+            _metrics = SystemMetricsEngine.Sample(SystemMetricsEngine.FromMetricIds(_state.MonitorTop, _state.MonitorBottom));
             _lastStatsTick = now;
             _dirtyRender = true;
         }
 
-        if (_state.FlyoutOnHover &&
-            !_dragging &&
-            _hover >= 0 && _hover < _blocks.Count &&
-            !_monitorHoverSent &&
-            now - _monitorHoverSince >= 180)
-        {
-            _monitorHoverSent = true;
-            var hb = _blocks[_hover];
-            var pt = new POINT { X = hb.Bounds.X, Y = hb.Bounds.Y };
-            ClientToScreen(Handle, ref pt);
-            string cmd = hb.Kind == BlockKind.Monitor
-                ? "__monitor_hover__"
-                : $"__group_hover__:{hb.GroupId}";
-            WriteCommand(cmd, pt.X, pt.Y, hb.Bounds.Width, hb.Bounds.Height);
-        }
-
-        bool light = IsLight();
+        bool light = IsLightCached();
         if (light != _lastLight)
         {
             _lastLight = light;
@@ -1227,6 +1347,14 @@ internal sealed class TaskbarWindow : IDisposable
         }
 
         EnsureModeAndPosition(forceRender: false);
+
+        if ((!_initialTrimDone && now - _startTick >= 2500)
+            || (_initialTrimDone && now - _lastTrimTick >= 300_000))
+        {
+            _initialTrimDone = true;
+            _lastTrimTick = now;
+            TrimWorkingSet();
+        }
     }
 
     private bool ReadStateIfChanged()
@@ -1265,6 +1393,7 @@ internal sealed class TaskbarWindow : IDisposable
                         parsed.FloatY = _state.FloatY;
                     }
                     _state = parsed;
+                    Program.SetDebugLogEnabled(parsed.Debug);
                     return true;
                 }
                 catch (IOException) when (attempt == 0)
@@ -1578,14 +1707,39 @@ internal sealed class TaskbarWindow : IDisposable
         _dirtyRender = false;
     }
 
+    private void ReleaseCachedDib()
+    {
+        if (_oldDibBmp != IntPtr.Zero && _dibMemDc != IntPtr.Zero)
+            Program.SelectObject(_dibMemDc, _oldDibBmp);
+        _oldDibBmp = IntPtr.Zero;
+        if (_hDib != IntPtr.Zero)
+        {
+            Program.DeleteObject(_hDib);
+            _hDib = IntPtr.Zero;
+        }
+        if (_dibMemDc != IntPtr.Zero)
+        {
+            Program.DeleteDC(_dibMemDc);
+            _dibMemDc = IntPtr.Zero;
+        }
+        if (_dibScreenDc != IntPtr.Zero)
+        {
+            Program.ReleaseDC(IntPtr.Zero, _dibScreenDc);
+            _dibScreenDc = IntPtr.Zero;
+        }
+        _dibBitsPtr = IntPtr.Zero;
+        _dibW = 0;
+        _dibH = 0;
+    }
+
     private bool ApplyBitmapToWindow(SKBitmap bmp, bool allowFallback)
     {
-        IntPtr screenDc = Program.GetDC(IntPtr.Zero);
-        IntPtr memDc = Program.CreateCompatibleDC(screenDc);
-        IntPtr hBitmap = IntPtr.Zero;
-        IntPtr oldBitmap = IntPtr.Zero;
-        try
+        if (_dibScreenDc == IntPtr.Zero || _dibMemDc == IntPtr.Zero || _hDib == IntPtr.Zero
+            || _dibBitsPtr == IntPtr.Zero || _dibW != bmp.Width || _dibH != bmp.Height)
         {
+            ReleaseCachedDib();
+            _dibScreenDc = Program.GetDC(IntPtr.Zero);
+            _dibMemDc = Program.CreateCompatibleDC(_dibScreenDc);
             var bmi = new Program.BITMAPINFOHEADER
             {
                 biSize = (uint)Marshal.SizeOf<Program.BITMAPINFOHEADER>(),
@@ -1595,78 +1749,77 @@ internal sealed class TaskbarWindow : IDisposable
                 biBitCount = 32,
                 biCompression = 0,
             };
-            hBitmap = Program.CreateDIBSection(memDc, ref bmi, 0, out IntPtr bitsPtr, IntPtr.Zero, 0);
-            if (hBitmap == IntPtr.Zero || bitsPtr == IntPtr.Zero)
-                return false;
-
-            int rowBytes = bmp.Width * 4;
-            using var pixmap = bmp.PeekPixels();
-            if (pixmap == null || !pixmap.ReadPixels(pixmap.Info, bitsPtr, rowBytes, 0, 0))
-                return false;
-
-            oldBitmap = Program.SelectObject(memDc, hBitmap);
-            var size = new SIZE { cx = bmp.Width, cy = bmp.Height };
-            var ptSrc = new POINT { X = 0, Y = 0 };
-            var blend = new BLENDFUNCTION
+            _hDib = Program.CreateDIBSection(_dibMemDc, ref bmi, 0, out _dibBitsPtr, IntPtr.Zero, 0);
+            if (_hDib == IntPtr.Zero || _dibBitsPtr == IntPtr.Zero)
             {
-                BlendOp = 0,
-                BlendFlags = 0,
-                SourceConstantAlpha = 255,
-                AlphaFormat = 1,
-            };
-
-            bool ok = UpdateLayeredWindow(Handle, screenDc, IntPtr.Zero, ref size, memDc, ref ptSrc, 0, ref blend, UlwAlpha);
-            if (!ok)
-            {
-                POINT ptDst;
-                if (_usingChildMode && _attachedTray != IntPtr.Zero)
-                {
-                    ptDst = new POINT { X = _relX, Y = _relY };
-                    ClientToScreen(_attachedTray, ref ptDst);
-                }
-                else
-                {
-                    ptDst = new POINT
-                    {
-                        X = _state.Embedded ? _trayLeft + _relX : _floatX,
-                        Y = _state.Embedded ? _trayTop + _relY : _floatY,
-                    };
-                }
-                ok = UpdateLayeredWindowWithPos(Handle, screenDc, ref ptDst, ref size, memDc, ref ptSrc, 0, ref blend, UlwAlpha);
-            }
-
-            if (!ok)
-            {
-                int err = Marshal.GetLastWin32Error();
-                Program.Log($"UpdateLayeredWindow failed err={err} child={_usingChildMode}");
-                if (allowFallback && _usingChildMode && !_childLayeredFailed)
-                {
-                    _childLayeredFailed = true;
-                    PostMessageW(Handle, WmFallbackReevaluate, IntPtr.Zero, IntPtr.Zero);
-                }
+                ReleaseCachedDib();
                 return false;
             }
-
-            if (!_loggedRenderOk)
-            {
-                _loggedRenderOk = true;
-                int px = _state.Embedded ? _relX : _floatX;
-                int py = _state.Embedded ? _relY : _floatY;
-                Program.Log($"rendered ok: mode={(_usingChildMode ? "child" : "topmost")} size={bmp.Width}x{bmp.Height} scale={_lastScale:F2} pos=({px},{py}) blocks={_blocks.Count}");
-            }
-            return true;
+            _oldDibBmp = Program.SelectObject(_dibMemDc, _hDib);
+            _dibW = bmp.Width;
+            _dibH = bmp.Height;
         }
-        finally
+
+        int rowBytes = bmp.Width * 4;
+        using var pixmap = bmp.PeekPixels();
+        if (pixmap == null || !pixmap.ReadPixels(pixmap.Info, _dibBitsPtr, rowBytes, 0, 0))
+            return false;
+
+        var size = new SIZE { cx = bmp.Width, cy = bmp.Height };
+        var ptSrc = new POINT { X = 0, Y = 0 };
+        var blend = new BLENDFUNCTION
         {
-            if (oldBitmap != IntPtr.Zero) Program.SelectObject(memDc, oldBitmap);
-            if (hBitmap != IntPtr.Zero) Program.DeleteObject(hBitmap);
-            if (memDc != IntPtr.Zero) Program.DeleteDC(memDc);
-            if (screenDc != IntPtr.Zero) Program.ReleaseDC(IntPtr.Zero, screenDc);
+            BlendOp = 0,
+            BlendFlags = 0,
+            SourceConstantAlpha = 255,
+            AlphaFormat = 1,
+        };
+
+        bool ok = UpdateLayeredWindow(Handle, _dibScreenDc, IntPtr.Zero, ref size, _dibMemDc, ref ptSrc, 0, ref blend, UlwAlpha);
+        if (!ok)
+        {
+            POINT ptDst;
+            if (_usingChildMode && _attachedTray != IntPtr.Zero)
+            {
+                ptDst = new POINT { X = _relX, Y = _relY };
+                ClientToScreen(_attachedTray, ref ptDst);
+            }
+            else
+            {
+                ptDst = new POINT
+                {
+                    X = _state.Embedded ? _trayLeft + _relX : _floatX,
+                    Y = _state.Embedded ? _trayTop + _relY : _floatY,
+                };
+            }
+            ok = UpdateLayeredWindowWithPos(Handle, _dibScreenDc, ref ptDst, ref size, _dibMemDc, ref ptSrc, 0, ref blend, UlwAlpha);
         }
+
+        if (!ok)
+        {
+            int err = Marshal.GetLastWin32Error();
+            Program.Log($"UpdateLayeredWindow failed err={err} child={_usingChildMode}");
+            if (allowFallback && _usingChildMode && !_childLayeredFailed)
+            {
+                _childLayeredFailed = true;
+                PostMessageW(Handle, WmFallbackReevaluate, IntPtr.Zero, IntPtr.Zero);
+            }
+            return false;
+        }
+
+        if (!_loggedRenderOk)
+        {
+            _loggedRenderOk = true;
+            int px = _state.Embedded ? _relX : _floatX;
+            int py = _state.Embedded ? _relY : _floatY;
+            Program.Log($"rendered ok: mode={(_usingChildMode ? "child" : "topmost")} size={bmp.Width}x{bmp.Height} scale={_lastScale:F2} pos=({px},{py}) blocks={_blocks.Count}");
+        }
+        return true;
     }
 
     private void HandleMouseDown()
     {
+        KillTimer(Handle, TimerIdHover);
         _dragging = true;
         _moved = false;
         GetCursorPos(out _dragCursorStart);
@@ -1730,6 +1883,11 @@ internal sealed class TaskbarWindow : IDisposable
             _hover = hit;
             _monitorHoverSince = Environment.TickCount64;
             _monitorHoverSent = false;
+            if (_state.FlyoutOnHover && hit >= 0)
+                SetTimer(Handle, TimerIdHover, 180, IntPtr.Zero);
+            else
+                KillTimer(Handle, TimerIdHover);
+
             if (_state.FlyoutOnHover || (hit >= 0 && _blocks[hit].Kind == BlockKind.Monitor))
                 SetTipText("");
             else
@@ -1740,6 +1898,7 @@ internal sealed class TaskbarWindow : IDisposable
 
     private void HandleMouseLeave()
     {
+        KillTimer(Handle, TimerIdHover);
         _monitorHoverSent = false;
         if (_hover != -1)
         {
@@ -1868,17 +2027,28 @@ internal sealed class TaskbarWindow : IDisposable
 
     private static bool IsWin11CenteredWithWidgets(IntPtr tray)
     {
+        long now = Environment.TickCount64;
+        if (s_win11CenteredTick != 0 && s_win11CenteredTray == tray && now - s_win11CenteredTick < 5000)
+            return s_win11CenteredVal;
+
+        bool result = false;
         try
         {
-            if (FindWindowEx(tray, IntPtr.Zero, "Windows.UI.Composition.DesktopWindowContentBridge", null) == IntPtr.Zero)
-                return false;
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
-                @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: false);
-            bool centered = key?.GetValue("TaskbarAl") is not int al || al != 0;
-            bool widgetsOn = key?.GetValue("TaskbarDa") is not int da || da != 0;
-            return centered && widgetsOn;
+            if (FindWindowEx(tray, IntPtr.Zero, "Windows.UI.Composition.DesktopWindowContentBridge", null) != IntPtr.Zero)
+            {
+                using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                    @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", writable: false);
+                bool centered = key?.GetValue("TaskbarAl") is not int al || al != 0;
+                bool widgetsOn = key?.GetValue("TaskbarDa") is not int da || da != 0;
+                result = centered && widgetsOn;
+            }
         }
-        catch { return false; }
+        catch { result = false; }
+
+        s_win11CenteredTray = tray;
+        s_win11CenteredVal = result;
+        s_win11CenteredTick = now;
+        return result;
     }
 
     private static bool IsWindowAbove(IntPtr candidateAbove, IntPtr referenceBelow)
@@ -1933,6 +2103,27 @@ internal sealed class TaskbarWindow : IDisposable
         catch { return false; }
     }
 
+    private bool IsLightCached()
+    {
+        long now = Environment.TickCount64;
+        if (_cachedLightTick != 0 && now - _cachedLightTick < 5000)
+            return _cachedLightVal;
+
+        _cachedLightVal = IsLight();
+        _cachedLightTick = now;
+        return _cachedLightVal;
+    }
+
+    private static void TrimWorkingSet()
+    {
+        try
+        {
+            GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            SetProcessWorkingSetSize(GetCurrentProcess(), new IntPtr(-1), new IntPtr(-1));
+        }
+        catch { }
+    }
+
     private static bool IsLight()
     {
         try
@@ -1948,13 +2139,28 @@ internal sealed class TaskbarWindow : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        if (_stateWatcher != null)
+        {
+            try { _stateWatcher.EnableRaisingEvents = false; _stateWatcher.Dispose(); } catch { }
+            _stateWatcher = null;
+        }
+        ReleaseCachedDib();
         if (_hookFg != IntPtr.Zero) { UnhookWinEvent(_hookFg); _hookFg = IntPtr.Zero; }
         _winEventProc = null;
         if (_tooltipHwnd != IntPtr.Zero) { Program.DestroyWindow(_tooltipHwnd); _tooltipHwnd = IntPtr.Zero; }
-        if (_hwnd != IntPtr.Zero) { KillTimer(_hwnd, 1); Program.DestroyWindow(_hwnd); _hwnd = IntPtr.Zero; }
+        if (_hwnd != IntPtr.Zero)
+        {
+            KillTimer(_hwnd, TimerIdMain);
+            KillTimer(_hwnd, TimerIdHover);
+            Program.DestroyWindow(_hwnd);
+            _hwnd = IntPtr.Zero;
+        }
         Program.UnregisterClassW(_className, _hInstance);
         GC.KeepAlive(_wndProc);
     }
+
+    [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] private static extern bool SetProcessWorkingSetSize(IntPtr hProcess, IntPtr dwMinimumWorkingSetSize, IntPtr dwMaximumWorkingSetSize);
 
     private delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
 

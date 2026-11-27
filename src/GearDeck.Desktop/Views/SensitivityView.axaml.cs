@@ -16,7 +16,8 @@ namespace GearDeck.Desktop.Views;
 public partial class SensitivityView : UserControl
 {
     private bool _binding = true;
-    private SensitivityConversionMethod _method = SensitivityConversionMethod.Cm360;
+    private bool _gamesExpanded;
+    private bool _gameCardsDirty = true;
     private SensitivityConversionResult? _lastResult;
     private UniformGrid? _gameCardsGrid;
     private readonly DispatcherTimer _saveTimer;
@@ -28,7 +29,7 @@ public partial class SensitivityView : UserControl
         _saveTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(300), DispatcherPriority.Normal, OnSaveTimerTick);
         WireEvents();
         LoadPreferences();
-        RenderGameCards();
+        SetGamesExpanded(false);
         _binding = false;
         Unloaded += OnUnloaded;
     }
@@ -47,7 +48,6 @@ public partial class SensitivityView : UserControl
         TargetWidthBox.TextChanged += OnNumericInputChanged;
         TargetHeightBox.TextChanged += OnNumericInputChanged;
 
-        BaseGameCombo.SelectionChanged += OnBaseGameChanged;
         BaseResPresetCombo.SelectionChanged += OnBaseResPresetChanged;
         TargetResPresetCombo.SelectionChanged += OnTargetResPresetChanged;
 
@@ -56,10 +56,9 @@ public partial class SensitivityView : UserControl
         BaseFovResetBtn.Click += (_, _) => { if (!_binding) ResetFov(BaseFovBox, CurrentBaseId(), isBase: true); };
         TargetFovResetBtn.Click += (_, _) => { if (!_binding) ResetFov(TargetFovBox, CurrentTargetId(), isBase: false); };
         SwapGamesBtn.Click += OnSwapGamesClick;
-        MethodCm360Btn.Click += OnMethodClick;
-        MethodMdv0Btn.Click += OnMethodClick;
-        MethodMdh100Btn.Click += OnMethodClick;
-        CopySensBtn.Click += OnCopySensClick;
+        CopyCm360Btn.Click += (_, _) => CopyConversionValue(_lastResult?.FormattedCm360);
+        CopyMdv0Btn.Click += (_, _) => CopyConversionValue(_lastResult?.FormattedFovScaled);
+        CopyMdh100Btn.Click += (_, _) => CopyConversionValue(_lastResult?.FormattedMdh100);
         CopySnippetBtn.Click += OnCopySnippetClick;
         ReadMouseDpiBtn.Click += OnReadMouseDpiClick;
 
@@ -75,7 +74,20 @@ public partial class SensitivityView : UserControl
         foreach (var button in targetDpiWrap.Children.OfType<Button>())
             button.Click += (_, _) => { if (!_binding && button.Tag is string tag) TargetDpiBox.Text = tag; };
 
-        GameSearchBox.TextChanged += (_, _) => { if (!_binding) RenderGameCards(); };
+        ToggleGamesBtn.Click += (_, _) => SetGamesExpanded(!_gamesExpanded);
+        GameSearchBox.TextChanged += (_, _) =>
+        {
+            if (_binding) return;
+            if (!string.IsNullOrWhiteSpace(GameSearchBox.Text) && !_gamesExpanded)
+            {
+                _gameCardsDirty = true;
+                SetGamesExpanded(true);
+            }
+            else if (_gamesExpanded)
+                RenderGameCards();
+            else
+                _gameCardsDirty = true;
+        };
         GameCardsHost.SizeChanged += (_, _) => UpdateGameCardColumns();
         WorkspaceGrid.SizeChanged += OnWorkspaceSizeChanged;
     }
@@ -100,11 +112,6 @@ public partial class SensitivityView : UserControl
         var p = App.Settings.Current.SensitivityPrefs;
         p.PerGameFovs ??= new(StringComparer.OrdinalIgnoreCase);
 
-        _method = Enum.IsDefined(typeof(SensitivityConversionMethod), p.ConversionMethod)
-            ? (SensitivityConversionMethod)p.ConversionMethod
-            : SensitivityConversionMethod.Cm360;
-        p.ConversionMethod = (int)_method;
-
         var baseGame = SensitivityConverter.FindById(p.BaseGameId);
         var targetGame = SensitivityConverter.FindById(p.TargetGameId);
         p.BaseGameId = baseGame.Id;
@@ -112,8 +119,6 @@ public partial class SensitivityView : UserControl
 
         WithBinding(() =>
         {
-            FillGameCombo(BaseGameCombo, p.BaseGameId);
-
             BaseSensBox.Text = FormatNumber(SanitizeBaseSensitivity(baseGame, p.BaseSensitivity));
             BaseFovBox.Text = FormatNumber(ResolveFov(baseGame, isBase: true));
             TargetFovBox.Text = FormatNumber(ResolveFov(targetGame, isBase: false));
@@ -136,27 +141,7 @@ public partial class SensitivityView : UserControl
             TargetResPanel.IsVisible = !p.SameResolution;
         });
 
-        ApplyMethodStyle();
         Recalculate();
-    }
-
-    private static void FillGameCombo(ComboBox combo, string selectedId)
-    {
-        string canonicalId = SensitivityConverter.FindById(selectedId).Id;
-        combo.Items.Clear();
-        ComboBoxItem? selected = null;
-        foreach (var game in SensitivityConverter.AllGames)
-        {
-            var item = new ComboBoxItem
-            {
-                Tag = game.Id,
-                Content = $"{game.Name} · {game.ShortTag}",
-            };
-            combo.Items.Add(item);
-            if (string.Equals(game.Id, canonicalId, StringComparison.OrdinalIgnoreCase))
-                selected = item;
-        }
-        combo.SelectedItem = selected ?? combo.Items.FirstOrDefault();
     }
 
     private static void FillResolutionCombo(ComboBox combo, int width, int height, bool stretched)
@@ -177,18 +162,6 @@ public partial class SensitivityView : UserControl
         var custom = new ComboBoxItem { Tag = "custom", Content = "自定义分辨率" };
         combo.Items.Add(custom);
         combo.SelectedItem = selected ?? custom;
-    }
-
-    private static void SelectGameCombo(ComboBox combo, string gameId)
-    {
-        foreach (var item in combo.Items.OfType<ComboBoxItem>())
-        {
-            if (string.Equals(item.Tag as string, gameId, StringComparison.OrdinalIgnoreCase))
-            {
-                combo.SelectedItem = item;
-                return;
-            }
-        }
     }
 
     private static void SelectResolutionCombo(ComboBox combo, string tag)
@@ -234,7 +207,7 @@ public partial class SensitivityView : UserControl
             TargetWidth: Math.Max(1, sameRes ? p.BaseWidth : p.TargetWidth),
             TargetHeight: Math.Max(1, sameRes ? p.BaseHeight : p.TargetHeight),
             TargetStretchedTo16By9: sameRes ? p.BaseStretched : p.TargetStretched,
-            Method: _method);
+            Method: SensitivityConversionMethod.Cm360);
     }
 
     private void Recalculate()
@@ -245,34 +218,29 @@ public partial class SensitivityView : UserControl
         var result = SensitivityConverter.Convert(request);
         _lastResult = result;
 
+        BaseGameTitleText.Text = result.BaseGame.Name;
+        BaseTagBadgeText.Text = result.BaseGame.ShortTag;
+        GameSummaryText.Text = $"基准：{result.BaseGame.Name}  →  目标：{result.TargetGame.Name}";
         TargetGameTitleText.Text = result.TargetGame.Name;
         TargetTagBadgeText.Text = result.TargetGame.ShortTag;
-        PrimaryResultText.Text = result.FormattedSelected;
 
-        (PrimaryMethodTagText.Text, MethodDescText.Text) = _method switch
-        {
-            SensitivityConversionMethod.FocalLengthMdv0 => (
-                "MDV 0% · 焦距缩放",
-                $"FOV 焦距缩放：目标 {result.FormattedFovScaled}（保持屏幕视觉角速度一致，适合跟枪）。"),
-            SensitivityConversionMethod.MonitorDistanceH100 => (
-                "MDH 100% · 水平边缘对齐",
-                $"水平边缘对齐：目标 {result.FormattedMdh100}（按 HFOV 等比缩放，屏幕边缘落点一致）。"),
-            _ => (
-                "360° 等距 · 物理转身",
-                $"360° 等距：目标 {result.FormattedCm360}（保持物理 cm/360° 一致，腰射通用）。"),
-        };
+        ResultCm360Text.Text = result.FormattedCm360;
+        ResultCm360SubText.Text = $"{result.TargetCm360:F2} cm/360°";
+        ResultMdv0Text.Text = result.FormattedFovScaled;
+        ResultMdh100Text.Text = result.FormattedMdh100;
 
-        BaseFovMetaText.Text = $"基准 FOV {request.BaseFov:F0}° → 实际 HFOV {result.BaseActualHFov:F1}° / VFOV {result.BaseActualVFov:F1}°" +
-            (result.BaseGame.FovLocked ? "（该游戏 FOV 固定锁定）" : "") +
-            (result.BaseGame.PhysicalYawAffectedByFov ? "（该游戏 FOV 影响物理 cm/360°）" : "");
-        TargetFovMetaText.Text = $"目标 FOV {request.TargetFov:F0}° → 实际 HFOV {result.TargetActualHFov:F1}° / VFOV {result.TargetActualVFov:F1}°" +
-            (result.TargetGame.FovLocked ? "（该游戏 FOV 固定锁定）" : "") +
-            (result.TargetGame.PhysicalYawAffectedByFov ? "（该游戏 FOV 影响物理 cm/360°）" : "");
+        BaseFovMetaText.Text = $"→ 实际 HFOV {result.BaseActualHFov:F1}° / VFOV {result.BaseActualVFov:F1}°" +
+            (result.BaseGame.FovLocked ? "（固定锁定）" : "") +
+            (result.BaseGame.PhysicalYawAffectedByFov ? "（影响 cm/360°）" : "");
+        TargetFovMetaText.Text = $"→ 实际 HFOV {result.TargetActualHFov:F1}° / VFOV {result.TargetActualVFov:F1}°" +
+            (result.TargetGame.FovLocked ? "（固定锁定）" : "") +
+            (result.TargetGame.PhysicalYawAffectedByFov ? "（影响 cm/360°）" : "");
 
-        MetricCompareText.Text = $"等距 {result.FormattedCm360} · 焦距 {result.FormattedFovScaled} · 边缘 {result.FormattedMdh100}";
-        MetricCm360Text.Text = $"{result.BaseCm360:F2} → {result.TargetCm360:F2} cm/360°\neDPI {result.BaseEdpi:F0} → {result.TargetEdpi:F0}";
-        MetricFovText.Text = $"基准 {result.BaseActualHFov:F1}°/{result.BaseActualVFov:F1}°\n目标 {result.TargetActualHFov:F1}°/{result.TargetActualVFov:F1}°";
-        MetricPixelSpeedText.Text = $"{result.PixelsPerCountAtTargetRes:F2} px/count\n2K 跑满手速 ≥ {result.MinSpeedCmPerSecFor2000Hz:F1} cm/s";
+        double minSpeed1k = result.MinSpeedCmPerSecFor2000Hz / 2.0;
+        MetricPhysicalText.Text =
+            $"物理转身：{result.BaseCm360:F2} → {result.TargetCm360:F2} cm/360°  ·  eDPI：{result.BaseEdpi:F0} → {result.TargetEdpi:F0}\n" +
+            $"像素步进：{result.PixelsPerCountAtTargetRes:F2} px/count\n" +
+            $"回报率跑满手速：1K ≥ {minSpeed1k:F1} cm/s  ·  2K ≥ {result.MinSpeedCmPerSecFor2000Hz:F1} cm/s";
 
         GuideSettingPathText.Text = $"设置路径：{result.TargetGame.SettingPath}";
         GuideConfigTipText.Text = $"配置提示：{result.TargetGame.ConfigTip}" +
@@ -323,13 +291,6 @@ public partial class SensitivityView : UserControl
         bool targetLocked = SensitivityConverter.FindById(p.TargetGameId).FovLocked;
         TargetFovBox.IsEnabled = !targetLocked;
         TargetFovResetBtn.IsEnabled = !targetLocked;
-    }
-
-    private void ApplyMethodStyle()
-    {
-        MethodCm360Btn.Classes.Set("active", _method == SensitivityConversionMethod.Cm360);
-        MethodMdv0Btn.Classes.Set("active", _method == SensitivityConversionMethod.FocalLengthMdv0);
-        MethodMdh100Btn.Classes.Set("active", _method == SensitivityConversionMethod.MonitorDistanceH100);
     }
 
     // ── 输入处理 ─────────────────────────────────────────────────────────────
@@ -424,17 +385,10 @@ public partial class SensitivityView : UserControl
 
         Recalculate();
         ScheduleSave();
-        RenderGameCards();
+        MarkGameCardsDirtyOrRender();
     }
 
     private void MarkCustom(ComboBox combo) => WithBinding(() => SelectResolutionCombo(combo, "custom"));
-
-    private void OnBaseGameChanged(object? sender, SelectionChangedEventArgs e)
-    {
-        if (_binding || sender is not ComboBox combo ||
-            combo.SelectedItem is not ComboBoxItem item || item.Tag is not string id) return;
-        SetBaseGame(id);
-    }
 
     private void SetBaseGame(string id)
     {
@@ -446,13 +400,12 @@ public partial class SensitivityView : UserControl
         p.BaseFov = fov;
         WithBinding(() =>
         {
-            SelectGameCombo(BaseGameCombo, game.Id);
             BaseSensBox.Text = FormatNumber(SanitizeBaseSensitivity(game, p.BaseSensitivity));
             BaseFovBox.Text = FormatNumber(fov);
         });
         Recalculate();
         ScheduleSave();
-        RenderGameCards();
+        MarkGameCardsDirtyOrRender();
     }
 
     private void ScaleBaseSensitivity(double factor)
@@ -484,7 +437,7 @@ public partial class SensitivityView : UserControl
         WithBinding(() => BaseSensBox.Text = FormatNumber(next));
         Recalculate();
         ScheduleSave();
-        RenderGameCards();
+        MarkGameCardsDirtyOrRender();
     }
 
     private void ResetFov(TextBox box, string gameId, bool isBase)
@@ -499,7 +452,7 @@ public partial class SensitivityView : UserControl
         else p.TargetFov = game.DefaultFov;
         Recalculate();
         ScheduleSave();
-        RenderGameCards();
+        MarkGameCardsDirtyOrRender();
     }
 
     private void OnSwapGamesClick(object? sender, RoutedEventArgs e)
@@ -511,7 +464,7 @@ public partial class SensitivityView : UserControl
         string oldTarget = p.TargetGameId;
         string baseFovText = BaseFovBox.Text ?? string.Empty;
         string targetFovText = TargetFovBox.Text ?? string.Empty;
-        double? convertedTargetSens = _lastResult?.TargetSensitivitySelected;
+        double? convertedTargetSens = _lastResult?.TargetSensitivityCm360;
 
         p.BaseGameId = oldTarget;
         p.TargetGameId = oldBase;
@@ -526,7 +479,6 @@ public partial class SensitivityView : UserControl
 
         WithBinding(() =>
         {
-            SelectGameCombo(BaseGameCombo, oldTarget);
             BaseSensBox.Text = FormatNumber(SanitizeBaseSensitivity(newBaseGame, p.BaseSensitivity));
             BaseFovBox.Text = targetFovText;
             TargetFovBox.Text = baseFovText;
@@ -566,24 +518,7 @@ public partial class SensitivityView : UserControl
 
         Recalculate();
         ScheduleSave();
-        RenderGameCards();
-    }
-
-    private void OnMethodClick(object? sender, RoutedEventArgs e)
-    {
-        if (_binding || sender is not Button button) return;
-        _method = (button.Tag as string) switch
-        {
-            "Mdv0" => SensitivityConversionMethod.FocalLengthMdv0,
-            "Mdh100" => SensitivityConversionMethod.MonitorDistanceH100,
-            _ => SensitivityConversionMethod.Cm360,
-        };
-        App.Settings.Current.SensitivityPrefs ??= new();
-        App.Settings.Current.SensitivityPrefs.ConversionMethod = (int)_method;
-        ApplyMethodStyle();
-        Recalculate();
-        ScheduleSave();
-        RenderGameCards();
+        MarkGameCardsDirtyOrRender();
     }
 
     private void OnAdvancedCheckChanged(object? sender, RoutedEventArgs e)
@@ -621,7 +556,7 @@ public partial class SensitivityView : UserControl
 
         Recalculate();
         ScheduleSave();
-        RenderGameCards();
+        MarkGameCardsDirtyOrRender();
     }
 
     private void OnBaseResPresetChanged(object? sender, SelectionChangedEventArgs e)
@@ -682,7 +617,7 @@ public partial class SensitivityView : UserControl
 
         Recalculate();
         ScheduleSave();
-        RenderGameCards();
+        MarkGameCardsDirtyOrRender();
     }
 
     // ── 鼠标 DPI 读取与复制 ──────────────────────────────────────────────────
@@ -723,10 +658,10 @@ public partial class SensitivityView : UserControl
         }
     }
 
-    private void OnCopySensClick(object? sender, RoutedEventArgs e)
+    private void CopyConversionValue(string? formatted)
     {
-        if (_lastResult == null) return;
-        _ = CopyToClipboard(_lastResult.FormattedSelected, $"已复制灵敏度 {_lastResult.FormattedSelected}。");
+        if (string.IsNullOrWhiteSpace(formatted)) return;
+        _ = CopyToClipboard(formatted, $"已复制灵敏度 {formatted}。");
     }
 
     private void OnCopySnippetClick(object? sender, RoutedEventArgs e)
@@ -762,7 +697,24 @@ public partial class SensitivityView : UserControl
             MainWindow.ShowToast(message, severity);
     }
 
-    // ── 游戏卡片墙 ───────────────────────────────────────────────────────────
+    // ── 游戏卡片墙（顶部可收缩） ───────────────────────────────────────────────
+
+    private void SetGamesExpanded(bool expanded)
+    {
+        _gamesExpanded = expanded;
+        GameCardsContainer.IsVisible = expanded;
+        ToggleGamesBtn.Content = expanded ? "收起 ▲" : "展开选择 ▼";
+        if (expanded && _gameCardsDirty)
+            RenderGameCards();
+    }
+
+    private void MarkGameCardsDirtyOrRender()
+    {
+        if (_gamesExpanded)
+            RenderGameCards();
+        else
+            _gameCardsDirty = true;
+    }
 
     private int ComputeGameCardColumns()
     {
@@ -888,6 +840,7 @@ public partial class SensitivityView : UserControl
         }
 
         GameCardsHost.Children.Add(_gameCardsGrid);
+        _gameCardsDirty = false;
     }
 
     private static IBrush ResolveBrush(string key)
@@ -920,14 +873,14 @@ public partial class SensitivityView : UserControl
         WithBinding(() => TargetFovBox.Text = FormatNumber(fov));
         Recalculate();
         ScheduleSave();
-        RenderGameCards();
-        RootScrollViewer.Offset = new Vector(0, 0);
+        MarkGameCardsDirtyOrRender();
     }
 
     // ── 响应式布局 ───────────────────────────────────────────────────────────
 
     private void OnWorkspaceSizeChanged(object? sender, SizeChangedEventArgs e)
     {
+        ResultModesGrid.Columns = e.NewSize.Width < 760 ? 1 : 3;
         if (WorkspaceGrid.ColumnDefinitions.Count < 2) return;
         if (e.NewSize.Width < 920)
         {

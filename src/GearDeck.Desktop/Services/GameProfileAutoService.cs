@@ -38,9 +38,25 @@ public sealed class GameProfileAutoService : IDisposable
     private readonly ConcurrentDictionary<string, string> _lastOutcomeByDevice = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (int? OnboardSlot, bool? WasHostMode, MouseHardwarePreset? Preset, bool SwitchedViaOnboardSlot)> _preEntrySnapshots = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _lastAwakeMouseIds = new(StringComparer.OrdinalIgnoreCase);
+    private delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
+
     private Timer? _timer;
     private int _ticking;
     private volatile bool _disposed;
+    private int _configuredIntervalMs = 1000;
+    private int _currentTimerMs = 1000;
+    private WinEventDelegate? _fgHookProc;
+    private IntPtr _fgHook;
+
+    private IntPtr _cachedFgHwnd;
+    private uint _cachedFgPid;
+    private string _cachedFgExe = "";
+    private string _cachedFgProc = "";
+
+    private string _lastReportedKey = "";
+    private string _lastReportedLabel = "";
+    private string _lastReportedFgProc = "";
+    private bool _lastReportedFullscreen;
 
     private string? _pendingRuleKey;
     private long _pendingSinceMs;
@@ -69,15 +85,82 @@ public sealed class GameProfileAutoService : IDisposable
     public void Start()
     {
         App.Devices.DevicesUpdated += OnDevicesUpdated;
-        int intervalMs = Math.Clamp(App.Settings?.Current.GameAutoPollIntervalMs ?? 1000, 250, 5000);
-        _timer ??= new Timer(_ => _ = PollAsync(force: false), null, 1200, intervalMs);
+        _configuredIntervalMs = Math.Clamp(App.Settings?.Current.GameAutoPollIntervalMs ?? 1000, 250, 5000);
+        int initialMs = OperatingSystem.IsWindows() ? Math.Max(_configuredIntervalMs, 4000) : _configuredIntervalMs;
+        _currentTimerMs = initialMs;
+        _timer ??= new Timer(_ => _ = PollAsync(force: false), null, 1200, initialMs);
+
+        if (OperatingSystem.IsWindows() && _fgHook == IntPtr.Zero)
+        {
+            try
+            {
+                _fgHookProc = OnForegroundWinEvent;
+                _fgHook = SetWinEventHook(0x0003 /* EVENT_SYSTEM_FOREGROUND */, 0x0003, IntPtr.Zero, _fgHookProc, 0, 0, 0x0002 /* WINEVENT_SKIPOWNPROCESS */);
+            }
+            catch { }
+        }
     }
 
     public void UpdatePollInterval(int intervalMs)
     {
         if (_disposed) return;
-        int clamped = Math.Clamp(intervalMs, 250, 5000);
-        _timer?.Change(clamped, clamped);
+        _configuredIntervalMs = Math.Clamp(intervalMs, 250, 5000);
+        UpdateAdaptiveTimerCadence();
+    }
+
+    private void OnForegroundWinEvent(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
+    {
+        if (_disposed) return;
+        var settings = App.Settings?.Current;
+        if (settings == null || !settings.AutoSwitchEnabled) return;
+        if (!settings.EnableExclusiveFullscreenFallback && !settings.GameRules.Any(r => r.Enabled) && _latchedResolution == null && _preEntrySnapshots.Count == 0)
+            return;
+
+        AdjustTimerCadence(_configuredIntervalMs);
+        _ = Task.Run(() => PollAsync(force: false));
+    }
+
+    private void UpdateAdaptiveTimerCadence()
+    {
+        var settings = App.Settings?.Current;
+        bool activeWork = _pendingRuleKey != null || _latchedResolution != null || _preEntrySnapshots.Count > 0;
+        int targetMs;
+        if (settings == null || !settings.AutoSwitchEnabled ||
+            (!settings.EnableExclusiveFullscreenFallback && !settings.GameRules.Any(r => r.Enabled) && !activeWork))
+        {
+            targetMs = 5000;
+        }
+        else if (activeWork)
+        {
+            targetMs = _configuredIntervalMs;
+        }
+        else
+        {
+            targetMs = OperatingSystem.IsWindows() ? Math.Max(_configuredIntervalMs, 4000) : _configuredIntervalMs;
+        }
+        AdjustTimerCadence(targetMs);
+    }
+
+    private void AdjustTimerCadence(int targetMs)
+    {
+        if (_disposed || _timer == null || targetMs == _currentTimerMs) return;
+        _currentTimerMs = targetMs;
+        try { _timer.Change(targetMs, targetMs); } catch { }
+    }
+
+    private void NotifyStatusIfChanged()
+    {
+        if (string.Equals(_lastReportedKey, ActiveRuleKey, StringComparison.Ordinal) &&
+            string.Equals(_lastReportedLabel, ActiveRuleLabel, StringComparison.Ordinal) &&
+            string.Equals(_lastReportedFgProc, LastForegroundProcess, StringComparison.Ordinal) &&
+            _lastReportedFullscreen == LastIsFullscreen)
+            return;
+
+        _lastReportedKey = ActiveRuleKey;
+        _lastReportedLabel = ActiveRuleLabel;
+        _lastReportedFgProc = LastForegroundProcess;
+        _lastReportedFullscreen = LastIsFullscreen;
+        StatusChanged?.Invoke();
     }
 
     public void ClearAppliedCache() => _lastAppliedByDevice.Clear();
@@ -142,7 +225,28 @@ public sealed class GameProfileAutoService : IDisposable
         try
         {
             var settings = App.Settings.Current;
-            var (hwnd, pid, procName, exePath, title, isFs, isSelf) = InspectForeground();
+            if (!force && !settings.AutoSwitchEnabled)
+            {
+                if (ActiveRuleKey != "" || ActiveRuleLabel != "自动切换已暂停" || ActiveReason != ActiveSwitchReason.None || _latchedResolution != null)
+                {
+                    ActiveRuleKey = "";
+                    ActiveRuleLabel = "自动切换已暂停";
+                    ActiveReason = ActiveSwitchReason.None;
+                    _latchedResolution = null;
+                    NotifyStatusIfChanged();
+                }
+                AdjustTimerCadence(5000);
+                return;
+            }
+
+            bool hasEnabledRules = settings.GameRules.Any(r => r.Enabled);
+            if (!force && !hasEnabledRules && !settings.EnableExclusiveFullscreenFallback && _latchedResolution == null && _preEntrySnapshots.Count == 0)
+            {
+                AdjustTimerCadence(5000);
+                return;
+            }
+
+            var (hwnd, pid, procName, exePath, title, isFs, isSelf) = InspectForeground(settings.EnableExclusiveFullscreenFallback);
             if (!isSelf)
             {
                 LastForegroundProcess = procName;
@@ -157,7 +261,8 @@ public sealed class GameProfileAutoService : IDisposable
                 ActiveRuleLabel = "自动切换已暂停";
                 ActiveReason = ActiveSwitchReason.None;
                 _latchedResolution = null;
-                StatusChanged?.Invoke();
+                NotifyStatusIfChanged();
+                AdjustTimerCadence(5000);
                 return;
             }
 
@@ -184,7 +289,7 @@ public sealed class GameProfileAutoService : IDisposable
             if (!force && ExternalConfiguratorGuard.IsBackgroundYieldActive(out var yieldReason))
             {
                 ActiveRuleLabel = yieldReason ?? "已自动让位给官方驱动";
-                StatusChanged?.Invoke();
+                NotifyStatusIfChanged();
                 return;
             }
 
@@ -250,7 +355,7 @@ public sealed class GameProfileAutoService : IDisposable
                     return;
                 }
 
-                StatusChanged?.Invoke();
+                NotifyStatusIfChanged();
                 return;
             }
 
@@ -286,6 +391,7 @@ public sealed class GameProfileAutoService : IDisposable
         }
         finally
         {
+            UpdateAdaptiveTimerCadence();
             Interlocked.Exchange(ref _ticking, 0);
         }
     }
@@ -642,7 +748,7 @@ public sealed class GameProfileAutoService : IDisposable
         return list.OrderBy(x => x.ProcessName, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    private (IntPtr Hwnd, uint Pid, string ProcessName, string ExePath, string Title, bool IsFullscreen, bool IsSelf) InspectForeground()
+    private (IntPtr Hwnd, uint Pid, string ProcessName, string ExePath, string Title, bool IsFullscreen, bool IsSelf) InspectForeground(bool checkFullscreen)
     {
         if (OperatingSystem.IsMacOS())
         {
@@ -666,8 +772,23 @@ public sealed class GameProfileAutoService : IDisposable
             return (IntPtr.Zero, 0, "", "", "", false, false);
 
         bool isSelf = pid == (uint)Environment.ProcessId;
-        string exePath = ResolveProcessPath(pid);
-        string procName = !string.IsNullOrWhiteSpace(exePath) ? Path.GetFileName(exePath) : ResolveProcessName(pid);
+        string exePath;
+        string procName;
+        if (hwnd == _cachedFgHwnd && pid == _cachedFgPid && !string.IsNullOrEmpty(_cachedFgProc))
+        {
+            exePath = _cachedFgExe;
+            procName = _cachedFgProc;
+        }
+        else
+        {
+            exePath = ResolveProcessPath(pid);
+            procName = !string.IsNullOrWhiteSpace(exePath) ? Path.GetFileName(exePath) : ResolveProcessName(pid);
+            _cachedFgHwnd = hwnd;
+            _cachedFgPid = pid;
+            _cachedFgExe = exePath;
+            _cachedFgProc = procName;
+        }
+
         if (!isSelf && string.Equals(procName, "GearDeck.Widget.exe", StringComparison.OrdinalIgnoreCase))
             isSelf = true;
 
@@ -675,9 +796,13 @@ public sealed class GameProfileAutoService : IDisposable
         if (isSelf)
             return (hwnd, pid, procName, exePath, title, false, true);
 
-        bool exclusiveQuns = SHQueryUserNotificationState(out int qns) == 0 && qns == 3;
-        var probe = ProbeWindow(hwnd, pid, procName, exclusiveQuns);
-        bool isFullscreen = probe != null && FullscreenWindowClassifier.IsFullscreen(probe, App.Settings.Current.OnlyTrueExclusiveFullscreen);
+        bool isFullscreen = false;
+        if (checkFullscreen)
+        {
+            bool exclusiveQuns = SHQueryUserNotificationState(out int qns) == 0 && qns == 3;
+            var probe = ProbeWindow(hwnd, pid, procName, exclusiveQuns);
+            isFullscreen = probe != null && FullscreenWindowClassifier.IsFullscreen(probe, App.Settings.Current.OnlyTrueExclusiveFullscreen);
+        }
         return (hwnd, pid, procName, exePath, title, isFullscreen, false);
     }
 
@@ -815,9 +940,21 @@ public sealed class GameProfileAutoService : IDisposable
         if (_disposed) return;
         _disposed = true;
         App.Devices.DevicesUpdated -= OnDevicesUpdated;
+        if (_fgHook != IntPtr.Zero)
+        {
+            try { UnhookWinEvent(_fgHook); } catch { }
+            _fgHook = IntPtr.Zero;
+        }
+        _fgHookProc = null;
         _timer?.Dispose();
         _applyLock.Dispose();
     }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnhookWinEvent(IntPtr hWinEventHook);
 
     private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
 

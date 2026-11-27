@@ -301,13 +301,5 @@ public sealed class AngryMiaoProvider : ITunablePeripheralProvider
     }
 
     private static bool TryParseVidPid(string id, out ushort vid, out ushort pid)
-    {
-        vid = 0; pid = 0;
-        var p = id.Split(':');
-        if (p.Length < 2) return false;
-        var vp = p[1].Split('-');
-        return vp.Length == 2
-            && ushort.TryParse(vp[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out vid)
-            && ushort.TryParse(vp[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid);
-    }
+        => ProviderIdHelper.TryParseVidPid(id, out vid, out pid);
 }

@@ -75,19 +75,20 @@ public static class DeviceImageService
 
     public static IReadOnlyList<CloudPresetImageItem> CuratedCloudPresets { get; } =
     [
-        new("cloud_gpx3", "Logitech G PRO X / Superlight Series", "Logitech", "usb:046d:c54f;usb:046d:c094;pro x3;superstrike;superlight", "https://resource.logitech.com/w_692,c_lpad,ar_4:3,q_auto,f_auto,dpr_1.0/d_transparent.gif/content/dam/gaming/en/products/pro-x-superlight-2/gallery-1-pro-x-superlight-2-gaming-mouse-black.png", false),
-        new("cloud_gpw_svg", "Logitech G PRO Wireless (Piper)", "Logitech", "usb:046d:c088;g pro wireless;gpw", $"{PiperSvgBaseUrl}logitech-g-pro-wireless.svg", true),
-        new("cloud_g502x", "Logitech G502 X Plus (Piper)", "Logitech", "usb:046d:c08b;usb:046d:c08d;g502", $"{PiperSvgBaseUrl}logitech-g502-x-plus.svg", true),
-        new("cloud_viper_v3", "Razer Viper V3 Pro 毒蝰 V3 Pro", "Razer", "usb:1532:00c1;viper v3 pro;viper", "https://assets2.razerzone.com/images/pnx.assets/05b2ecb314fa052d217b254d5a3c86c9/viper-v3-pro-black-500x500.webp", false),
-        new("cloud_dav3_svg", "Razer DeathAdder Series (Piper)", "Razer", "usb:1532:00b6;usb:1532:00b7;deathadder", $"{PiperSvgBaseUrl}razer-deathadder-v3-pro.svg", true),
+        new("cloud_gpx3", "Logitech PRO X3 / Superlight Series (OpenMouse)", "Logitech", "usb:046d:c54f;usb:046d:c094;pro x3;superstrike;superlight", "https://img.openmouse.app/logitech-pro-x3-superstrike.png", false),
+        new("cloud_gpw_svg", "Logitech G PRO Wireless (OpenMouse)", "Logitech", "usb:046d:c088;g pro wireless;gpw", "https://img.openmouse.app/logitech-gpro-wireless.png", false),
+        new("cloud_g502x", "Logitech G502 X Plus (OpenMouse)", "Logitech", "usb:046d:c08b;usb:046d:c08d;g502", "https://img.openmouse.app/logitech-g502-x-plus.png", false),
+        new("cloud_viper_v3", "Razer Viper V3 Pro 毒蝰 V3 Pro (OpenMouse)", "Razer", "usb:1532:00c1;viper v3 pro;viper", "https://img.openmouse.app/razer-viper-v3-pro.png", false),
+        new("cloud_dav3_svg", "Razer DeathAdder V3 Series (OpenMouse)", "Razer", "usb:1532:00b6;usb:1532:00b7;deathadder", "https://img.openmouse.app/razer-deathadder-v3.png", false),
         new("cloud_am_97", "Angry Miao AM Infinity .97 怒喵无限鼠标", "Angry Miao", "usb:0e8d:0703;usb:0e8d:0880;usb:35a1:0035;infinity;怒喵", "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png", false),
         new("cloud_am_100r2", "Angry Miao AM INFINITY .100R2", "Angry Miao", "usb:0e8d:0704;usb:0e8d:0881;100r2", "https://ammaster.angrymiao.com/mouse/am30r2-mouse.png", false),
         new("cloud_am_30", "Angry Miao AM Infinity Mouse", "Angry Miao", "usb:3151:5007;usb:3151:402a;usb:3151:3010", "https://ammaster.angrymiao.com/mouse/am30-mouse.png", false),
         new("cloud_aula_l5", "AULA 狼蛛昆仑 L5 Ultra", "AULA", "usb:38a6:2f1a;usb:38a6:2f0c;usb:258a:0138;狼蛛;昆仑", "https://cdn2.aulacn.com/storage/20261015/UGa1792055906WIAjQC.jpg", false),
-        new("cloud_wlmouse", "WLmouse 镁合金系列", "WLmouse", "usb:36a7:a856;usb:36a7:a860;beast;wlmouse;万灵", "https://www.wlmouse.com/cdn/shop/files/9ed5786037e96b6a3eb76ee579be7e4c.png", false),
-        new("cloud_lamzu", "Lamzu Maya / Inca 系列", "Lamzu", "usb:373e:;usb:37b0:;lamzu;maya;inca;兰族", "https://lamzu.com/cdn/shop/files/3_44a7403b-e6a7-419c-9910-a7679e7315fd.png", false),
-        new("cloud_pulsar_x2", "Pulsar X2 / X2V2 / X2H Series (Piper)", "Pulsar", "usb:3710:;usb:25a7:;pulsar;x2v2;x2h;xlite", $"{PiperSvgBaseUrl}glorious-model-o.svg", true),
-        new("cloud_egg_xm2", "Endgame Gear XM2we / OP1 Series (Piper)", "Endgame Gear", "usb:3367:;endgame;xm2;op1", $"{PiperSvgBaseUrl}endgame-gear-xm1r.svg", true),
+        new("cloud_wlmouse", "WLmouse Beast Series (OpenMouse)", "WLmouse", "usb:36a7:a856;usb:36a7:a860;beast;wlmouse;万灵", "https://img.openmouse.app/wlmouse-beast-g.png", false),
+        new("cloud_lamzu", "Lamzu Maya X Series (OpenMouse)", "Lamzu", "usb:373e:;usb:37b0:;lamzu;maya;inca;兰族", "https://img.openmouse.app/lamzu-maya-x.png", false),
+        new("cloud_pulsar_x2", "Pulsar X2 V2 / X2H Series (OpenMouse)", "Pulsar", "usb:3710:;usb:25a7:;pulsar;x2v2;x2h;xlite", "https://img.openmouse.app/pulsar-x2-v2.png", false),
+        new("cloud_egg_xm2", "Endgame Gear XM2 8K / WE (OpenMouse)", "Endgame Gear", "usb:3367:;endgame;xm2;op1", "https://img.openmouse.app/endgame-gear-xm2-8k.png", false),
+        new("cloud_finalmouse_ulx", "Finalmouse ULX Series (OpenMouse)", "Finalmouse", "usb:361d:;finalmouse;ulx;starlight", "https://img.openmouse.app/finalmouse-ulx.png", false),
         new("cloud_rog_harpe", "ASUS ROG Harpe Ace / 鼠标 (Piper)", "ROG", "usb:0b05:1ace;usb:0b05:;rog;harpe;keris", $"{PiperSvgBaseUrl}asus-rog-harpe-wireless.svg", true),
         new("cloud_rog_scope_98", "ROG 游侠 2 RX 98 无线键盘", "ROG", "usb:0b05:1b7a;游侠;scope", "https://press.asus.com/assets/w_640,h_640/172952e2-c635-4e01-b4a0-5634dd55142b/ROG%20Strix%20Scope%20II%2096%20Wireless%2001.png", false),
         new("cloud_rog_falchion", "ROG 魔导士 Ace HFX 75", "ROG", "usb:0b05:1c7d;魔导士;falchion", "https://dlcdnwebimgs.asus.com/gain/21597AB2-8BDD-4E12-83EC-45C6B2DC9B03/w717/h525/fwebp", false),
@@ -181,6 +182,8 @@ public static class DeviceImageService
             DeviceImageManifest? remote = File.Exists(RemoteManifestCachePath)
                 ? DeviceImageRuleMatcher.ParseManifest(TryReadAllText(RemoteManifestCachePath))
                 : null;
+            if (remote != null && remote.Version < bundled.Version)
+                remote = null;
 
             var merged = DeviceImageRuleMatcher.MergeManifests(bundled, remote);
             merged = DeviceImageRuleMatcher.MergeManifests(merged, localUser);
@@ -228,23 +231,48 @@ public static class DeviceImageService
                 lock (AutoCheckHistory)
                     AutoCheckHistory.Clear();
 
-                string oldAmGroupHash = Convert.ToHexString(SHA256.HashData(
-                    Encoding.UTF8.GetBytes("https://cdn-www.angrymiao.com/products/products_am_infinity_mouse_97.png")))[..16];
-                var staleAutoKeys = SettingsBridge.StringMap("AutoCloudDeviceImages")
-                    .Where(kv => Path.GetFileName(kv.Value).StartsWith(oldAmGroupHash, StringComparison.OrdinalIgnoreCase))
-                    .Select(kv => kv.Key)
-                    .ToList();
-                if (staleAutoKeys.Count > 0)
+                if (local.Version < 6)
                 {
-                    foreach (string k in staleAutoKeys)
-                        SettingsBridge.StringMap("AutoCloudDeviceImages").Remove(k);
-                    SettingsBridge.SaveChanges();
+                    var autoMap = SettingsBridge.StringMap("AutoCloudDeviceImages");
+                    if (autoMap.Count > 0)
+                    {
+                        autoMap.Clear();
+                        SettingsBridge.SaveChanges();
+                    }
+                }
+                else
+                {
+                    string oldAmGroupHash = Convert.ToHexString(SHA256.HashData(
+                        Encoding.UTF8.GetBytes("https://cdn-www.angrymiao.com/products/products_am_infinity_mouse_97.png")))[..16];
+                    var staleAutoKeys = SettingsBridge.StringMap("AutoCloudDeviceImages")
+                        .Where(kv => Path.GetFileName(kv.Value).StartsWith(oldAmGroupHash, StringComparison.OrdinalIgnoreCase))
+                        .Select(kv => kv.Key)
+                        .ToList();
+                    if (staleAutoKeys.Count > 0)
+                    {
+                        foreach (string k in staleAutoKeys)
+                            SettingsBridge.StringMap("AutoCloudDeviceImages").Remove(k);
+                        SettingsBridge.SaveChanges();
+                    }
                 }
 
                 Diag.Log($"[DeviceImages] 已将本地图像规则清单自动升级至 v{bundled.Version}");
             }
         }
         catch { }
+    }
+
+    public static void ClearBitmapCache()
+    {
+        lock (BitmapCacheLock)
+        {
+            foreach (var bmp in BitmapCache.Values)
+            {
+                try { bmp.Dispose(); } catch { }
+            }
+            BitmapCache.Clear();
+            BitmapCacheOrder.Clear();
+        }
     }
 
     public static void InvalidateManifestCache()
@@ -785,6 +813,10 @@ public static class DeviceImageService
                 }
             }
 
+            int bundledVersion = File.Exists(BundledManifestPath)
+                ? DeviceImageRuleMatcher.ParseManifest(TryReadAllText(BundledManifestPath)).Version
+                : 0;
+
             foreach (string url in manifestUrls.Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 try
@@ -793,6 +825,15 @@ public static class DeviceImageService
                     if (string.IsNullOrWhiteSpace(json)) continue;
 
                     var parsed = DeviceImageRuleMatcher.ParseManifest(json);
+                    if (parsed.Version < bundledVersion)
+                    {
+                        if (File.Exists(RemoteManifestCachePath))
+                        {
+                            try { File.Delete(RemoteManifestCachePath); } catch { }
+                            InvalidateManifestCache();
+                        }
+                        break;
+                    }
                     if (parsed.Rules.Count > 0 || parsed.Gallery.Count > 0)
                     {
                         await File.WriteAllTextAsync(RemoteManifestCachePath, json, Encoding.UTF8);
@@ -1005,7 +1046,7 @@ public static class DeviceImageService
         => DeviceImageRuleMatcher.TryExtractVidPid(d, out vidHex, out pidHex);
 
     /// <summary>
-    /// Desktop 的 App.Settings 若提供同名属性则直接读写，否则把图片相关键保存在同目录下的独立文件中。
+    /// 直接读写 App.Settings.Current；单元测试等无宿主环境时回退到独立 sidecar 文件。
     /// </summary>
     private static class SettingsBridge
     {
@@ -1017,30 +1058,43 @@ public static class DeviceImageService
         };
         private static SidecarState? _sidecar;
 
-        private static object? Current => App.Settings?.Current;
-
-        private static PropertyInfo? Property(string name)
-            => Current?.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+        private static AppSettings? Current => App.Settings?.Current;
 
         public static IDictionary<string, string> StringMap(string name)
         {
-            var prop = Property(name);
-            if (prop?.GetValue(Current) is IDictionary<string, string> dict)
-                return dict;
+            if (Current is { } s)
+            {
+                return name switch
+                {
+                    "AutoCloudDeviceImages" => s.AutoCloudDeviceImages,
+                    _ => s.DeviceImageOverrides,
+                };
+            }
             return Sidecar().Map(name);
         }
 
         public static string Text(string name)
         {
-            var prop = Property(name);
-            if (prop != null && prop.GetValue(Current) is string s)
-                return s ?? "";
+            if (Current is { } s)
+            {
+                return name switch
+                {
+                    "CustomCloudGalleryManifestUrl" => s.CustomCloudGalleryManifestUrl,
+                    "GitHubMirrorUrl" => s.GitHubMirrorUrl,
+                    "UpdateRepoSlug" => s.UpdateRepoSlug,
+                    _ => "",
+                };
+            }
             return Sidecar().Text(name);
         }
 
         public static void SaveChanges()
         {
-            App.Settings?.Save();
+            if (App.Settings != null)
+            {
+                App.Settings.Save();
+                return;
+            }
             SaveSidecar();
         }
 

@@ -262,7 +262,7 @@ public sealed partial class WidgetGroupWindow : Window
 
     private void RebuildDevices()
     {
-        var members = MembersOf(GroupId);
+        var members = TaskbarGroupHelper.GetMembers(GroupId, App.LastDevices);
         string label = GroupId switch
         {
             "builtin:mouse" => "鼠标组",
@@ -548,20 +548,6 @@ public sealed partial class WidgetGroupWindow : Window
             Foreground = TitleText.Foreground,
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
-        };
-    }
-
-    private static List<PeripheralDevice> MembersOf(string groupId)
-    {
-        var all = App.LastDevices;
-        return groupId switch
-        {
-            "builtin:mouse" => all.Where(d => d.Kind == DeviceKind.Mouse).ToList(),
-            "builtin:keyboard" => all.Where(d => d.Kind == DeviceKind.Keyboard).ToList(),
-            "builtin:headset" => all.Where(d => d.Kind == DeviceKind.Headset).ToList(),
-            "builtin:controller" => all.Where(d => d.Kind == DeviceKind.Controller).ToList(),
-            _ => all.Where(d => App.Settings.Current.CustomGroups
-                .FirstOrDefault(g => g.Id == groupId)?.MemberIds.Contains(d.Id) == true).ToList(),
         };
     }
 

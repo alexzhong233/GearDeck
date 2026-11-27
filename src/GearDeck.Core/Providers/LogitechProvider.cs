@@ -34,6 +34,11 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
         foreach (var g in groups)
         {
             ushort pid = (ushort)g.Key.ProductID;
+            if (LogitechG600Protocol.IsG600(pid))
+            {
+                results.Add(LogitechG600Protocol.EnumerateG600(g));
+                continue;
+            }
             var (shorts, longs) = OpenChannels(g);
             try
             {
@@ -144,6 +149,9 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
             return caps;
         }
 
+        if (LogitechG600Protocol.IsG600(pid))
+            return LogitechG600Protocol.QueryCapabilities(deviceId, HidSafe.EnumerateDevices(0x046D, pid));
+
         var devices = HidSafe.EnumerateDevices(0x046D, pid)
             .Where(d => HidSafe.MaxOutputLen(d) is 7 or 20 or 21 or 64)
             .ToList();
@@ -198,6 +206,9 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
     {
         if (!TryParseId(deviceId, out ushort pid, out byte idx))
             return new DeviceTuningResult(false, "无效的罗技设备 ID。");
+
+        if (LogitechG600Protocol.IsG600(pid))
+            return LogitechG600Protocol.ApplySettings(deviceId, HidSafe.EnumerateDevices(0x046D, pid), update);
 
         var devices = HidSafe.EnumerateDevices(0x046D, pid)
             .Where(d => HidSafe.MaxOutputLen(d) is 7 or 20 or 21 or 64)
@@ -363,6 +374,29 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                 }
             }
 
+            // 5. 写入 0x8100 经典布局板载硬件宏并绑定按键
+            if (update.UploadMacro is { } macroUp)
+            {
+                if (f8100 == 0)
+                {
+                    errors.Add("当前罗技设备未开放 0x8100 板载配置特性，无法写入硬件宏");
+                }
+                else
+                {
+                    var (mOk, mMsg) = LogitechOnboardMacroProtocol.UploadMacro(
+                        (fn, extra) =>
+                        {
+                            var reply = h.Call(idx, f8100, fn, extra, out byte err);
+                            return (reply, err);
+                        },
+                        macroUp.MacroSlot,
+                        macroUp.TargetButtonSlot,
+                        macroUp.Macro);
+                    if (mOk) notes.Add(mMsg);
+                    else errors.Add(mMsg);
+                }
+            }
+
             Thread.Sleep(45);
             var refreshed = new DeviceTuningCapabilities { DeviceId = deviceId, IsOnline = true };
             ReadCapabilities(h, idx, f8100, f2202, f2201, f8061, f8060, f1B0C, refreshed);
@@ -411,6 +445,16 @@ public sealed class LogitechProvider : ITunablePeripheralProvider
                     if (oneBased >= 1 && oneBased <= pCount)
                         caps.ActiveOnboardProfile = oneBased - 1;
                 }
+            }
+
+            var descr = h.Call(idx, f8100, LogitechOnboardMacroProtocol.FnGetProfilesDescr, null, out _);
+            if (descr != null
+                && LogitechOnboardMacroProtocol.ParseDescriptor(descr) is { } parsedDesc
+                && LogitechOnboardMacroProtocol.IsSupportedClassicMacroLayout(parsedDesc))
+            {
+                caps.SupportsOnboardMacroUpload = true;
+                caps.OnboardMacroSlotCount = Math.Max(1, parsedDesc.SectorCount - parsedDesc.ProfileCount - 1);
+                caps.MacroCapabilityNote = $"罗技 HID++ 0x8100 经典板载布局 (256B×{parsedDesc.SectorCount})：支持写入硬件宏（写入前强制校验 CRC-CCITT，建议使用有线或 G HUB 备份）。";
             }
         }
 

@@ -43,6 +43,14 @@ public partial class MainWindow : AppWindow
         InitializeComponent();
         Instance = this;
 
+        if (Program.UseSoftwareRendering)
+        {
+            TransparencyLevelHint = [WindowTransparencyLevel.None];
+            ApplySoftwareThemeBackground();
+            if (Application.Current != null)
+                Application.Current.ActualThemeVariantChanged += OnSoftwareThemeChanged;
+        }
+
         Title = $"GearDeck v{AppUpdateService.CurrentVersion}";
         TitleBarText.Text = Title;
         if (OperatingSystem.IsMacOS())
@@ -81,6 +89,8 @@ public partial class MainWindow : AppWindow
         {
             _toastTimer.Stop();
             App.Devices.DevicesUpdated -= OnDevicesUpdated;
+            if (Program.UseSoftwareRendering && Application.Current != null)
+                Application.Current.ActualThemeVariantChanged -= OnSoftwareThemeChanged;
             try { PageHost.Content = null; } catch { }
             _pages.Clear();
             if (ReferenceEquals(Instance, this))
@@ -97,6 +107,22 @@ public partial class MainWindow : AppWindow
 
     protected override AutomationPeer OnCreateAutomationPeer()
         => new MacAccessibilityGuard.SafeWindowAutomationPeer(this);
+
+    private void OnSoftwareThemeChanged(object? sender, EventArgs e) => ApplySoftwareThemeBackground();
+
+    private void ApplySoftwareThemeBackground()
+    {
+        if (Application.Current?.TryGetResource("SolidBackgroundFillColorBaseBrush", Application.Current.ActualThemeVariant, out var val) == true &&
+            val is IBrush brush)
+        {
+            Background = brush;
+        }
+        else
+        {
+            bool dark = Application.Current?.ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
+            Background = new SolidColorBrush(dark ? Color.FromRgb(0x20, 0x20, 0x20) : Color.FromRgb(0xF3, 0xF3, 0xF3));
+        }
+    }
 
     public static void ShowToast(string message, InfoBarSeverity severity = InfoBarSeverity.Informational, int? durationMs = null)
     {
@@ -321,7 +347,19 @@ public partial class MainWindow : AppWindow
             "settings" => SettingsNav,
             _ => DevicesNav,
         };
+        if (RootNavigation.SelectedItem is FluentAvalonia.UI.Controls.NavigationViewItem prev && !ReferenceEquals(prev, selected))
+            prev.IsSelected = false;
+        foreach (var parent in new[] { MouseNav, KeyboardNav, HeadsetNav, ControllerNav })
+        {
+            foreach (var child in parent.MenuItems.OfType<FluentAvalonia.UI.Controls.NavigationViewItem>())
+            {
+                if (!ReferenceEquals(child, selected) && child.IsSelected)
+                    child.IsSelected = false;
+            }
+        }
         RootNavigation.SelectedItem = selected;
+        if (selected != null)
+            selected.IsSelected = true;
     }
 
     private NavigationViewItem? FindDeviceNavItem(string? deviceId)

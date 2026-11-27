@@ -564,11 +564,7 @@ public sealed class RazerProvider : ITunablePeripheralProvider
     }
 
     private static bool TryParsePid(string deviceId, out ushort pid)
-    {
-        pid = 0;
-        var parts = deviceId.Split(':');
-        return parts.Length >= 2 && ushort.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid);
-    }
+        => ProviderIdHelper.TryParsePid(deviceId, out pid);
 
     private static DeviceKind InferDeviceKind(string name)
     {

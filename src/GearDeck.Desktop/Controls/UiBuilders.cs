@@ -97,9 +97,11 @@ public static class UiBuilders
         {
             Width = size,
             Height = size,
-            CornerRadius = new CornerRadius(Math.Max(8, size * 0.16)),
-            Background = new SolidColorBrush(Color.FromArgb(26, 128, 128, 128)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(44, 128, 128, 128)),
+            CornerRadius = new CornerRadius(Math.Max(8, size * 0.18)),
+            Background = ResolveBrush("CardBackgroundFillColorSecondaryBrush",
+                new SolidColorBrush(Color.FromArgb(20, 128, 128, 128))),
+            BorderBrush = ResolveBrush("CardStrokeColorDefaultBrush",
+                new SolidColorBrush(Color.FromArgb(36, 128, 128, 128))),
             BorderThickness = new Thickness(1),
             Padding = new Thickness(Math.Max(4, size * 0.08)),
         };
@@ -122,6 +124,7 @@ public static class UiBuilders
                 Text = FallbackGlyph(device.Kind),
                 FontFamily = IconFont,
                 FontSize = Math.Max(16, size * 0.42),
+                Foreground = ResolveBrush("TextFillColorSecondaryBrush", Brushes.Gray),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -129,7 +132,7 @@ public static class UiBuilders
         return border;
     }
 
-    /// <summary>无嵌套灰框的 Hero 设备外观：优先产品位图，否则字形回退。</summary>
+    /// <summary>无嵌套灰框的 Hero 设备外观：优先透明产品图（OpenMouse 俯视风格），否则主题自适应中性轮廓字形。</summary>
     public static Control CreateHeroDeviceVisual(PeripheralDevice device, double maxVisualSize = 168)
     {
         var src = DeviceImageService.LoadImageSource(device, maxVisualSize);
@@ -140,6 +143,7 @@ public static class UiBuilders
                 Source = src,
                 Stretch = Stretch.Uniform,
                 MaxHeight = maxVisualSize,
+                MaxWidth = maxVisualSize * 1.45,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -149,7 +153,8 @@ public static class UiBuilders
         {
             Text = FallbackGlyph(device.Kind),
             FontFamily = IconFont,
-            FontSize = Math.Max(28, maxVisualSize * 0.34),
+            FontSize = Math.Max(32, maxVisualSize * 0.36),
+            Foreground = ResolveBrush("TextFillColorSecondaryBrush", Brushes.Gray),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };

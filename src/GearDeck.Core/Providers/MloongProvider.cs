@@ -699,17 +699,5 @@ public sealed class MloongProvider : ITunablePeripheralProvider
     }
 
     private static bool TryParseVidPid(string deviceId, out ushort vid, out ushort pid)
-    {
-        vid = VidWired; pid = PidMx301Native;
-        var parts = deviceId.Split(':');
-        if (parts.Length < 2) return false;
-        if (parts[1].Contains('-'))
-        {
-            var vp = parts[1].Split('-');
-            return vp.Length == 2
-                && ushort.TryParse(vp[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out vid)
-                && ushort.TryParse(vp[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid);
-        }
-        return ushort.TryParse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid);
-    }
+        => ProviderIdHelper.TryParseVidPid(deviceId, out vid, out pid, VidWired);
 }

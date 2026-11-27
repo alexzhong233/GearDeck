@@ -79,7 +79,7 @@
                                           OnContent="悬停显示浮窗" OffContent="点击显示浮窗" />
                         </WrapPanel>
 
-                        <!-- 第二行：快捷预设 + 锚点基准合并同行 -->
+                        <!-- 第二行：预设位置与水平微调合并为紧凑一行 -->
                         <WrapPanel>
                             <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,18,4" VerticalAlignment="Center">
                                 <TextBlock Text="预设位置" Classes="meta" VerticalAlignment="Center" Margin="0,0,4,0" />
@@ -91,38 +91,33 @@
                                         ToolTip.Tip="靠右（托盘旁）" />
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,4" VerticalAlignment="Center">
-                                <TextBlock Text="锚点基准" Classes="meta" VerticalAlignment="Center" />
-                                <ComboBox x:Name="AlignCombo" MinWidth="126" Height="30">
-                                    <ComboBoxItem Content="靠左锚点" />
-                                    <ComboBoxItem Content="靠右锚点" />
-                                </ComboBox>
+                                <TextBlock Text="水平微调" Classes="meta" VerticalAlignment="Center"
+                                           ToolTip.Tip="负数向左，正数向右，也可直接在任务栏拖动" />
+                                <Slider x:Name="OffsetSlider" Maximum="1200" Minimum="-1200"
+                                        Width="150" VerticalAlignment="Center" />
+                                <ui:NumberBox x:Name="OffsetBox" Width="128" Maximum="2000" Minimum="-2000"
+                                              SmallChange="1" LargeChange="10"
+                                              SpinButtonPlacementMode="Inline" VerticalAlignment="Center" />
+                                <Button x:Name="ResetOffsetBtn" Content="归零" Height="28" Padding="10,0"
+                                        FontSize="12" VerticalAlignment="Center" />
                             </StackPanel>
                         </WrapPanel>
-
-                        <!-- 第三行：水平位置微调单行 + 尺寸三项同行 -->
-                        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
-                            <TextBlock Grid.Column="0" Text="水平微调" Classes="meta" VerticalAlignment="Center"
-                                       Margin="0,0,10,0" ToolTip.Tip="负数向左，正数向右，也可直接在任务栏拖动" />
-                            <Slider x:Name="OffsetSlider" Grid.Column="1" Maximum="1200" Minimum="-1200"
-                                    VerticalAlignment="Center" />
-                            <ui:NumberBox x:Name="OffsetBox" Grid.Column="2" Width="116" Maximum="2000" Minimum="-2000"
-                                          Margin="10,0,8,0" VerticalAlignment="Center" />
-                            <Button x:Name="ResetOffsetBtn" Grid.Column="3" Content="归零" Height="28" Padding="10,0"
-                                    FontSize="12" VerticalAlignment="Center" />
-                        </Grid>
 
                         <WrapPanel>
                             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,18,2" VerticalAlignment="Center">
                                 <TextBlock Text="贴片高度" Classes="meta" VerticalAlignment="Center" />
-                                <ui:NumberBox x:Name="HeightBox" Maximum="60" Minimum="24" Width="110" />
+                                <ui:NumberBox x:Name="HeightBox" Maximum="60" Minimum="24" Width="124"
+                                              SmallChange="1" SpinButtonPlacementMode="Inline" />
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,18,2" VerticalAlignment="Center">
                                 <TextBlock Text="字号" Classes="meta" VerticalAlignment="Center" />
-                                <ui:NumberBox x:Name="FontBox" Maximum="20" Minimum="9" Width="104" />
+                                <ui:NumberBox x:Name="FontBox" Maximum="20" Minimum="9" Width="118"
+                                              SmallChange="1" SpinButtonPlacementMode="Inline" />
                             </StackPanel>
                             <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,2" VerticalAlignment="Center">
                                 <TextBlock Text="每组最小宽度" Classes="meta" VerticalAlignment="Center" />
-                                <ui:NumberBox x:Name="BlockBox" Maximum="220" Minimum="48" Width="112" />
+                                <ui:NumberBox x:Name="BlockBox" Maximum="220" Minimum="48" Width="128"
+                                              SmallChange="1" SpinButtonPlacementMode="Inline" />
                             </StackPanel>
                         </WrapPanel>
                     </StackPanel>

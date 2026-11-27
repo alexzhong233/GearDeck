@@ -7,12 +7,17 @@
 - 禁止伪造从未观测过真实电量的设备百分比；休眠回退仅限 `LastKnownBatteries` 的真实历史采集值。
 - Razer 原生按键重映射写入始终使用 `tid = 0x10`。
 - XAML 中所有 `<Slider>` / `<ProgressBar>` 必须保持 `Maximum` 写在 `Minimum` 之前，且 `Minimum <= 1.0`。
+- 非调试模式下禁止高频或周期性轮询写盘日志（`diag.log`、`widget.log` 等），仅允许在显式开启调试日志或发生致命异常时落盘，避免磨损 SSD。
+- `GearDeck.Widget` 保持纯 Win32 + `SkiaSharp`（版本与 `GearDeck.Desktop` 严格一致），禁止重新引入 `UseWindowsForms` / WPF / `System.Drawing` 或独立的自包含 `widget/` 运行时目录；必须同时在 `app.manifest` 声明 `PerMonitorV2`、`Program.Main` 入口调用 `SetProcessDpiAwarenessContext(-4)` 并处理 `WM_DPICHANGED`。
+- 跨平台与设备协议约束：`GearDeck.Core` 解析路径/文件名时需先统一规范化 `\` 分隔符以兼容 macOS；设备连接后保留细分厂商与协议特征标签，不可覆盖为通用类别；分体/佩戴检测类设备（如 Sony INZONE Buds）不得因瞬时轮询未返回就误判为休眠。
+- CI 若在子目录执行 `git init`（如 `dist-assets`），必须在该子仓库目录内设置 `git config user.name` 与 `user.email`（或使用 `--global`）。
 
-## WinUI 3 与运行环境约定
-- `GearDeck.App` 未引用 `Microsoft.Win32.SystemEvents`：监听系统睡眠/唤醒事件请直接在 `TrayIconService.WindowProc` 处理 `WM_POWERBROADCAST`（`0x0218`），不要为此新增 NuGet 依赖。
-- 本地编译进程处理：在编译 `GearDeck.App` / `GearDeck.Widget` 前，先检查是否有正在运行的 `GearDeck.App` / `GearDeck.Widget` 进程并记录此前是否处于启动状态（以及可执行路径与参数），随后结束对应进程避免 DLL 锁文件；编译成功后，若编译前处于启动状态则启动新编译出的对应进程，若编译前未启动则保持关闭不管。仅在确认终端与桌面 `Shell_TrayWnd` 隔离时，测试完再清理并提示用户在桌面端启动。
+## 跨平台（Avalonia）与运行环境约定
+- 当前工程结构为 `GearDeck.Core`、`GearDeck.Desktop`（Avalonia 跨平台主程序）、`GearDeck.Widget`（Windows 任务栏纯 Win32 挂件），已废弃旧 `GearDeck.App`。
+- MSBuild 跨项目触发子构建（如 `CopyWidget`）需附带 `Exists('..\...\obj\project.assets.json')` 条件，避免仅 restore 单个测试项目时 `--no-restore` 失败。
+- 本地编译进程处理：在编译 `GearDeck.Desktop` / `GearDeck.Widget` 前，先检查并记录运行中的 `GearDeck.Desktop` / `GearDeck.Widget` 进程（路径与参数），随后结束对应进程避免 DLL 锁文件；编译后仅当编译前处于启动状态且终端可访问桌面 `Shell_TrayWnd`（通过 `FindWindow("Shell_TrayWnd", null) != 0` 确认，不能仅凭 `SessionId` 判断）时重启新产物，若与桌面隔离则在测试后清理进程并提示用户在桌面端启动。
 
 ## 变更验证基线
+- 解决方案编译：`dotnet restore GearDeck.slnx /p:NuGetAudit=false && dotnet build GearDeck.slnx -c Release --no-restore /p:NuGetAudit=false`
 - 单元测试：`dotnet test tests\GearDeck.Tests\GearDeck.Tests.csproj -c Release --no-restore`
-- 主程序编译：`MSBuild.exe src\GearDeck.App\GearDeck.App.csproj /t:Build /p:Configuration=Release /p:Platform=x64`（视需要补充 `Debug|x64`）
-- 涉及 `GearDeck.Widget` 改动时，额外运行 `--render-test` 与 `--window-test` 确认返回码 `0`。
+- 涉及 `GearDeck.Widget` 改动时，因目标为 `WinExe`，在 PowerShell 中必须用 `Start-Process ... -Wait -PassThru -NoNewWindow` 同步执行 `--render-test`（浅色与 `--dark`）及 `--window-test`，确认退出码 `0` 且输出 PNG 非空；若改动原生清单或 DPI 逻辑，还需校验产物内嵌 `PerMonitorV2`。

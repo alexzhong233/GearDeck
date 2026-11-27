@@ -28,7 +28,7 @@
                 <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
                     <TextBlock Text="设置" FontSize="26" FontWeight="SemiBold" />
                     <TextBlock Classes="meta"
-                               Text="设备轮询、前台游戏监测、低电量提醒、托盘常驻、云端图库与 GitHub 更新通道。数值项修改后点击「保存设置」生效。" />
+                               Text="设备轮询、低电量提醒、托盘常驻、云端图库、GitHub 更新与调试模式。数值项修改后点击「保存设置」生效。" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="16,0,0,0" VerticalAlignment="Center">
                     <TextBlock x:Name="SavedHintText" Classes="meta" VerticalAlignment="Center" />
@@ -39,28 +39,39 @@
             <Grid x:Name="CardsGrid" ColumnDefinitions="*,14,*" RowDefinitions="Auto,Auto">
                 <StackPanel x:Name="LeftColumnPanel" Grid.Row="0" Grid.Column="0" Spacing="14">
 
-                    <!-- 轮询间隔：Value 由代码在 _binding=true 时赋值，不在 AXAML 内联 -->
+                    <!-- 低电量与通知 -->
                     <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1" CornerRadius="10" Padding="18">
                         <StackPanel Spacing="12">
-                            <TextBlock Classes="cardTitle" Text="轮询间隔" />
-                            <Grid ColumnDefinitions="*,12,*">
-                                <ui:NumberBox x:Name="PollIntervalBox" Grid.Column="0"
-                                              Header="HID 设备轮询（秒，5~300）"
-                                              Maximum="300" Minimum="5"
-                                              SmallChange="5" LargeChange="15"
-                                              SpinButtonPlacementMode="Compact"
-                                              HorizontalAlignment="Stretch" />
-                                <ui:NumberBox x:Name="GamePollIntervalBox" Grid.Column="2"
-                                              Header="前台游戏监测（毫秒，250~5000）"
-                                              Maximum="5000" Minimum="250"
-                                              SmallChange="100" LargeChange="250"
-                                              SpinButtonPlacementMode="Compact"
-                                              HorizontalAlignment="Stretch" />
-                            </Grid>
-                            <TextBlock Classes="meta"
-                                       Text="推荐默认：HID 15 秒；前台游戏 1000 毫秒（几乎零 CPU 占用）。修改后点击右上角「保存设置」生效。" />
+                            <TextBlock Classes="cardTitle" Text="低电量与通知" />
+                            <StackPanel Spacing="6">
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <TextBlock Text="全局低电量" VerticalAlignment="Center" />
+                                    <ui:NumberBox x:Name="LowBatteryThresholdBox"
+                                                  Width="124"
+                                                  Maximum="80" Minimum="5"
+                                                  SmallChange="1" LargeChange="5"
+                                                  SpinButtonPlacementMode="Inline"
+                                                  VerticalAlignment="Center" />
+                                    <TextBlock Text="%" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Classes="meta" Text="范围 5%~80%，单设备可在设备详情页单独覆写此阈值" />
+                            </StackPanel>
+                            <WrapPanel>
+                                <ToggleSwitch x:Name="GlobalLowBatNotifySwitch"
+                                              Content="全局低电量通知"
+                                              OnContent="开启" OffContent="关闭"
+                                              MinWidth="0" Margin="0,0,18,4" />
+                                <ToggleSwitch x:Name="NotifySwitch"
+                                              Content="配置切换通知"
+                                              OnContent="开启" OffContent="关闭"
+                                              MinWidth="0" Margin="0,0,18,4" />
+                                <ToggleSwitch x:Name="AutoYieldSwitch"
+                                              Content="官方驱动让位"
+                                              OnContent="开启" OffContent="关闭"
+                                              MinWidth="0" Margin="0,0,0,4" />
+                            </WrapPanel>
                         </StackPanel>
                     </Border>
 
@@ -88,24 +99,18 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- 云端图库与调试 -->
+                    <!-- Debug 调试模式（独立卡片 + 写盘警告） -->
                     <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1" CornerRadius="10" Padding="18">
-                        <StackPanel Spacing="12">
-                            <TextBlock Classes="cardTitle" Text="云端设备图库与调试" />
-                            <TextBox x:Name="CloudManifestUrlBox"
-                                     Watermark="自定义云端规则 JSON URL（可选；留空使用内置规则）" />
-                            <Grid ColumnDefinitions="*,Auto">
-                                <ToggleSwitch x:Name="DebugSwitch" Grid.Column="0"
-                                              Content="Debug 调试模式（显示「诊断」栏）"
-                                              OnContent="开启" OffContent="关闭"
-                                              MinWidth="0" VerticalAlignment="Center" />
-                                <Button x:Name="SyncCloudImagesBtn" Grid.Column="1"
-                                        Content="同步云端设备图片"
-                                        Margin="12,0,0,0" VerticalAlignment="Center" />
-                            </Grid>
-                            <TextBlock x:Name="ImageSyncHintText" Classes="meta" />
+                        <StackPanel Spacing="8">
+                            <TextBlock Classes="cardTitle" Text="Debug 调试模式" />
+                            <ToggleSwitch x:Name="DebugSwitch"
+                                          Content="开启调试模式（显示「诊断」栏）"
+                                          OnContent="开启" OffContent="关闭"
+                                          MinWidth="0" />
+                            <TextBlock Classes="meta"
+                                       Text="开启后会持续向本地磁盘写入详细诊断日志（diag.log / widget.log），可能会增加 SSD 读写与占用少许性能；仅在排查设备协议或异常问题时开启，日常无需开启。" />
                         </StackPanel>
                     </Border>
 
@@ -113,32 +118,42 @@
 
                 <StackPanel x:Name="RightColumnPanel" Grid.Row="0" Grid.Column="2" Spacing="14">
 
-                    <!-- 低电量与通知 -->
+                    <!-- 轮询间隔：Value 由代码在 _binding=true 时赋值，不在 AXAML 内联 -->
+                    <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="10" Padding="18">
+                        <StackPanel Spacing="10">
+                            <TextBlock Classes="cardTitle" Text="轮询间隔" />
+                            <StackPanel Spacing="6">
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <TextBlock Text="HID 设备轮询" VerticalAlignment="Center" />
+                                    <ui:NumberBox x:Name="PollIntervalBox"
+                                                  Width="124"
+                                                  Maximum="300" Minimum="5"
+                                                  SmallChange="1" LargeChange="15"
+                                                  SpinButtonPlacementMode="Inline"
+                                                  VerticalAlignment="Center" />
+                                    <TextBlock Text="秒" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Classes="meta" Text="范围 5~300 秒，推荐默认 15 秒；缩短可提高电量与状态刷新频率" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 云端设备图库 -->
                     <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                             BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1" CornerRadius="10" Padding="18">
                         <StackPanel Spacing="12">
-                            <TextBlock Classes="cardTitle" Text="低电量与通知" />
-                            <ui:NumberBox x:Name="LowBatteryThresholdBox"
-                                          Header="全局低电量阈值（%，5~80；单设备可在详情页单独调整）"
-                                          Maximum="80" Minimum="5"
-                                          SmallChange="1" LargeChange="5"
-                                          SpinButtonPlacementMode="Compact"
-                                          HorizontalAlignment="Stretch" />
-                            <WrapPanel>
-                                <ToggleSwitch x:Name="GlobalLowBatNotifySwitch"
-                                              Content="全局低电量通知"
-                                              OnContent="开启" OffContent="关闭"
-                                              MinWidth="0" Margin="0,0,18,4" />
-                                <ToggleSwitch x:Name="NotifySwitch"
-                                              Content="配置切换通知"
-                                              OnContent="开启" OffContent="关闭"
-                                              MinWidth="0" Margin="0,0,18,4" />
-                                <ToggleSwitch x:Name="AutoYieldSwitch"
-                                              Content="官方驱动让位"
-                                              OnContent="开启" OffContent="关闭"
-                                              MinWidth="0" Margin="0,0,0,4" />
-                            </WrapPanel>
+                            <TextBlock Classes="cardTitle" Text="云端设备图库" />
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBox x:Name="CloudManifestUrlBox" Grid.Column="0"
+                                         Watermark="自定义云端规则 JSON URL（可选；留空使用内置规则）" />
+                                <Button x:Name="SyncCloudImagesBtn" Grid.Column="1"
+                                        Content="同步云端设备图片"
+                                        Margin="10,0,0,0" VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock x:Name="ImageSyncHintText" Classes="meta" />
                         </StackPanel>
                     </Border>
 

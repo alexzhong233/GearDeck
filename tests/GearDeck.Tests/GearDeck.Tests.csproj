@@ -15,7 +15,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\..\src\GearDeck.Widget\WidgetLayoutRules.cs" Link="WidgetLayoutRules.cs" />
-    <Compile Include="..\..\src\GearDeck.Widget\SystemMetricsEngine.cs" Link="SystemMetricsEngine.cs" />
+    <Compile Include="..\..\src\Shared\SystemMetricsEngine.cs" Link="SystemMetricsEngine.cs" />
   </ItemGroup>
 </Project>
 

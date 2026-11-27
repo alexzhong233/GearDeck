@@ -115,20 +115,6 @@ public partial class WidgetView : UserControl
             App.Settings.Current.WidgetFlyoutOnHover = FlyoutHoverSwitch.IsChecked == true;
             SaveAndRefresh();
         };
-        AlignCombo.SelectionChanged += (_, _) =>
-        {
-            if (_binding) return;
-            bool previous = _binding;
-            _binding = true;
-            try
-            {
-                App.Settings.Current.WidgetAlignment = AlignCombo.SelectedIndex == 0 ? "left" : "right";
-                App.Settings.Current.WidgetOffsetX = 0;
-                SyncPositionControls();
-            }
-            finally { _binding = previous; }
-            SaveAndRefresh();
-        };
         OffsetSlider.ValueChanged += OnOffsetSliderChanged;
         OffsetBox.ValueChanged += (_, _) =>
         {
@@ -195,7 +181,6 @@ public partial class WidgetView : UserControl
             FlyoutHoverSwitch.IsChecked = s.WidgetFlyoutOnHover;
             MacTiledSwitch.IsChecked = s.MacStatusBarTiled;
             MacMetricsSwitch.IsChecked = s.MacStatusBarShowMetrics;
-            AlignCombo.SelectedIndex = s.WidgetAlignment == "left" ? 0 : 1;
             OffsetSlider.Value = Math.Clamp(s.WidgetOffsetX, -1200, 1200);
             OffsetBox.Value = s.WidgetOffsetX;
             HeightBox.Value = s.WidgetHeight;
@@ -208,7 +193,6 @@ public partial class WidgetView : UserControl
 
     private void SyncPositionControls()
     {
-        AlignCombo.SelectedIndex = App.Settings.Current.WidgetAlignment == "left" ? 0 : 1;
         int offset = App.Settings.Current.WidgetOffsetX;
         OffsetSlider.Value = Math.Clamp(offset, -1200, 1200);
         OffsetBox.Value = offset;
@@ -615,7 +599,7 @@ public partial class WidgetView : UserControl
 
     private Control BuildGroupCard(TaskbarGroupConfig cfg, int index, int total)
     {
-        var members = MembersOf(cfg.GroupId);
+        var members = TaskbarGroupHelper.GetMembers(cfg.GroupId, App.LastDevices);
         var border = new Border
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -668,7 +652,7 @@ public partial class WidgetView : UserControl
 
     private Control BuildGroupRow(TaskbarGroupConfig cfg, int index, int total)
     {
-        var members = MembersOf(cfg.GroupId);
+        var members = TaskbarGroupHelper.GetMembers(cfg.GroupId, App.LastDevices);
         var border = new Border
         {
             Background = ResolveBrush("CardBackgroundFillColorDefaultBrush", Brushes.Transparent),
@@ -968,20 +952,6 @@ public partial class WidgetView : UserControl
         (groups[index], groups[next]) = (groups[next], groups[index]);
         SaveAndRefresh();
         RebuildGroups();
-    }
-
-    private static List<PeripheralDevice> MembersOf(string groupId)
-    {
-        var all = App.LastDevices;
-        return groupId switch
-        {
-            "builtin:mouse" => all.Where(d => d.Kind == DeviceKind.Mouse).ToList(),
-            "builtin:keyboard" => all.Where(d => d.Kind == DeviceKind.Keyboard).ToList(),
-            "builtin:headset" => all.Where(d => d.Kind == DeviceKind.Headset).ToList(),
-            "builtin:controller" => all.Where(d => d.Kind == DeviceKind.Controller).ToList(),
-            _ => all.Where(d => App.Settings.Current.CustomGroups
-                .FirstOrDefault(g => g.Id == groupId)?.MemberIds.Contains(d.Id) == true).ToList(),
-        };
     }
 
     private void OnCreateGroup(object? sender, RoutedEventArgs e)

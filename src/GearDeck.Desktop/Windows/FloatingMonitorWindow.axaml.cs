@@ -27,6 +27,8 @@ public sealed partial class FloatingMonitorWindow : Window
     public FloatingMonitorWindow()
     {
         InitializeComponent();
+        if (Program.UseSoftwareRendering)
+            TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
         Title = "GearDeck Floating Monitor";
 
         var area = Screens.Primary?.WorkingArea ?? new PixelRect(0, 0, 1920, 1080);
