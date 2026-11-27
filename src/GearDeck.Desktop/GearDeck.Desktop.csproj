@@ -42,7 +42,8 @@
   <Target Name="CopyWidget" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <MSBuild Projects="..\GearDeck.Widget\GearDeck.Widget.csproj"
              Properties="Configuration=$(Configuration)"
-             Condition="'$(DesignTimeBuild)' != 'true' and Exists('..\GearDeck.Widget\obj\project.assets.json')" />
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishDir;PublishSingleFile"
+             Condition="'$(DesignTimeBuild)' != 'true' and '$(RuntimeIdentifier)' == '' and Exists('..\GearDeck.Widget\obj\project.assets.json')" />
     <PropertyGroup>
       <_WidgetOutDir Condition="Exists('..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\</_WidgetOutDir>
       <_WidgetOutDir Condition="'$(_WidgetOutDir)' == '' and Exists('..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\</_WidgetOutDir>

@@ -71,7 +71,9 @@ jobs:
         run: |
           $v = "${{ steps.ver.outputs.version }}"
           dotnet publish src\GearDeck.Desktop\GearDeck.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Version=$v -o publish\win-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet publish src\GearDeck.Widget\GearDeck.Widget.csproj -c Release -r win-x64 --self-contained true -p:Version=$v -o publish\win-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run GearDeck.Widget self-checks
         shell: pwsh
