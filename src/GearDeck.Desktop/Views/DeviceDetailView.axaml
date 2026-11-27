@@ -1,0 +1,546 @@
+<UserControl
+    x:Class="GearDeck.Desktop.Views.DeviceDetailView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:FluentAvalonia.UI.Controls"
+    x:CompileBindings="False">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.subtle">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+        <Style Selector="Button.pill">
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+        </Style>
+        <Style Selector="Button.accent">
+            <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid x:Name="RootShellGrid" Margin="24,18,24,20"
+          RowDefinitions="Auto,*" ColumnDefinitions="284,*">
+
+        <!-- 顶部导航条 -->
+        <Grid Grid.Row="0" Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto">
+            <Button x:Name="BackBtn" VerticalAlignment="Center" ToolTip.Tip="返回设备总览">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="‹" FontSize="16" />
+                    <TextBlock Text="设备总览" />
+                </StackPanel>
+            </Button>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                <TextBlock x:Name="SubtitleText" Text="外设详情" FontSize="12" Classes="subtle"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="TitleText" Text="设备名称" FontSize="22" FontWeight="SemiBold"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <TextBlock x:Name="BusyText" Text="读取中…" FontSize="12" Classes="subtle" IsVisible="False" />
+                <Button x:Name="ReadCapsBtn" Content="重新读取设备参数" />
+            </StackPanel>
+        </Grid>
+
+        <!-- 左侧硬件 Hero 栏 -->
+        <ScrollViewer x:Name="LeftHeroPane" Grid.Row="1" Grid.Column="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="12">
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="12" Padding="16">
+                    <StackPanel Spacing="14">
+                        <Border Height="196" CornerRadius="10"
+                                Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1">
+                            <Grid x:Name="AvatarHost" Margin="12" />
+                        </Border>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock x:Name="StateText" Text="已连接" FontSize="14" FontWeight="SemiBold" />
+                            <TextBlock x:Name="BatteryText" Text="" FontSize="18" FontWeight="Bold"
+                                       Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                            <TextBlock x:Name="NoteText" Text="" Classes="subtle" />
+                        </StackPanel>
+
+                        <StackPanel Spacing="8">
+                            <Button x:Name="LocalDriverBtn" HorizontalAlignment="Stretch" IsVisible="False">
+                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                                    <TextBlock Text="⚙" FontSize="13" />
+                                    <TextBlock x:Name="LocalDriverBtnText" Text="打开本地驱动" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="WebDriverBtn" HorizontalAlignment="Stretch" IsVisible="False">
+                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                                    <TextBlock Text="↗" FontSize="13" />
+                                    <TextBlock x:Name="WebDriverBtnText" Text="打开网页驱动" />
+                                </StackPanel>
+                            </Button>
+                            <Grid ColumnDefinitions="*,*">
+                                <Button x:Name="PickImageBtn" Grid.Column="0" Content="更换设备图"
+                                        HorizontalAlignment="Stretch" Click="OnPickDeviceImage" />
+                                <Button x:Name="PinTaskbarBtn" Grid.Column="1" Content="固定到任务栏"
+                                        HorizontalAlignment="Stretch" Click="OnPinToTaskbar" />
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- 硬件状态概览 -->
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="12" Padding="14">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="硬件状态概览" FontSize="15" FontWeight="SemiBold" />
+                        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto">
+                            <Border Grid.Row="0" Grid.Column="0" Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="电量 / 充电" FontSize="11" Classes="subtle" />
+                                    <TextBlock x:Name="OverviewBatteryText" Text="-" FontSize="14" FontWeight="SemiBold"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="0" Grid.Column="1" Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="DPI / 回报率" FontSize="11" Classes="subtle" />
+                                    <TextBlock x:Name="OverviewPerfText" Text="-" FontSize="14" FontWeight="SemiBold"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                    Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="8" Padding="10">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="协议与特征" FontSize="11" Classes="subtle" />
+                                    <TextBlock x:Name="OverviewProtocolText" Text="-" FontSize="12" FontWeight="SemiBold"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 单设备低电量提醒设置 -->
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="12" Padding="14">
+                    <StackPanel Spacing="8">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Text="低电量提醒设置" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <TextBlock x:Name="DeviceLowBatStateText" Grid.Column="1" Text="默认 20%" FontSize="11"
+                                       Classes="subtle" VerticalAlignment="Center" />
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" Spacing="14">
+                            <CheckBox x:Name="DeviceLowBatEnableChk" Content="启用提醒" MinWidth="0"
+                                      IsCheckedChanged="OnDeviceLowBatCheckChanged" />
+                            <CheckBox x:Name="DeviceLowBatNotifyChk" Content="弹窗通知" MinWidth="0"
+                                      IsCheckedChanged="OnDeviceLowBatCheckChanged" />
+                        </StackPanel>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <ui:NumberBox x:Name="DeviceLowBatThresholdBox" Grid.Column="0" Header="独立阈值 (%)"
+                                          Maximum="80" Minimum="5" />
+                            <Button x:Name="DeviceLowBatResetBtn" Grid.Column="1" Content="默认 20%"
+                                    VerticalAlignment="Bottom" Padding="10,5" FontSize="12"
+                                    ToolTip.Tip="恢复为默认 20% 低电量阈值" Click="OnDeviceLowBatReset" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 与原生驱动共存退让提示 -->
+                <Border x:Name="CoexistenceBanner" IsVisible="False"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="10" Padding="14">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="已自动退让控制权" FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock x:Name="CoexistenceText" Classes="subtle"
+                                   Text="检测到官方桌面驱动或网页驱动正在前台/刚启动，GearDeck 已暂停后台轮询以避免抢占。" />
+                        <Button x:Name="ResumeCoexistenceBtn" Content="立即恢复 GearDeck 同步" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- 右侧内容区 -->
+        <Grid x:Name="RightContentPane" Grid.Row="1" Grid.Column="1"
+              RowDefinitions="Auto,Auto,Auto,*">
+
+            <!-- 顶部配置文件快切栏 -->
+            <Border x:Name="TopProfileBarCard" Grid.Row="0" IsVisible="False"
+                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="14,10">
+                <StackPanel Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <TextBlock Text="配置文件" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <WrapPanel x:Name="OnboardProfileButtonsPanel" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Button x:Name="ProbeAllSlotsBtn" Content="扫描板载槽位" Padding="10,5" FontSize="12"
+                                    IsVisible="False" Click="OnProbeAllOnboardSlots" />
+                            <StackPanel x:Name="HostModeCard" Orientation="Horizontal" Spacing="8"
+                                        IsVisible="False" VerticalAlignment="Center">
+                                <TextBlock Text="运行模式:" FontSize="12" Classes="subtle" VerticalAlignment="Center" />
+                                <ToggleSwitch x:Name="HostModeSwitch" OnContent="板载内存" OffContent="G HUB 宿主"
+                                              MinWidth="0" VerticalAlignment="Center"
+                                              IsCheckedChanged="OnHostModeToggled" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel x:Name="SavePresetSection" Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBox x:Name="SavePresetNameBox" Width="250"
+                                     Watermark="保存当前参数为快速预设（如：CS2 / 办公）" />
+                            <Button x:Name="SaveDevicePresetBtn" Content="保存预设" Classes="accent"
+                                    Click="OnSaveAsGamePreset" />
+                        </StackPanel>
+                        <WrapPanel x:Name="DeviceSavedPresetsPanel" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 分段标签导航条 -->
+            <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        HorizontalAlignment="Left">
+                <Button x:Name="TabPerfBtn" Content="性能" Classes="pill" />
+                <Button x:Name="TabButtonsBtn" Content="按键 &amp; RT" Classes="pill" />
+                <Button x:Name="TabAdvancedBtn" Content="高级" Classes="pill" />
+            </StackPanel>
+
+            <ui:InfoBar Grid.Row="2" x:Name="StatusInfoBar" IsOpen="False" IsClosable="True" />
+
+            <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="14" Margin="0,0,8,24">
+
+                    <!-- 兜底提示卡 -->
+                    <Border x:Name="FallbackCard" IsVisible="False"
+                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="10" Padding="18">
+                        <StackPanel Spacing="6">
+                            <TextBlock x:Name="FallbackTitle" FontSize="16" FontWeight="SemiBold" />
+                            <TextBlock x:Name="FallbackMessage" Classes="subtle" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- TAB 1: 性能 -->
+                    <StackPanel x:Name="PanelPerf" Spacing="14">
+                        <Border x:Name="DpiCard" IsVisible="False"
+                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="18">
+                            <StackPanel Spacing="14">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="DPI 档位与实时灵敏度" FontSize="17" FontWeight="SemiBold" />
+                                        <TextBlock x:Name="DpiSummaryText" Classes="subtle" />
+                                    </StackPanel>
+                                    <ToggleSwitch x:Name="SyncXySwitch" Grid.Column="1" Content="同步 X/Y 轴"
+                                                  IsChecked="True" IsVisible="False"
+                                                  IsCheckedChanged="OnSyncXyToggled" />
+                                </Grid>
+
+                                <StackPanel x:Name="DpiStagesSection" Spacing="8" IsVisible="False">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Text="当前设备 DPI 档位（点击切换，拖动滑块或输入数值实时下发）"
+                                                   Classes="subtle" VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                            <Button x:Name="AddStageBtn" Content="+ 增加档位" Click="OnAddStage" />
+                                            <Button x:Name="RemoveStageBtn" Content="- 减少档位" Click="OnRemoveStage" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <WrapPanel x:Name="DpiStagesPanel" />
+                                </StackPanel>
+
+                                <Grid ColumnDefinitions="Auto,*,Auto">
+                                    <TextBlock x:Name="DpiXLabel" Text="DPI:" VerticalAlignment="Center" MinWidth="44" />
+                                    <Slider x:Name="DpiXSlider" Grid.Column="1" Maximum="30000" Minimum="0"
+                                            ValueChanged="OnDpiXSliderChanged" PointerReleased="OnDpiSliderReleased" />
+                                    <ui:NumberBox x:Name="DpiXBox" Grid.Column="2" Width="138" Maximum="45000" Minimum="0" />
+                                </Grid>
+
+                                <Grid x:Name="DpiYSection" ColumnDefinitions="Auto,*,Auto"
+                                      IsVisible="False">
+                                    <TextBlock Text="Y 轴:" VerticalAlignment="Center" MinWidth="44" />
+                                    <Slider x:Name="DpiYSlider" Grid.Column="1" Maximum="30000" Minimum="0"
+                                            ValueChanged="OnDpiYSliderChanged" PointerReleased="OnDpiSliderReleased" />
+                                    <ui:NumberBox x:Name="DpiYBox" Grid.Column="2" Width="138" Maximum="45000" Minimum="0" />
+                                </Grid>
+
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="常用快捷键" Classes="subtle" />
+                                    <WrapPanel x:Name="DpiPresetsPanel" />
+                                </StackPanel>
+
+                                <TextBlock x:Name="DpiRangeHint" Classes="subtle" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="RateCard" IsVisible="False"
+                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="18">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="无线 / 有线回报率" FontSize="17" FontWeight="SemiBold" />
+                                <WrapPanel x:Name="RatePanel" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="ModeCard" IsVisible="False"
+                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="18">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="性能模式与传感器增强" FontSize="17" FontWeight="SemiBold" />
+                                <StackPanel x:Name="PerfModeSection" Spacing="6" IsVisible="False">
+                                    <WrapPanel x:Name="PerfModePanel" />
+                                    <TextBlock x:Name="PerfModeDescText" Classes="subtle" />
+                                </StackPanel>
+                                <WrapPanel>
+                                    <ToggleSwitch x:Name="MotionSyncSwitch" Content="Motion Sync" IsVisible="False"
+                                                  IsCheckedChanged="OnMotionSyncToggled" />
+                                    <ToggleSwitch x:Name="AngleSnapSwitch" Content="直线修正" IsVisible="False"
+                                                  IsCheckedChanged="OnAngleSnapToggled" />
+                                    <ToggleSwitch x:Name="RippleSwitch" Content="波纹控制" IsVisible="False"
+                                                  IsCheckedChanged="OnRippleToggled" />
+                                    <ToggleSwitch x:Name="LongRangeSwitch" Content="高刷竞技 / 远距离增强 (HP)"
+                                                  IsVisible="False" IsCheckedChanged="OnLongRangeToggled" />
+                                    <ToggleSwitch x:Name="WakeOnMoveSwitch" Content="移动唤醒" IsChecked="True" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- TAB 2: 按键 & RT -->
+                    <StackPanel x:Name="PanelButtons" Spacing="14" IsVisible="False">
+                        <Border x:Name="AnalogSwitchCard" IsVisible="False"
+                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="18">
+                            <StackPanel Spacing="16">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock x:Name="AnalogTechTitle" Text="HITS Tuning" FontSize="17"
+                                                   FontWeight="SemiBold" />
+                                        <TextBlock x:Name="AnalogModeDescText" Classes="subtle"
+                                                   Text="两个主按键：将相同数值实时应用到左右两个主微动" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                        <Button x:Name="AnalogLinkBothBtn" Content="两个按键" />
+                                        <Button x:Name="AnalogIndepBtn" Content="独立" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <StackPanel x:Name="AnalogVisualBarsPanel" Spacing="8" />
+                                <Border x:Name="AnalogPressTestPad"
+                                        Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1" CornerRadius="8" Padding="12,8"
+                                        PointerReleased="OnAnalogPressSample">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Text="在此区域按住左键 / 右键实时测试按压力度与 RT 动态触发"
+                                                   Classes="subtle" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="AnalogLiveStateText" Grid.Column="1" Text="待按压测试"
+                                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                    </Grid>
+                                </Border>
+
+                                <StackPanel x:Name="AnalogSideSelectorPanel" Orientation="Horizontal" Spacing="8"
+                                            IsVisible="False">
+                                    <Button x:Name="AnalogSelectLeftBtn" Content="左主按键 (Left)" />
+                                    <Button x:Name="AnalogSelectRightBtn" Content="右主按键 (Right)" />
+                                </StackPanel>
+
+                                <StackPanel Spacing="8">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <StackPanel>
+                                            <TextBlock Text="触发点" FontSize="14" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="AnalogActValueText" Classes="subtle"
+                                                       Text="1 次短按 — 10 次长按" />
+                                        </StackPanel>
+                                        <Slider x:Name="AnalogActSlider" Grid.Column="1" Width="210"
+                                                Maximum="10" Minimum="1" ValueChanged="OnAnalogActSliderChanged" />
+                                    </Grid>
+                                    <WrapPanel x:Name="AnalogActuationPanel" />
+                                </StackPanel>
+
+                                <StackPanel Spacing="8">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <StackPanel>
+                                            <TextBlock Text="Rapid Trigger" FontSize="14" FontWeight="SemiBold" />
+                                            <TextBlock Text="1 快 — 5 慢（动态抬起重置行程）" Classes="subtle" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                            <Button x:Name="AnalogRtOffBtn" Content="关" MinWidth="54" />
+                                            <Button x:Name="AnalogRtOnBtn" Content="开" MinWidth="54" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <WrapPanel x:Name="AnalogRtPanel" />
+                                </StackPanel>
+
+                                <StackPanel x:Name="AnalogHapSection" Spacing="8">
+                                    <StackPanel>
+                                        <TextBlock Text="点击触感 / 反馈" FontSize="14" FontWeight="SemiBold" />
+                                        <TextBlock Text="0 关闭 — 5 最大反馈（部分型号支持 0-100 无极调节）"
+                                                   Classes="subtle" />
+                                    </StackPanel>
+                                    <WrapPanel x:Name="AnalogHapDiscretePanel" />
+                                    <StackPanel x:Name="AnalogHapSliderPanel" Orientation="Horizontal" Spacing="12"
+                                                IsVisible="False">
+                                        <Button x:Name="AnalogHapOffBtn" Content="关" MinWidth="54" />
+                                        <Button x:Name="AnalogHapOnBtn" Content="开" MinWidth="54" />
+                                        <Slider x:Name="AnalogHapSlider" Width="220" Maximum="100" Minimum="0"
+                                                PointerReleased="OnAnalogSliderReleased"
+                                                ValueChanged="OnAnalogHapSliderChanged" />
+                                        <TextBlock x:Name="AnalogHapValueText" Text="50%" VerticalAlignment="Center"
+                                                   FontWeight="SemiBold" MinWidth="44" />
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <Button x:Name="ApplyAnalogBtn" Content="应用到两个按键" Classes="accent" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="MacroAndButtonsCard"
+                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="18">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="按键映射与快速绑宏" FontSize="17" FontWeight="SemiBold" />
+                                <TextBlock x:Name="MacroNoteText" Classes="subtle" />
+                                <StackPanel x:Name="ButtonBindingsSection" Spacing="8" IsVisible="False">
+                                    <TextBlock Text="板载按键重映射" FontSize="13" FontWeight="SemiBold" />
+                                    <StackPanel x:Name="ButtonBindingsPanel" Spacing="8" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <ComboBox x:Name="QuickMacroCombo" Width="220" />
+                                    <ComboBox x:Name="QuickMacroBtnCombo" Width="180" />
+                                    <Button x:Name="QuickEnrollMacroBtn" Content="绑定到本设备" Classes="accent"
+                                            VerticalAlignment="Bottom" Click="OnQuickEnrollMacro" />
+                                    <Button x:Name="OpenMacroHubBtn" Content="打开鼠标宏中心"
+                                            VerticalAlignment="Bottom" Click="OnOpenMacroHub" />
+                                </StackPanel>
+                                <StackPanel x:Name="DeviceMacroBindingsSummary" Spacing="6" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- TAB 3: 高级 -->
+                    <StackPanel x:Name="PanelAdvanced" Spacing="14" IsVisible="False">
+                        <Border x:Name="AdvancedCard" IsVisible="False"
+                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="18">
+                            <StackPanel Spacing="16">
+                                <TextBlock Text="静默高度、防抖与电源管理" FontSize="17" FontWeight="SemiBold" />
+
+                                <StackPanel x:Name="LodSection" Spacing="10" IsVisible="False">
+                                    <TextBlock Text="静默高度 (LOD)" FontSize="14" FontWeight="SemiBold" />
+                                    <WrapPanel x:Name="LodButtonsPanel" />
+                                    <Grid ColumnDefinitions="Auto,*,Auto">
+                                        <TextBlock Text="细腻高度调节:" Classes="subtle" VerticalAlignment="Center" />
+                                        <Slider x:Name="LodSlider" Grid.Column="1" Maximum="100" Minimum="0"
+                                                PointerReleased="OnLodSliderReleased"
+                                                ValueChanged="OnLodSliderChanged" />
+                                        <TextBlock x:Name="LodSliderValueText" Grid.Column="2" Text="-"
+                                                   VerticalAlignment="Center" FontWeight="SemiBold" MinWidth="88" />
+                                    </Grid>
+                                </StackPanel>
+
+                                <StackPanel x:Name="AsymLodSection" Spacing="10" IsVisible="False">
+                                    <ToggleSwitch x:Name="AsymLodSwitch"
+                                                  Content="启用非对称抬起/着陆高度 (Razer 0.1~2.5mm)"
+                                                  IsCheckedChanged="OnApplyAsymLod" />
+                                    <Grid ColumnDefinitions="Auto,*,Auto">
+                                        <TextBlock Text="抬起高度:" VerticalAlignment="Center" MinWidth="70" />
+                                        <Slider x:Name="AsymLiftSlider" Grid.Column="1" Maximum="26" Minimum="0" />
+                                        <TextBlock x:Name="AsymLiftText" Grid.Column="2" Text="-"
+                                                   VerticalAlignment="Center" MinWidth="54" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="Auto,*,Auto">
+                                        <TextBlock Text="着陆高度:" VerticalAlignment="Center" MinWidth="70" />
+                                        <Slider x:Name="AsymLandSlider" Grid.Column="1" Maximum="25" Minimum="0" />
+                                        <TextBlock x:Name="AsymLandText" Grid.Column="2" Text="-"
+                                                   VerticalAlignment="Center" MinWidth="54" />
+                                    </Grid>
+                                    <Button x:Name="ApplyAsymLodBtn" Content="应用非对称高度" HorizontalAlignment="Left"
+                                            Click="OnApplyAsymLod" />
+                                </StackPanel>
+
+                                <Grid x:Name="DebounceSection" ColumnDefinitions="Auto,*,Auto"
+                                      IsVisible="False">
+                                    <TextBlock Text="按键防抖延迟:" VerticalAlignment="Center" MinWidth="92" />
+                                    <Slider x:Name="DebounceSlider" Grid.Column="1" Maximum="30" Minimum="0"
+                                            PointerReleased="OnDebounceSliderReleased"
+                                            ValueChanged="OnDebounceSliderChanged" />
+                                    <TextBlock x:Name="DebounceValueText" Grid.Column="2" Text="0 ms"
+                                               VerticalAlignment="Center" MinWidth="54" />
+                                </Grid>
+
+                                <Grid x:Name="AngleTuningSection" ColumnDefinitions="Auto,*,Auto"
+                                      IsVisible="False">
+                                    <TextBlock Text="传感器角度校准:" VerticalAlignment="Center" MinWidth="104" />
+                                    <Slider x:Name="AngleSlider" Grid.Column="1" Maximum="100" Minimum="0"
+                                            PointerReleased="OnAngleSliderReleased"
+                                            ValueChanged="OnAngleSliderChanged" />
+                                    <TextBlock x:Name="AngleValueText" Grid.Column="2" Text="0°"
+                                               VerticalAlignment="Center" MinWidth="54" />
+                                </Grid>
+
+                                <StackPanel x:Name="DiscreteSleepSection" Spacing="8" IsVisible="False">
+                                    <TextBlock Text="休眠时间档位" FontSize="13" FontWeight="SemiBold" />
+                                    <WrapPanel x:Name="DiscreteSleepPanel" />
+                                </StackPanel>
+
+                                <Grid x:Name="SleepSection" ColumnDefinitions="Auto,*,Auto"
+                                      IsVisible="False">
+                                    <TextBlock Text="无操作休眠:" VerticalAlignment="Center" MinWidth="92" />
+                                    <Slider x:Name="SleepSlider" Grid.Column="1" Maximum="30" Minimum="0"
+                                            ValueChanged="OnSleepSliderChanged" />
+                                    <TextBlock x:Name="SleepValueText" Grid.Column="2" Text="5 min"
+                                               VerticalAlignment="Center" MinWidth="60" />
+                                </Grid>
+
+                                <Grid x:Name="LowBatWarnSection" ColumnDefinitions="Auto,*,Auto"
+                                      IsVisible="False">
+                                    <TextBlock Text="硬件低电告警:" VerticalAlignment="Center" MinWidth="92" />
+                                    <Slider x:Name="LowBatSlider" Grid.Column="1" Maximum="50" Minimum="0" />
+                                    <TextBlock x:Name="LowBatValueText" Grid.Column="2" Text="15%"
+                                               VerticalAlignment="Center" MinWidth="54" />
+                                </Grid>
+
+                                <StackPanel x:Name="LightingSection" Spacing="8" IsVisible="False">
+                                    <TextBlock Text="灯光调节" FontSize="14" FontWeight="SemiBold" />
+                                    <Grid ColumnDefinitions="Auto,*,Auto">
+                                        <TextBlock Text="灯效亮度:" VerticalAlignment="Center" MinWidth="92" />
+                                        <Slider x:Name="LightingSlider" Grid.Column="1" Maximum="100" Minimum="0"
+                                                IsEnabled="False" />
+                                        <TextBlock x:Name="LightingValueText" Grid.Column="2" Text="由官方驱动管理"
+                                                   VerticalAlignment="Center" MinWidth="100" />
+                                    </Grid>
+                                    <TextBlock x:Name="LightingNoteText" Classes="subtle"
+                                               Text="当前设备灯效由官方桌面/网页驱动调节；GearDeck 仅展示状态。" />
+                                </StackPanel>
+
+                                <TextBlock x:Name="LeobogReadOnlyText" Classes="subtle" IsVisible="False"
+                                           Text="LEOBOG Hi98C Pro 无线模式严格只读：仅显示板载配置，不可写入休眠/灯效；请切换 USB-C 有线模式后再调节。" />
+
+                                <Button x:Name="ApplyPowerBtn" Content="应用电源与省电参数" Classes="accent"
+                                        Click="OnApplyPower" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</UserControl>

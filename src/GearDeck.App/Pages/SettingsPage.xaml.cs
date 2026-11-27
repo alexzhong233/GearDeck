@@ -30,7 +30,8 @@ public sealed partial class SettingsPage : Page
         NotifySwitch.IsOn = App.Settings.Current.NotifyOnProfileSwitch;
         DebugSwitch.IsOn = App.Settings.Current.DebugModeEnabled;
         GlobalLowBatNotifySwitch.IsOn = App.Settings.Current.GlobalLowBatteryNotificationEnabled;
-        IntervalBox.Value = App.Settings.Current.PollIntervalSeconds;
+        IntervalBox.Value = Math.Clamp(App.Settings.Current.PollIntervalSeconds, 5, 300);
+        GamePollIntervalBox.Value = Math.Clamp(App.Settings.Current.GameAutoPollIntervalMs, 250, 5000);
         CloudManifestUrlBox.Text = App.Settings.Current.CustomCloudGalleryManifestUrl;
         CurrentVersionBadgeText.Text = $"当前版本 v{AppUpdateService.CurrentVersion}";
         AutoCheckUpdateSwitch.IsOn = App.Settings.Current.CheckUpdateOnStartup;
@@ -270,13 +271,17 @@ public sealed partial class SettingsPage : Page
         App.Settings.Current.NotifyOnProfileSwitch = NotifySwitch.IsOn;
         App.Settings.Current.DebugModeEnabled = DebugSwitch.IsOn;
         App.Settings.Current.GlobalLowBatteryNotificationEnabled = GlobalLowBatNotifySwitch.IsOn;
-        App.Settings.Current.PollIntervalSeconds = (int)IntervalBox.Value;
+        int hidSec = double.IsNaN(IntervalBox.Value) ? 15 : Math.Clamp((int)Math.Round(IntervalBox.Value), 5, 300);
+        int gameMs = double.IsNaN(GamePollIntervalBox.Value) ? 1000 : Math.Clamp((int)Math.Round(GamePollIntervalBox.Value), 250, 5000);
+        App.Settings.Current.PollIntervalSeconds = hidSec;
+        App.Settings.Current.GameAutoPollIntervalMs = gameMs;
         App.Settings.Current.CheckUpdateOnStartup = AutoCheckUpdateSwitch.IsOn;
         App.Settings.Current.GitHubMirrorUrl = GitHubMirrorBox.Text?.Trim() ?? "";
         App.Settings.Save();
         var (startupOk, startupDetail) = SettingsService.ApplyStartupRegistry(StartupSwitch.IsOn);
         MainWindow.Instance?.UpdateDebugVisibility();
         App.Devices.Start(App.Settings.Current.PollIntervalSeconds);
+        App.GameAuto?.UpdatePollInterval(App.Settings.Current.GameAutoPollIntervalMs);
         App.RefreshWidget();
         SavedHintText.Text = startupOk
             ? $"已保存 ({DateTime.Now:HH:mm:ss})"

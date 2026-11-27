@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -35,9 +36,10 @@ public sealed class GameProfileAutoService : IDisposable
 
     private static readonly IReadOnlyDictionary<string, string> EmptyTargets = new Dictionary<string, string>();
     private readonly SemaphoreSlim _applyLock = new(1, 1);
-    private readonly Dictionary<string, string> _lastAppliedByDevice = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _lastOutcomeByDevice = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, (int? OnboardSlot, bool? WasHostMode, MouseHardwarePreset? Preset, bool SwitchedViaOnboardSlot)> _preEntrySnapshots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _awakeLock = new();
+    private readonly ConcurrentDictionary<string, string> _lastAppliedByDevice = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _lastOutcomeByDevice = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (int? OnboardSlot, bool? WasHostMode, MouseHardwarePreset? Preset, bool SwitchedViaOnboardSlot)> _preEntrySnapshots = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _lastAwakeMouseIds = new(StringComparer.OrdinalIgnoreCase);
     private Timer? _timer;
     private int _ticking;
@@ -69,7 +71,15 @@ public sealed class GameProfileAutoService : IDisposable
     public void Start()
     {
         App.Devices.DevicesUpdated += OnDevicesUpdated;
-        _timer ??= new Timer(_ => _ = PollAsync(force: false), null, 1200, 350);
+        int intervalMs = Math.Clamp(App.Settings.Current.GameAutoPollIntervalMs, 250, 5000);
+        _timer ??= new Timer(_ => _ = PollAsync(force: false), null, 1200, intervalMs);
+    }
+
+    public void UpdatePollInterval(int intervalMs)
+    {
+        if (_disposed) return;
+        int clamped = Math.Clamp(intervalMs, 250, 5000);
+        _timer?.Change(clamped, clamped);
     }
 
     public void ClearAppliedCache()
@@ -106,15 +116,19 @@ public sealed class GameProfileAutoService : IDisposable
             .Select(d => d.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var newlyWoken = currentAwake.Where(id => !_lastAwakeMouseIds.Contains(id)).ToList();
-        _lastAwakeMouseIds.Clear();
-        foreach (string id in currentAwake)
-            _lastAwakeMouseIds.Add(id);
+        List<string> newlyWoken;
+        lock (_awakeLock)
+        {
+            newlyWoken = currentAwake.Where(id => !_lastAwakeMouseIds.Contains(id)).ToList();
+            _lastAwakeMouseIds.Clear();
+            foreach (string id in currentAwake)
+                _lastAwakeMouseIds.Add(id);
+        }
 
         if (newlyWoken.Count > 0)
         {
             foreach (string id in newlyWoken)
-                _lastAppliedByDevice.Remove(id);
+                _lastAppliedByDevice.TryRemove(id, out _);
 
             if (App.Settings.Current.AutoSwitchEnabled &&
                 _lastResolution is { Reason: not ActiveSwitchReason.None } res)
@@ -353,7 +367,7 @@ public sealed class GameProfileAutoService : IDisposable
 
                     if (parsed.KeepCurrent)
                     {
-                        _preEntrySnapshots.Remove(deviceId);
+                        _preEntrySnapshots.TryRemove(deviceId, out _);
                         continue;
                     }
 
@@ -402,15 +416,15 @@ public sealed class GameProfileAutoService : IDisposable
 
                     if (update == null)
                     {
-                        _preEntrySnapshots.Remove(deviceId);
+                        _preEntrySnapshots.TryRemove(deviceId, out _);
                         continue;
                     }
 
                     var result = await App.Devices.ApplySettingsAsync(deviceId, update);
                     if (result.Success && (result.Capabilities == null || result.Capabilities.IsOnline))
                     {
-                        _preEntrySnapshots.Remove(deviceId);
-                        _lastAppliedByDevice.Remove(deviceId);
+                        _preEntrySnapshots.TryRemove(deviceId, out _);
+                        _lastAppliedByDevice.TryRemove(deviceId, out _);
                         _lastOutcomeByDevice[deviceId] = $"{DateTime.Now:HH:mm:ss} 已恢复 → {desc}";
                         switchedNotifications.Add((dev.Name, desc));
                     }

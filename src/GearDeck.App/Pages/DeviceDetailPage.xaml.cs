@@ -1483,23 +1483,36 @@ public sealed partial class DeviceDetailPage : Page
         var macro = App.Settings.Current.Macros.FirstOrDefault(m => m.Id == macroId);
         if (macro == null || macro.Steps.Count == 0) return;
 
-        string triggerKey = (QuickMacroBtnCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "XButton1";
-        if (_caps is { IsOnline: true, SupportsOnboardMacroUpload: true })
+        var btn = sender as Button;
+        if (btn != null) btn.IsEnabled = false;
+        try
         {
-            int wireSlot = triggerKey switch { "Middle" => 3, "XButton2" => 5, _ => 4 };
-            var res = await App.Devices.ApplySettingsAsync(_deviceId, new DeviceTuningUpdate
+            string triggerKey = (QuickMacroBtnCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "XButton1";
+            if (_caps is { IsOnline: true, SupportsOnboardMacroUpload: true })
             {
-                UploadMacro = (0, wireSlot, macro),
-            });
-            ShowStatus(res.Message, res.Success ? InfoBarSeverity.Success : InfoBarSeverity.Error);
-            return;
-        }
+                int wireSlot = triggerKey switch { "Middle" => 3, "XButton2" => 5, _ => 4 };
+                var res = await App.Devices.ApplySettingsAsync(_deviceId, new DeviceTuningUpdate
+                {
+                    UploadMacro = (0, wireSlot, macro),
+                });
+                ShowStatus(res.Message, res.Success ? InfoBarSeverity.Success : InfoBarSeverity.Error);
+                return;
+            }
 
-        App.Settings.Current.LocalButtonMacroBindings[$"{_deviceId}|{triggerKey}"] = macro.Id;
-        App.Settings.Save();
-        App.MacroRunner?.SyncHookState();
-        RefreshDeviceMacroBindingsSummary();
-        ShowStatus($"已将宏「{macro.Name}」绑定到本设备的 {triggerKey} 按键。", InfoBarSeverity.Success);
+            App.Settings.Current.LocalButtonMacroBindings[$"{_deviceId}|{triggerKey}"] = macro.Id;
+            App.Settings.Save();
+            App.MacroRunner?.SyncHookState();
+            RefreshDeviceMacroBindingsSummary();
+            ShowStatus($"已将宏「{macro.Name}」绑定到本设备的 {triggerKey} 按键。", InfoBarSeverity.Success);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"绑定宏失败：{ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            if (btn != null) btn.IsEnabled = true;
+        }
     }
 
     private void OnOpenMacroHub(object sender, RoutedEventArgs e)

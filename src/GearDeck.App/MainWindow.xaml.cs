@@ -66,6 +66,7 @@ public sealed partial class MainWindow : Window
         Type startPage = start switch
         {
             "games" => typeof(GamesPage),
+            "sensitivity" => typeof(SensitivityPage),
             "macros" => typeof(MacrosPage),
             "widget" => typeof(WidgetPage),
             "monitor" => typeof(MonitorPage),
@@ -223,6 +224,7 @@ public sealed partial class MainWindow : Window
     {
         _suppressNavHandler = true;
         Nav.SelectedItem = pageType == typeof(GamesPage) ? GamesNav
+            : pageType == typeof(SensitivityPage) ? SensitivityNav
             : pageType == typeof(MacrosPage) ? MacrosNav
             : pageType == typeof(WidgetPage) ? WidgetNav
             : pageType == typeof(MonitorPage) ? MonitorNav
@@ -238,6 +240,7 @@ public sealed partial class MainWindow : Window
         {
             new("设备总览", "页面", "page:devices"),
             new("游戏与配置切换", "本机游戏库 / 全屏与退出策略", "page:games"),
+            new("跨游戏灵敏度换算", "16 款热门 FPS · FOV / DPI / 分辨率转换", "page:sensitivity"),
             new("鼠标宏中心", "外置宏录制与多设备绑定", "page:macros"),
             new("任务栏贴片", "贴片位置 / 样式 / 分组图标", "page:widget"),
             new("系统监控", "CPU / GPU / 内存 / 网速监测", "page:monitor"),
@@ -298,6 +301,7 @@ public sealed partial class MainWindow : Window
         Type? page = target.TargetKey switch
         {
             "page:games" => typeof(GamesPage),
+            "page:sensitivity" => typeof(SensitivityPage),
             "page:macros" => typeof(MacrosPage),
             "page:widget" => typeof(WidgetPage),
             "page:monitor" => typeof(MonitorPage),
@@ -589,6 +593,7 @@ public sealed partial class MainWindow : Window
         {
             "devices" => typeof(DevicesPage),
             "games" => typeof(GamesPage),
+            "sensitivity" => typeof(SensitivityPage),
             "macros" => typeof(MacrosPage),
             "widget" => typeof(WidgetPage),
             "monitor" => typeof(MonitorPage),

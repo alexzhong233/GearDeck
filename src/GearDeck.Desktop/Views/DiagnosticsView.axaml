@@ -1,0 +1,72 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="GearDeck.Desktop.Views.DiagnosticsView"
+             x:CompileBindings="False">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="16">
+
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto">
+            <TextBlock Text="诊断"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center" />
+            <Button Grid.Column="1" Content="刷新日志" Click="OnRefreshLogClick" Margin="0,0,8,0" />
+            <Button Grid.Column="2" Content="复制日志" Click="OnCopyLogClick" Margin="0,0,8,0" />
+            <Button Grid.Column="3" Content="打开日志目录" Click="OnOpenLogDirClick" />
+        </Grid>
+
+        <StackPanel Grid.Row="1" Margin="0,12,0,0" Spacing="4">
+            <TextBlock x:Name="PlatformInfo" FontSize="12" Opacity="0.8" TextWrapping="Wrap" />
+            <TextBlock x:Name="ActionHintText" FontSize="12" Opacity="0.8" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <Border x:Name="SnapshotCard"
+                Grid.Row="2"
+                Margin="0,12,0,0"
+                Padding="12"
+                CornerRadius="6"
+                Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1">
+            <StackPanel Spacing="6">
+                <TextBlock Text="环境变量 / 已加载驱动快照" FontSize="13" FontWeight="SemiBold" />
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                              VerticalScrollBarVisibility="Auto"
+                              MaxHeight="180">
+                    <SelectableTextBlock x:Name="SnapshotText"
+                                         FontFamily="Consolas,Menlo,Monaco,monospace"
+                                         FontSize="12"
+                                         TextWrapping="Wrap" />
+                </ScrollViewer>
+            </StackPanel>
+        </Border>
+
+        <Border x:Name="MacPermissionNotice"
+                Grid.Row="3"
+                IsVisible="False"
+                Margin="0,12,0,0"
+                Padding="12"
+                CornerRadius="6"
+                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1">
+            <TextBlock FontSize="12"
+                       TextWrapping="Wrap"
+                       Text="macOS 需在「系统设置 → 隐私与安全性 → 输入监控」以及「辅助功能」中授权 GearDeck，否则无法读取按键状态或发送输入事件。" />
+        </Border>
+
+        <Border Grid.Row="4"
+                Margin="0,12,0,0"
+                Padding="12"
+                CornerRadius="6"
+                Background="{DynamicResource SubtleFillColorSecondaryBrush}">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
+                <SelectableTextBlock x:Name="LogText"
+                                     FontFamily="Consolas,Menlo,Monaco,monospace"
+                                     FontSize="12"
+                                     TextWrapping="NoWrap" />
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</UserControl>

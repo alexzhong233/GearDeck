@@ -702,11 +702,24 @@ public sealed partial class GamesPage : Page
             ShowStatus("请先在上方至少为一台外设选择目标板载槽位、预设或保持当前不变。", InfoBarSeverity.Warning);
             return;
         }
-        EnsureActiveRulePersisted();
-        App.Settings.Save();
-        await App.GameAuto.ApplyRuleManuallyAsync(_activeRule);
-        UpdateStatusBanner();
-        ShowStatus($"已向在线设备套用「{_activeRule.Name}」专属配置。", InfoBarSeverity.Success);
+        var btn = sender as Button;
+        if (btn != null) btn.IsEnabled = false;
+        try
+        {
+            EnsureActiveRulePersisted();
+            App.Settings.Save();
+            await App.GameAuto.ApplyRuleManuallyAsync(_activeRule);
+            UpdateStatusBanner();
+            ShowStatus($"已向在线设备套用「{_activeRule.Name}」专属配置。", InfoBarSeverity.Success);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"套用游戏配置失败：{ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            if (btn != null) btn.IsEnabled = true;
+        }
     }
 
     private void OnExclusiveReset(object sender, RoutedEventArgs e)
@@ -928,9 +941,22 @@ public sealed partial class GamesPage : Page
     private async void OnForceReevaluate(object sender, RoutedEventArgs e)
     {
         if (App.GameAuto == null) return;
-        await App.GameAuto.ForceReevaluateAsync();
-        UpdateStatusBanner();
-        ShowStatus("已完成前台窗口检测并按策略向已唤醒外设执行对应配置。", InfoBarSeverity.Informational);
+        var btn = sender as Button;
+        if (btn != null) btn.IsEnabled = false;
+        try
+        {
+            await App.GameAuto.ForceReevaluateAsync();
+            UpdateStatusBanner();
+            ShowStatus("已完成前台窗口检测并按策略向已唤醒外设执行对应配置。", InfoBarSeverity.Informational);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"重新检测前台窗口失败：{ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            if (btn != null) btn.IsEnabled = true;
+        }
     }
 
     private List<TargetOption> BuildTargetOptionsForDevice(

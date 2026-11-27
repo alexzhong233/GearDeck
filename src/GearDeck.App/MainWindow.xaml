@@ -87,6 +87,9 @@
                 <NavigationViewItem x:Name="GamesNav" Content="游戏与配置切换" Tag="games">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE7FC;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem x:Name="SensitivityNav" Content="灵敏度换算" Tag="sensitivity">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE8EF;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
                 <NavigationViewItem x:Name="MacrosNav" Content="鼠标宏中心" Tag="macros">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE945;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>

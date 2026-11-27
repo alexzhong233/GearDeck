@@ -1,0 +1,156 @@
+<UserControl
+    x:Class="GearDeck.Desktop.Views.SettingsView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:FluentAvalonia.UI.Controls"
+    x:CompileBindings="False">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.meta">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+        <Style Selector="TextBlock.cardTitle">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24,18,24,28" Spacing="14">
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="设置" FontSize="26" FontWeight="SemiBold" />
+                <TextBlock Classes="meta"
+                           Text="设备轮询、前台游戏监测、低电量提醒、托盘常驻、云端图库与 GitHub 更新通道。数值项修改后点击「保存设置」生效。" />
+            </StackPanel>
+
+            <!-- 轮询间隔：Value 由代码在 _binding=true 时赋值，不在 AXAML 内联 -->
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="12">
+                    <TextBlock Classes="cardTitle" Text="轮询间隔" />
+                    <ui:NumberBox x:Name="PollIntervalBox"
+                                  Header="HID 设备轮询间隔（秒，5~300）"
+                                  Maximum="300" Minimum="5"
+                                  SmallChange="5" LargeChange="15"
+                                  SpinButtonPlacementMode="Compact" Width="260" />
+                    <ui:NumberBox x:Name="GamePollIntervalBox"
+                                  Header="前台游戏监测间隔（毫秒，250~5000）"
+                                  Maximum="5000" Minimum="250"
+                                  SmallChange="100" LargeChange="250"
+                                  SpinButtonPlacementMode="Compact" Width="280" />
+                    <TextBlock Classes="meta"
+                               Text="推荐默认：HID 15 秒（平衡电量与唤醒同步）；前台游戏 1000 毫秒（足够灵敏且几乎零 CPU 占用）。保存后立即生效。" />
+                </StackPanel>
+            </Border>
+
+            <!-- 低电量与通知 -->
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="12">
+                    <TextBlock Classes="cardTitle" Text="低电量与通知" />
+                    <ui:NumberBox x:Name="LowBatteryThresholdBox"
+                                  Header="全局低电量阈值（%，5~80；单设备可在设备详情页单独调整）"
+                                  Maximum="80" Minimum="5"
+                                  SmallChange="1" LargeChange="5"
+                                  SpinButtonPlacementMode="Compact" Width="260" />
+                    <ToggleSwitch x:Name="GlobalLowBatNotifySwitch"
+                                  Content="全局设备低电量通知提醒"
+                                  OnContent="开启低电量通知提醒" OffContent="全局暂停低电量提醒" />
+                    <ToggleSwitch x:Name="NotifySwitch"
+                                  Content="配置切换原生通知"
+                                  OnContent="开启切换通知" OffContent="关闭通知" />
+                    <ToggleSwitch x:Name="AutoYieldSwitch"
+                                  Content="厂商驱动自动让位"
+                                  OnContent="检测到官方驱动时自动暂停 HID 轮询" OffContent="始终由 GearDeck 接管 HID" />
+                </StackPanel>
+            </Border>
+
+            <!-- 窗口与托盘 -->
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="12">
+                    <TextBlock Classes="cardTitle" Text="窗口与托盘" />
+                    <ToggleSwitch x:Name="CloseToTraySwitch"
+                                  Content="关闭主窗口后常驻系统托盘"
+                                  OnContent="最小化到托盘继续运行" OffContent="直接退出整个程序" />
+                    <ToggleSwitch x:Name="LaunchMinimizedSwitch"
+                                  Content="启动时最小化到托盘"
+                                  OnContent="后台静默启动" OffContent="显示主窗口" />
+                    <ToggleSwitch x:Name="StartupSwitch"
+                                  Content="开机自动启动"
+                                  OnContent="开机静默常驻托盘" OffContent="手动启动" />
+                    <TextBlock x:Name="StartupHintText" Classes="meta" />
+                </StackPanel>
+            </Border>
+
+            <!-- 云端图库与调试 -->
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="12">
+                    <TextBlock Classes="cardTitle" Text="云端设备图库与调试" />
+                    <TextBlock Classes="meta"
+                               Text="自定义云端规则 / 图库 JSON URL（可选，支持 GitHub / jsDelivr 直链）；留空使用内置规则。" />
+                    <TextBox x:Name="CloudManifestUrlBox"
+                             Watermark="例如：https://cdn.jsdelivr.net/gh/用户名/仓库@main/device-images.json" />
+                    <ToggleSwitch x:Name="DebugSwitch"
+                                  Content="Debug 调试模式（显示「诊断」栏）"
+                                  OnContent="已开启（左侧显示「诊断」页）" OffContent="已隐藏诊断页" />
+                    <Button x:Name="SyncCloudImagesBtn" Content="保存并同步云端设备图片" HorizontalAlignment="Left" />
+                    <TextBlock x:Name="ImageSyncHintText" Classes="meta" />
+                </StackPanel>
+            </Border>
+
+            <!-- 在线更新与镜像 -->
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="12">
+                    <TextBlock Classes="cardTitle" Text="在线更新与 GitHub 镜像" />
+                    <TextBlock Classes="meta"
+                               Text="支持一键检测新版本、自动校验 SHA-256 并热替换重启升级；可配置自定义镜像加速检测与下载。" />
+                    <TextBox x:Name="RepoSlugBox" Watermark="更新仓库 Slug，例如 alexzhong233/GearDeck" />
+                    <ToggleSwitch x:Name="AutoCheckUpdateSwitch"
+                                  Content="启动时自动检查更新"
+                                  OnContent="启动后静默检查新版本" OffContent="仅手动点击检查" />
+                    <TextBox x:Name="GitHubMirrorBox"
+                             Watermark="留空直连，例如 https://ghfast.top/ 或 https://example.com/{url}" />
+                    <WrapPanel>
+                        <Button x:Name="ClearMirrorBtn" Content="直连 GitHub（清空）" Margin="0,0,6,6" />
+                        <Button x:Name="GhfastMirrorBtn" Content="填入 ghfast.top" Margin="0,0,6,6" />
+                        <Button x:Name="GhProxyMirrorBtn" Content="填入 gh-proxy.com" Margin="0,0,6,6" />
+                        <Button x:Name="SaveMirrorBtn" Content="保存镜像设置" Margin="0,0,6,6" />
+                    </WrapPanel>
+                    <WrapPanel>
+                        <Button x:Name="CheckUpdateBtn" Content="立即检查更新" Margin="0,0,6,6" />
+                        <Button x:Name="DownloadUpdateBtn" Content="立即下载并更新重启" IsVisible="False" Margin="0,0,6,6" />
+                        <Button x:Name="OpenReleasesBtn" Content="打开 GitHub Releases" Margin="0,0,6,6" />
+                    </WrapPanel>
+                    <ProgressBar x:Name="UpdateProgressBar" Maximum="100" Minimum="0"
+                                 Height="8" IsVisible="False" />
+                    <TextBlock x:Name="UpdateStatusText" Classes="meta" />
+                    <Border x:Name="ReleaseNotesCard" IsVisible="False" Padding="12" CornerRadius="6"
+                            Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <StackPanel Spacing="4">
+                            <TextBlock x:Name="ReleaseNotesTitleText" FontWeight="SemiBold" />
+                            <SelectableTextBlock x:Name="ReleaseNotesText" Classes="meta" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <StackPanel Spacing="6">
+                <Button x:Name="SaveBtn" Content="保存设置" HorizontalAlignment="Left" Padding="18,8" />
+                <TextBlock x:Name="SavedHintText" Classes="meta" />
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

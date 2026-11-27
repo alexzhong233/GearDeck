@@ -52,6 +52,27 @@ public sealed class CachedDeviceOnboardManifest
     public List<CachedOnboardSlotInfo> Slots { get; set; } = [];
 }
 
+public sealed class SensitivityConverterPrefs
+{
+    public string BaseGameId { get; set; } = "cs2";
+    public double BaseSensitivity { get; set; } = 1.0;
+    public double BaseFov { get; set; } = 90;
+    public string TargetGameId { get; set; } = "valorant";
+    public double TargetFov { get; set; } = 103;
+    public int ConversionMethod { get; set; }
+    public double BaseDpi { get; set; } = 800;
+    public bool SameDpi { get; set; } = true;
+    public double TargetDpi { get; set; } = 800;
+    public int BaseWidth { get; set; } = 3840;
+    public int BaseHeight { get; set; } = 2160;
+    public bool BaseStretched { get; set; }
+    public bool SameResolution { get; set; } = true;
+    public int TargetWidth { get; set; } = 3840;
+    public int TargetHeight { get; set; } = 2160;
+    public bool TargetStretched { get; set; }
+    public Dictionary<string, double> PerGameFovs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
 public sealed class AppSettings
 {
     public bool WidgetVisible { get; set; } = true;
@@ -91,7 +112,9 @@ public sealed class AppSettings
 
     public List<string> MonitorFlyoutMetrics { get; set; } = [];
 
-    public int PollIntervalSeconds { get; set; } = 30;
+    public int PollIntervalSeconds { get; set; } = 15;
+
+    public int GameAutoPollIntervalMs { get; set; } = 1000;
 
     public int LowBatteryThreshold { get; set; } = BatteryHistoryHelper.DefaultLowBatteryThreshold;
 
@@ -159,6 +182,8 @@ public sealed class AppSettings
     /// <summary>Key = "{deviceId}|{slotIndex}", Value = macroId（仅用于无板载多步宏闪存的鼠标做本地软件宏绑定）。</summary>
     public Dictionary<string, string> LocalButtonMacroBindings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public SensitivityConverterPrefs SensitivityPrefs { get; set; } = new();
+
     public ExitRestoreMode GetExitRestoreMode()
     {
         if (!RestoreDesktopTargetsOnExit)
@@ -199,6 +224,8 @@ public sealed class SettingsService
     {
         WriteIndented = true,
     };
+
+    public object SyncRoot { get; } = new();
 
     public AppSettings Current { get; private set; } = new();
 
@@ -312,6 +339,8 @@ public sealed class SettingsService
         Current.AutoCloudDeviceImages ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Current.CustomCloudGalleryManifestUrl ??= "";
         Current.GitHubMirrorUrl ??= "";
+        Current.PollIntervalSeconds = Math.Clamp(Current.PollIntervalSeconds <= 0 ? 15 : Current.PollIntervalSeconds, 5, 300);
+        Current.GameAutoPollIntervalMs = Math.Clamp(Current.GameAutoPollIntervalMs <= 0 ? 1000 : Current.GameAutoPollIntervalMs, 250, 5000);
         if (string.IsNullOrWhiteSpace(Current.UpdateRepoSlug))
             Current.UpdateRepoSlug = "alexzhong233/GearDeck";
         foreach (var rule in Current.GameRules)
@@ -358,15 +387,45 @@ public sealed class SettingsService
     }
 
     public CachedBatteryRecord? GetLastKnownBattery(string? deviceId)
-        => !string.IsNullOrWhiteSpace(deviceId) && Current.LastKnownBatteries.TryGetValue(deviceId, out var rec)
-            ? rec
-            : null;
+    {
+        if (string.IsNullOrWhiteSpace(deviceId)) return null;
+        lock (SyncRoot)
+        {
+            return Current.LastKnownBatteries.TryGetValue(deviceId, out var rec) ? rec : null;
+        }
+    }
 
     public bool RecordObservedDevices(IEnumerable<PeripheralDevice> devices)
     {
-        bool changed = BatteryHistoryHelper.RecordObservedDevices(Current.LastKnownBatteries, devices);
+        bool changed;
+        lock (SyncRoot)
+        {
+            changed = BatteryHistoryHelper.RecordObservedDevices(Current.LastKnownBatteries, devices);
+        }
         if (changed)
             Save();
+        return changed;
+    }
+
+    public bool UpdateKnownReceiverModels(IEnumerable<PeripheralDevice> devices)
+    {
+        bool changed = false;
+        lock (SyncRoot)
+        {
+            foreach (var d in devices)
+            {
+                if (d.Id.StartsWith("atk:", StringComparison.OrdinalIgnoreCase)
+                    && !GearDeck.Core.Providers.AtkModelCatalog.IsGenericReceiverName(d.Name))
+                {
+                    if (!Current.KnownReceiverModels.TryGetValue(d.Id, out var prev)
+                        || !string.Equals(prev, d.Name, StringComparison.Ordinal))
+                    {
+                        Current.KnownReceiverModels[d.Id] = d.Name;
+                        changed = true;
+                    }
+                }
+            }
+        }
         return changed;
     }
 
@@ -579,8 +638,15 @@ public sealed class SettingsService
     {
         try
         {
-            Directory.CreateDirectory(Dir);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(Current, JsonOpts));
+            string json;
+            lock (SyncRoot)
+            {
+                json = JsonSerializer.Serialize(Current, JsonOpts);
+                Directory.CreateDirectory(Dir);
+                string tmpPath = $"{FilePath}.{Environment.ProcessId}.{Environment.CurrentManagedThreadId}.tmp";
+                File.WriteAllText(tmpPath, json);
+                File.Move(tmpPath, FilePath, overwrite: true);
+            }
         }
         catch
         {

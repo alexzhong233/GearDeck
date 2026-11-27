@@ -1,11 +1,13 @@
 using System.Runtime.InteropServices;
+using HidSharp;
 using Microsoft.Win32.SafeHandles;
 
 namespace GearDeck.Core.Hid;
 
 /// <summary>
-/// 直接 Win32 HID feature 通道。部分厂商设备（雷蛇、怒喵等）只允许 GENERIC_WRITE 或 0 权限打开，
-/// HidSharp 的读写模式会 ACCESS_DENIED；支持指定 Report ID 读取 Feature Report。
+/// 跨平台 HID Feature Report 通道：
+/// - Windows：直接 Win32 CreateFileW (GENERIC_WRITE / 0) + HidD_SetFeature/GetFeature，兼容只允许轻量打开的厂商设备；
+/// - macOS / 非 Windows：自动回退 HidSharp HidStream (IOKit SetFeature/GetFeature)。
 /// </summary>
 public sealed class RawHidFeature : IDisposable
 {
@@ -14,12 +16,27 @@ public sealed class RawHidFeature : IDisposable
     private const uint FileShareWrite = 0x2;
     private const uint OpenExisting = 3;
 
-    private readonly SafeFileHandle _handle;
+    private readonly SafeFileHandle? _handle;
+    private readonly HidStream? _stream;
 
     private RawHidFeature(SafeFileHandle handle) => _handle = handle;
+    private RawHidFeature(HidStream stream) => _stream = stream;
 
     public static RawHidFeature? TryOpen(string devicePath)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            try
+            {
+                var dev = HidSafe.EnumerateDevices()
+                    .FirstOrDefault(d => string.Equals(d.DevicePath, devicePath, StringComparison.Ordinal));
+                if (dev != null && dev.TryOpen(out var stream) && stream != null)
+                    return new RawHidFeature(stream);
+            }
+            catch { }
+            return null;
+        }
+
         var handle = CreateFileW(devicePath, GenericWrite, FileShareRead | FileShareWrite,
             IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
         if (handle.IsInvalid)
@@ -36,17 +53,38 @@ public sealed class RawHidFeature : IDisposable
         return new RawHidFeature(handle);
     }
 
-    public bool SetFeature(byte[] data) => HidD_SetFeature(_handle, data, (uint)data.Length);
+    public bool SetFeature(byte[] data)
+    {
+        if (_handle != null)
+            return HidD_SetFeature(_handle, data, (uint)data.Length);
+        if (_stream != null)
+        {
+            try { _stream.SetFeature(data); return true; }
+            catch { return false; }
+        }
+        return false;
+    }
 
     public byte[]? GetFeature(int length, byte reportId = 0)
     {
         if (length <= 0) return null;
         var buffer = new byte[length];
         buffer[0] = reportId;
-        return HidD_GetFeature(_handle, buffer, (uint)buffer.Length) ? buffer : null;
+        if (_handle != null)
+            return HidD_GetFeature(_handle, buffer, (uint)buffer.Length) ? buffer : null;
+        if (_stream != null)
+        {
+            try { _stream.GetFeature(buffer); return buffer; }
+            catch { return null; }
+        }
+        return null;
     }
 
-    public void Dispose() => _handle.Dispose();
+    public void Dispose()
+    {
+        _handle?.Dispose();
+        _stream?.Dispose();
+    }
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern SafeFileHandle CreateFileW(string name, uint access, uint share,

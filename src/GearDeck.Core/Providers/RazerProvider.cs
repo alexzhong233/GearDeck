@@ -261,7 +261,7 @@ public sealed class RazerProvider : ITunablePeripheralProvider
 
         if (update.ButtonBinding is { } bind && bind.SlotIndex > 0)
         {
-            if (!TryWriteButtonBinding(raw, tid, (byte)bind.SlotIndex, bind.Action))
+            if (!TryWriteButtonBinding(raw, (byte)bind.SlotIndex, bind.Action))
                 errors.Add($"按键 0x{bind.SlotIndex:X2} 重映射写入失败");
         }
 
@@ -517,7 +517,7 @@ public sealed class RazerProvider : ITunablePeripheralProvider
         return $"自定义 ({fnType:X2}:{val:X2})";
     }
 
-    private static bool TryWriteButtonBinding(RawHidFeature raw, byte probedTid, byte ctrlId, string action)
+    private static bool TryWriteButtonBinding(RawHidFeature raw, byte ctrlId, string action)
     {
         if (ctrlId == 0x01) return false;
 
@@ -545,15 +545,9 @@ public sealed class RazerProvider : ITunablePeripheralProvider
             reqArgs = [0x01, ctrlId, 0x00, fnType, len, val, 0x00, 0x00, 0x00, 0x00];
         }
 
-        // OpenMouse 实测 Viper V3 Pro 等 Razer 鼠必须使用 tid=0x10 写入按键绑定，切勿用 0x1F
+        // Razer 原生按键重映射写入严格使用 tid=0x10
         var (st, _) = Command(raw, 0x10, 0x02, 0x0C, 0x0A, reqArgs);
-        if (st == 0x02) return true;
-        if (probedTid != 0x10 && probedTid != 0x1F)
-        {
-            (st, _) = Command(raw, probedTid, 0x02, 0x0C, 0x0A, reqArgs);
-            return st == 0x02;
-        }
-        return false;
+        return st == 0x02;
     }
 
     private static bool TryParsePid(string deviceId, out ushort pid)

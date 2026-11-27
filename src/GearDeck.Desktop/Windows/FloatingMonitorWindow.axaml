@@ -1,0 +1,35 @@
+<Window
+    x:Class="GearDeck.Desktop.Windows.FloatingMonitorWindow"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:CompileBindings="False"
+    Title="GearDeck Floating Monitor"
+    Width="420"
+    Height="48"
+    MinWidth="220"
+    MinHeight="40"
+    WindowStartupLocation="Manual"
+    SystemDecorations="None"
+    TransparencyLevelHint="AcrylicBlur"
+    Background="Transparent"
+    Topmost="True"
+    ShowInTaskbar="False"
+    CanResize="False">
+
+    <Border x:Name="RootBorder" Background="#CC202020" BorderBrush="#28508080" BorderThickness="1"
+            CornerRadius="10" Padding="10,6"
+            PointerPressed="OnDragPressed" PointerMoved="OnDragMoved" PointerReleased="OnDragReleased">
+        <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                <TextBlock x:Name="CpuText" Text="CPU --%" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+                <TextBlock x:Name="RamText" Text="RAM --%" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+                <TextBlock x:Name="GpuText" Text="GPU --" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+                <TextBlock x:Name="NetText" Text="↓ -- ↑ --" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+                <TextBlock x:Name="DiskText" Text="DSK --%" Foreground="White" FontSize="13" VerticalAlignment="Center" />
+            </StackPanel>
+            <Button x:Name="CloseBtn" Grid.Column="1" Content="×" Width="22" Height="22" FontSize="13"
+                    Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                    Background="Transparent" BorderThickness="0" />
+        </Grid>
+    </Border>
+</Window>

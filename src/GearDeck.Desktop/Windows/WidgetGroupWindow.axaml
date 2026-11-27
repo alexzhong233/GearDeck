@@ -1,0 +1,36 @@
+<Window
+    x:Class="GearDeck.Desktop.Windows.WidgetGroupWindow"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:CompileBindings="False"
+    Title="GearDeck Group"
+    Width="328"
+    Height="240"
+    MinWidth="230"
+    MinHeight="110"
+    WindowStartupLocation="Manual"
+    SystemDecorations="None"
+    TransparencyLevelHint="AcrylicBlur"
+    Background="Transparent"
+    Topmost="True"
+    ShowInTaskbar="False"
+    CanResize="False">
+
+    <Border x:Name="RootBorder" Background="#F4222020" BorderBrush="#28408080" BorderThickness="1"
+            CornerRadius="14" Padding="12">
+        <Grid RowDefinitions="Auto,*">
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
+                <TextBlock x:Name="IconText" Grid.Column="0" Text="⌁" FontSize="15"
+                           VerticalAlignment="Center" />
+                <TextBlock x:Name="TitleText" Grid.Column="1" Text="设备组" FontSize="13" FontWeight="SemiBold"
+                           Margin="8,0,0,0" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="点击设备打开详情" FontSize="11" Foreground="#B0C0C0C0"
+                           Margin="8,0,0,0" VerticalAlignment="Center" />
+            </Grid>
+            <ScrollViewer Grid.Row="1" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="DeviceHost" Spacing="6" />
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</Window>

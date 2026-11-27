@@ -1,0 +1,284 @@
+<UserControl
+    x:Class="GearDeck.Desktop.Views.GamesView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:FluentAvalonia.UI.Controls"
+    x:CompileBindings="False">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.label">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+        <Style Selector="TextBlock.meta">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+        <Style Selector="Button.tool">
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        <Style Selector="Button.accent">
+            <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid x:Name="RootShellGrid" Margin="24,18,24,28" RowDefinitions="Auto,*" ColumnDefinitions="284,*">
+        <!-- 顶部标题与卡片/列表视图切换 -->
+        <Grid Grid.Row="0" Grid.ColumnSpan="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="4">
+                <TextBlock Text="游戏与配置切换" FontSize="26" FontWeight="SemiBold" />
+                <TextBlock Classes="meta" Text="按本机游戏库规则或全屏独占状态自动切换已唤醒外设的板载槽位与专属预设" />
+            </StackPanel>
+            <StackPanel x:Name="ViewSwitchSlot" Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" />
+        </Grid>
+
+        <!-- 左侧常驻栏：自动切换与通知开关 + 实时前台监测 -->
+        <ScrollViewer Grid.Row="1" Grid.Column="0" Margin="0,12,12,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="12">
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="12" Padding="16">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="自动切换控制" FontSize="15" FontWeight="SemiBold" />
+                        <ToggleSwitch x:Name="AutoSwitchToggle"
+                                      Content="启动自动切换"
+                                      OnContent="已开启（休眠设备唤醒后自动补切）"
+                                      OffContent="已暂停自动切换"
+                                      IsCheckedChanged="OnGlobalSettingsToggled" />
+                        <ToggleSwitch x:Name="NotifySwitchToggle"
+                                      Content="配置切换原生通知"
+                                      OnContent="开启切换通知"
+                                      OffContent="静默切换"
+                                      IsCheckedChanged="OnGlobalSettingsToggled" />
+                        <Button Content="立即检测并应用" HorizontalAlignment="Stretch"
+                                Classes="accent" Click="OnForceReevaluate" />
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="12" Padding="14">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="实时前台监测" FontSize="15" FontWeight="SemiBold" />
+                        <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}" CornerRadius="8" Padding="10">
+                            <StackPanel Spacing="6">
+                                <TextBlock x:Name="ForegroundMonitorText" Classes="meta" Text="当前前台进程：检测中..." />
+                                <TextBlock x:Name="ActiveRuleStatusText" FontSize="12" FontWeight="SemiBold" Text="当前生效策略：--" TextWrapping="Wrap" />
+                                <TextBlock x:Name="DeviceOutcomeText" Classes="meta" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- 右侧分段标签导航 + 内容区域 -->
+        <Grid Grid.Row="1" Grid.Column="1" Margin="12,12,0,0" RowDefinitions="Auto,Auto,*">
+            <Border Grid.Row="0" HorizontalAlignment="Left"
+                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="4">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <Button x:Name="TabGamesBtn" Classes="accent" Tag="games" Padding="14,7" Content="游戏" />
+                    <Button x:Name="TabFullscreenBtn" Tag="fullscreen" Padding="14,7" Content="全屏策略" />
+                    <Button x:Name="TabPresetsBtn" Tag="presets" Padding="14,7" Content="预设管理" />
+                </StackPanel>
+            </Border>
+
+            <ui:InfoBar Grid.Row="1" x:Name="StatusInfoBar" Margin="0,12,0,0" IsOpen="False" IsClosable="True" />
+
+            <ScrollViewer Grid.Row="2" Margin="0,12,0,0" VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="14" Margin="0,0,8,24">
+
+                    <!-- TAB 1：游戏库 / 单游戏专属配置 -->
+                    <StackPanel x:Name="PanelGames" Spacing="14" IsVisible="True">
+                        <ui:InfoBar IsOpen="True" IsClosable="False" Severity="Informational"
+                                    Title="单游戏配置优先（默认关闭）"
+                                    Message="每款游戏的配置默认关闭；在下方卡片开启开关并指派外设预设后，运行该游戏时将以单游戏单独配置优先，自动覆盖「全屏策略」。" />
+
+                        <StackPanel x:Name="GamesListView" Spacing="14" IsVisible="True">
+                            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="10" Padding="18">
+                                <StackPanel Spacing="12">
+                                    <TextBlock Text="手动新增到本机游戏库" FontSize="17" FontWeight="SemiBold" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="RunningProcCombo" HorizontalAlignment="Stretch"
+                                                  PlaceholderText="点击右侧刷新运行列表..."
+                                                  SelectionChanged="OnRunningProcSelected" />
+                                        <Button Grid.Column="1" Content="刷新运行列表" Margin="8,0,0,0"
+                                                VerticalAlignment="Bottom" Classes="tool" Click="OnRefreshRunningProcs" />
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="210" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="NewRuleNameBox" Watermark="例如：CS2" />
+                                        <TextBox x:Name="NewRuleProcessBox" Grid.Column="1" Margin="8,0,0,0"
+                                                 Watermark="例如：cs2.exe, csgo.exe" />
+                                        <Button Grid.Column="2" Content="浏览 .exe..." Margin="8,0,0,0"
+                                                VerticalAlignment="Bottom" Classes="tool" Click="OnBrowseExe" />
+                                    </Grid>
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <Button Content="+ 添加到本机游戏库" Classes="accent" Click="OnAddManualGame" />
+                                        <TextBlock Classes="meta" Text="添加后将显示在下方本机游戏库中，点击该游戏的「游戏配置」即可设置专属外设参数。"
+                                                   VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="10" Padding="18">
+                                <StackPanel Spacing="12">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="本机游戏库" FontSize="17" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="ScannedGamesHint" Classes="meta"
+                                                       Text="正在扫描 Steam / Epic / Riot / WeGame / HoYoPlay / Battle.net / Xbox 游戏，点击「游戏配置」进入专属设置" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <TextBox x:Name="GameFilterBox" Width="210" Watermark="搜索游戏、平台或 .exe..."
+                                                     TextChanged="OnGameFilterChanged" />
+                                            <Button x:Name="ScanGamesBtn" Content="重新扫描" Classes="accent" Click="OnScanInstalledGames" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <WrapPanel x:Name="ScannedGamesHost" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- 单游戏专属配置详情 -->
+                        <StackPanel x:Name="GameExclusiveDetailView" Spacing="14" IsVisible="False">
+                            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="10" Padding="16">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="BackToLibraryBtn" Classes="tool" VerticalAlignment="Center" Content="← 返回本机游戏库" />
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" Margin="12,0,0,0" VerticalAlignment="Center">
+                                        <Grid x:Name="ExclusiveIconHost" />
+                                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                                            <TextBlock x:Name="ExclusiveGameTitleText" FontSize="18" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock x:Name="ExclusiveGameSubText" Classes="meta" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <ToggleSwitch Grid.Column="2" x:Name="ExclusiveRuleEnableToggle"
+                                                  OnContent="已开启" OffContent="已关闭"
+                                                  Margin="12,0,0,0" VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+
+                            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1" CornerRadius="10" Padding="18">
+                                <StackPanel Spacing="14">
+                                    <TextBlock Text="该游戏专属外设切换设置" FontSize="17" FontWeight="SemiBold" />
+                                    <TextBox x:Name="ExclusiveProcessBox"
+                                             Watermark="匹配进程名（多个可用逗号分隔，失焦自动保存）" />
+                                    <CheckBox x:Name="ExclusiveRequireFsCheck" Content="仅当该游戏处于全屏 / 独占全屏状态时触发" />
+                                    <Border Height="1" Background="{DynamicResource CardStrokeColorDefaultBrush}" />
+                                    <TextBlock Text="每台外设的专属目标槽位 / 预设 / DPI / 回报率 / LOD / 软件宏" FontSize="14" FontWeight="SemiBold" />
+                                    <StackPanel x:Name="ExclusiveTargetsPanel" Spacing="10" />
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <Button x:Name="ExclusiveApplyNowBtn" Content="立即套用此游戏配置" Classes="accent" Click="OnExclusiveApplyNow" />
+                                        <Button x:Name="ExclusiveResetBtn" Content="清空此游戏专属配置" Classes="tool" Click="OnExclusiveReset" />
+                                        <Button x:Name="ExclusiveRemoveManualBtn" Content="从游戏库移除" Classes="tool" IsVisible="False" Click="OnExclusiveRemoveManual" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- TAB 2：全屏策略 -->
+                    <StackPanel x:Name="PanelFullscreen" Spacing="14" IsVisible="False">
+                        <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="18">
+                            <StackPanel Spacing="14">
+                                <StackPanel Orientation="Horizontal" Spacing="24">
+                                    <StackPanel Spacing="2" MinWidth="280">
+                                        <TextBlock Text="全屏独占与退出恢复策略" FontSize="18" FontWeight="SemiBold" />
+                                        <TextBlock Classes="meta" Text="打开全局独占策略总开关后可更改并生效下方独占与退出恢复规则，关闭时均不生效。" />
+                                    </StackPanel>
+                                    <ToggleSwitch x:Name="FullscreenMasterToggle"
+                                                  Content="全局独占策略总开关"
+                                                  OnContent="已开启（允许生效下方全屏独占策略）"
+                                                  OffContent="已关闭（下方策略已锁定）"
+                                                  VerticalAlignment="Center"
+                                                  IsCheckedChanged="OnFullscreenMasterToggled" />
+                                </StackPanel>
+                                <ui:InfoBar IsOpen="True" IsClosable="False" Severity="Informational"
+                                            Title="优先级提醒：单游戏单独配置优先"
+                                            Message="若某款游戏已在「游戏」标签页开启开关并设置了外设预设（或设为保持不变），运行该游戏时将以单游戏配置优先，自动覆盖此处的全屏独占策略。" />
+                                <WrapPanel x:Name="StrategyCardsHost" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- TAB 3：预设管理 -->
+                    <StackPanel x:Name="PanelPresets" Spacing="14" IsVisible="False">
+                        <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="18">
+                            <StackPanel Spacing="12">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="厂家板载预设读取与分硬件参数预设库" FontSize="18" FontWeight="SemiBold" />
+                                    <TextBlock Classes="meta" Text="可直接读取每台硬件自身存储的厂家板载预设（写入游戏规则下拉），也可在此抓存新的专属预设。" />
+                                </StackPanel>
+                                <WrapPanel x:Name="DevicePresetsQuickHost" />
+                                <Border Height="1" Background="{DynamicResource CardStrokeColorDefaultBrush}" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="260" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="CaptureMouseCombo" HorizontalAlignment="Stretch" />
+                                    <TextBox x:Name="PresetNameBox" Grid.Column="1" Margin="8,0,0,0"
+                                             Watermark="例如：FPS 800 DPI 4K / 桌面节能" />
+                                    <Button x:Name="CapturePresetBtn" Grid.Column="2" Margin="8,0,0,0"
+                                            Content="保存至该设备预设" Classes="accent" VerticalAlignment="Bottom"
+                                            Click="OnCapturePreset" />
+                                </Grid>
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="快速参数预设（按设备配置 DPI / 回报率 / LOD）" FontSize="14" FontWeight="SemiBold" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <ui:NumberBox x:Name="QuickDpiBox" Header="DPI" Width="130" Maximum="45000" Minimum="100" />
+                                        <ui:NumberBox x:Name="QuickPollingBox" Header="回报率 Hz" Width="130" Maximum="8000" Minimum="0" />
+                                        <ui:NumberBox x:Name="QuickLodBox" Header="LOD" Width="110" Maximum="100" Minimum="0" />
+                                        <Button x:Name="QuickPresetBtn" Content="生成参数预设" Classes="tool"
+                                                VerticalAlignment="Bottom" Click="OnQuickPreset" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <WrapPanel x:Name="PresetsHost" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</UserControl>

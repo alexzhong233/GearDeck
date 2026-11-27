@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using HidSharp;
 using GearDeck.Core.Hid;
 using GearDeck.Core.Models;
@@ -29,6 +31,7 @@ public sealed class BluetoothBatteryProvider : IPeripheralProvider
     [
         0x046D, 0x1532, 0x0B05, 0x054C, 0x37D7, 0x373B, 0x34D7, 0x3837,
         0x5253, 0x38A6, 0x384C, 0x3151, 0x36A7, 0x37B0, 0x373E, 0x1B1C, 0x1038, 0x03F0, 0x0951,
+        0xA8A4, 0xA8A5, 0x258A, 0x3554,
     ];
 
     public string Name => ProviderName;
@@ -41,40 +44,47 @@ public sealed class BluetoothBatteryProvider : IPeripheralProvider
         var results = new List<PeripheralDevice>();
         var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        try
+        if (OperatingSystem.IsWindows())
         {
-            foreach (string instanceId in GetPresentBluetoothDeviceIds())
+            try
             {
-                if (!TryReadDevNodeBattery(instanceId, out int pct))
-                    continue;
-                string friendly = ReadDevNodeName(instanceId) ?? ExtractReadableId(instanceId);
-                if (string.IsNullOrWhiteSpace(friendly) || !seenNames.Add(friendly))
-                    continue;
-
-                // 若同名称已被更精确的高级蓝牙服务节点读到，跳过重复项
-                if (friendly.Contains("AVRCP", StringComparison.OrdinalIgnoreCase) ||
-                    friendly.Contains("Hands-Free", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                results.Add(new PeripheralDevice
+                foreach (string instanceId in GetPresentBluetoothDeviceIds())
                 {
-                    Id = $"bt:{SanitizeKey(friendly)}",
-                    Name = friendly,
-                    Kind = InferKind(friendly),
-                    Provider = ProviderName,
-                    Connected = true,
-                    IsSleeping = false,
-                    Transport = "Bluetooth",
-                    BatteryPercent = Math.Clamp(pct, 0, 100),
-                    State = BatteryState.Normal,
-                    Note = "通过 Windows 蓝牙 BAS / HFP 标准服务读取电量",
-                    LastUpdated = DateTimeOffset.Now,
-                });
+                    if (!TryReadDevNodeBattery(instanceId, out int pct))
+                        continue;
+                    string friendly = ReadDevNodeName(instanceId) ?? ExtractReadableId(instanceId);
+                    if (string.IsNullOrWhiteSpace(friendly) || !seenNames.Add(friendly))
+                        continue;
+
+                    // 若同名称已被更精确的高级蓝牙服务节点读到，跳过重复项
+                    if (friendly.Contains("AVRCP", StringComparison.OrdinalIgnoreCase) ||
+                        friendly.Contains("Hands-Free", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    results.Add(new PeripheralDevice
+                    {
+                        Id = $"bt:{SanitizeKey(friendly)}",
+                        Name = friendly,
+                        Kind = InferKind(friendly),
+                        Provider = ProviderName,
+                        Connected = true,
+                        IsSleeping = false,
+                        Transport = "Bluetooth",
+                        BatteryPercent = Math.Clamp(pct, 0, 100),
+                        State = BatteryState.Normal,
+                        Note = "通过 Windows 蓝牙 BAS / HFP 标准服务读取电量",
+                        LastUpdated = DateTimeOffset.Now,
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Diag.Log($"BluetoothBattery: {ex.Message}");
             }
         }
-        catch (Exception ex)
+        else if (OperatingSystem.IsMacOS())
         {
-            Diag.Log($"BluetoothBattery: {ex.Message}");
+            PollMacOsBluetooth(results, seenNames);
         }
 
         // 同时兜底标准 HID Power / Generic Battery Strength (0x0084 / 0x0085 / 0x0006:0x0020)
@@ -142,6 +152,72 @@ public sealed class BluetoothBatteryProvider : IPeripheralProvider
         }
 
         return results;
+    }
+
+    private static void PollMacOsBluetooth(List<PeripheralDevice> results, HashSet<string> seenNames)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("ioreg", "-rn AppleDeviceManagementHIDEventService")
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null) return;
+            string output = proc.StandardOutput.ReadToEnd();
+            if (!proc.WaitForExit(1500))
+            {
+                try { proc.Kill(); } catch { }
+                return;
+            }
+
+            string? curProduct = null;
+            int? curBattery = null;
+            void Flush()
+            {
+                if (string.IsNullOrWhiteSpace(curProduct) || curBattery is not { } pct) return;
+                string name = curProduct.Trim();
+                if (!seenNames.Add(name)) return;
+                results.Add(new PeripheralDevice
+                {
+                    Id = $"bt:{SanitizeKey(name)}",
+                    Name = name,
+                    Kind = InferKind(name),
+                    Provider = ProviderName,
+                    Connected = true,
+                    IsSleeping = false,
+                    Transport = "Bluetooth",
+                    BatteryPercent = Math.Clamp(pct, 0, 100),
+                    State = BatteryState.Normal,
+                    Note = "通过 macOS IOKit 蓝牙 HID 服务读取电量",
+                    LastUpdated = DateTimeOffset.Now,
+                });
+            }
+
+            foreach (string rawLine in output.Split('\n'))
+            {
+                if (rawLine.Contains("+-o "))
+                {
+                    Flush();
+                    curProduct = null;
+                    curBattery = null;
+                    continue;
+                }
+
+                var pm = Regex.Match(rawLine, "\"Product\"\\s*=\\s*\"([^\"]+)\"");
+                if (pm.Success) curProduct = pm.Groups[1].Value;
+
+                var bm = Regex.Match(rawLine, "\"BatteryPercent\"\\s*=\\s*(\\d+)");
+                if (bm.Success && int.TryParse(bm.Groups[1].Value, out int bp)) curBattery = bp;
+            }
+            Flush();
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"macOS BluetoothBattery: {ex.Message}");
+        }
     }
 
     private static List<string> GetPresentBluetoothDeviceIds()

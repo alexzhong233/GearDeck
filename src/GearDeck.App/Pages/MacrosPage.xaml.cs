@@ -18,7 +18,7 @@ public sealed partial class MacrosPage : Page
     private string? _selectedMacroId;
     private DeviceTuningCapabilities? _probedCaps;
     private bool _isCardMode;
-    private bool _binding;
+    private bool _binding = true;
     private bool _recording;
     private bool _isTwoCol = true;
     private readonly Stopwatch _recWatch = new();
@@ -265,7 +265,11 @@ public sealed partial class MacrosPage : Page
     private void BindEditorFields()
     {
         var m = CurrentMacro;
-        if (m == null) return;
+        if (m == null)
+        {
+            _binding = false;
+            return;
+        }
         _binding = true;
         try
         {
@@ -448,13 +452,26 @@ public sealed partial class MacrosPage : Page
         string? devId = (TargetMouseCombo.SelectedItem as ComboBoxItem)?.Tag as string;
         if (string.IsNullOrEmpty(devId)) return;
 
-        var caps = await App.Devices.QueryCapabilitiesAsync(devId);
-        _probedCaps = caps;
-        UpdateTargetButtonsForSelectedMouse();
-        ShowStatus(caps.IsOnline
-            ? $"已探测设备硬件能力：按键槽位 {caps.ButtonBindings.Count} 个，{(caps.SupportsOnboardMacroUpload ? "支持原生板载宏烧录" : "支持改键/侧键触发")}。"
-            : $"设备当前休眠：{caps.StatusMessage}",
-            caps.IsOnline ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+        var btn = sender as Button;
+        if (btn != null) btn.IsEnabled = false;
+        try
+        {
+            var caps = await App.Devices.QueryCapabilitiesAsync(devId);
+            _probedCaps = caps;
+            UpdateTargetButtonsForSelectedMouse();
+            ShowStatus(caps.IsOnline
+                ? $"已探测设备硬件能力：按键槽位 {caps.ButtonBindings.Count} 个，{(caps.SupportsOnboardMacroUpload ? "支持原生板载宏烧录" : "支持改键/侧键触发")}。"
+                : $"设备当前休眠：{caps.StatusMessage}",
+                caps.IsOnline ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"探测设备硬件能力失败：{ex.Message}", InfoBarSeverity.Error);
+        }
+        finally
+        {
+            if (btn != null) btn.IsEnabled = true;
+        }
     }
 
     private async void OnEnrollMacroToDevice(object sender, RoutedEventArgs e)
@@ -467,56 +484,69 @@ public sealed partial class MacrosPage : Page
             return;
         }
 
-        var dev = App.LastDevices.FirstOrDefault(d => d.Id == devId);
-        int slotIdx = double.IsNaN(EnrollSlotBox.Value) ? 0 : Math.Clamp((int)Math.Round(EnrollSlotBox.Value), 0, 7);
-        string btnText = (TargetButtonCombo.SelectedItem as ComboBoxItem)?.Content as string ?? "XButton1";
-        int wireSlot = TargetButtonCombo.SelectedItem is ComboBoxItem ci && ci.Tag is ValueTuple<int, string> tup ? tup.Item1 : 4;
-
-        // 1. 先探测一次，看目标鼠当前是否醒着且支持 320B 原生板载宏烧录
-        if (dev is { IsSleeping: false })
+        var btn = sender as Button;
+        if (btn != null) btn.IsEnabled = false;
+        try
         {
-            _probedCaps ??= await App.Devices.QueryCapabilitiesAsync(devId);
-            if (_probedCaps is { IsOnline: true, SupportsOnboardMacroUpload: true })
+            var dev = App.LastDevices.FirstOrDefault(d => d.Id == devId);
+            int slotIdx = double.IsNaN(EnrollSlotBox.Value) ? 0 : Math.Clamp((int)Math.Round(EnrollSlotBox.Value), 0, 7);
+            string btnText = (TargetButtonCombo.SelectedItem as ComboBoxItem)?.Content as string ?? "XButton1";
+            int wireSlot = TargetButtonCombo.SelectedItem is ComboBoxItem ci && ci.Tag is ValueTuple<int, string> tup ? tup.Item1 : 4;
+
+            // 1. 先探测一次，看目标鼠当前是否醒着且支持 320B 原生板载宏烧录
+            if (dev is { IsSleeping: false })
             {
-                var res = await App.Devices.ApplySettingsAsync(devId, new DeviceTuningUpdate
+                _probedCaps ??= await App.Devices.QueryCapabilitiesAsync(devId);
+                if (_probedCaps is { IsOnline: true, SupportsOnboardMacroUpload: true })
                 {
-                    UploadMacro = (slotIdx, wireSlot, macro),
-                });
-                ShowStatus(res.Message, res.Success ? InfoBarSeverity.Success : InfoBarSeverity.Error);
-                RenderMacroLibrary();
+                    var res = await App.Devices.ApplySettingsAsync(devId, new DeviceTuningUpdate
+                    {
+                        UploadMacro = (slotIdx, wireSlot, macro),
+                    });
+                    ShowStatus(res.Message, res.Success ? InfoBarSeverity.Success : InfoBarSeverity.Error);
+                    RenderMacroLibrary();
+                    return;
+                }
+
+                // 如果是单个键或标准修饰+键组合，尝试直接写入鼠标板载按键映射
+                if (_probedCaps is { IsOnline: true, ButtonBindings.Count: > 0 } && TryExtractSimpleCombo(macro, out byte mods, out byte usage))
+                {
+                    string hwBinding = HidKeyCatalog.FormatKeyboardBinding(mods, usage);
+                    var res = await App.Devices.ApplySettingsAsync(devId, new DeviceTuningUpdate
+                    {
+                        ButtonBinding = (wireSlot, hwBinding),
+                    });
+                    if (res.Success)
+                    {
+                        ShowStatus($"已将单/组合快捷键「{HidKeyCatalog.FormatModifiersAndKey(mods, usage)}」直接写入「{dev.Name}」硬件板载内存！", InfoBarSeverity.Success);
+                        return;
+                    }
+                }
+            }
+
+            // 2. 通用：绑定为目标设备对应的鼠标物理侧键/中键软件触发
+            string? triggerKey = ResolveSoftwareTriggerKey(btnText, wireSlot);
+            if (triggerKey == null)
+            {
+                ShowStatus("该固件未开放多步闪存烧录，软件触发仅可绑定至 侧键4(后退) / 侧键5(前进) / 中键。", InfoBarSeverity.Warning);
                 return;
             }
 
-            // 如果是单个键或标准修饰+键组合，尝试直接写入鼠标板载按键映射
-            if (_probedCaps is { IsOnline: true, ButtonBindings.Count: > 0 } && TryExtractSimpleCombo(macro, out byte mods, out byte usage))
-            {
-                string hwBinding = HidKeyCatalog.FormatKeyboardBinding(mods, usage);
-                var res = await App.Devices.ApplySettingsAsync(devId, new DeviceTuningUpdate
-                {
-                    ButtonBinding = (wireSlot, hwBinding),
-                });
-                if (res.Success)
-                {
-                    ShowStatus($"已将单/组合快捷键「{HidKeyCatalog.FormatModifiersAndKey(mods, usage)}」直接写入「{dev.Name}」硬件板载内存！", InfoBarSeverity.Success);
-                    return;
-                }
-            }
+            string key = $"{devId}|{triggerKey}";
+            App.Settings.Current.LocalButtonMacroBindings[key] = macro.Id;
+            App.Settings.Save();
+            App.MacroRunner?.SyncHookState();
+            RenderMacroLibrary();
+            ShowStatus($"已将宏「{macro.Name}」录入并绑定到「{dev?.Name ?? devId}」的 {triggerKey} 按键！", InfoBarSeverity.Success);
         }
-
-        // 2. 通用：绑定为目标设备对应的鼠标物理侧键/中键软件触发
-        string? triggerKey = ResolveSoftwareTriggerKey(btnText, wireSlot);
-        if (triggerKey == null)
+        catch (Exception ex)
         {
-            ShowStatus("该固件未开放多步闪存烧录，软件触发仅可绑定至 侧键4(后退) / 侧键5(前进) / 中键。", InfoBarSeverity.Warning);
-            return;
+            ShowStatus($"录入宏失败：{ex.Message}", InfoBarSeverity.Error);
         }
-
-        string key = $"{devId}|{triggerKey}";
-        App.Settings.Current.LocalButtonMacroBindings[key] = macro.Id;
-        App.Settings.Save();
-        App.MacroRunner?.SyncHookState();
-        RenderMacroLibrary();
-        ShowStatus($"已将宏「{macro.Name}」录入并绑定到「{dev?.Name ?? devId}」的 {triggerKey} 按键！", InfoBarSeverity.Success);
+        finally
+        {
+            if (btn != null) btn.IsEnabled = true;
+        }
     }
 
     private static string? ResolveSoftwareTriggerKey(string buttonLabel, int wireSlot)

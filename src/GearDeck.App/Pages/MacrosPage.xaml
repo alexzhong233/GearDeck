@@ -67,7 +67,7 @@
                                     <ComboBoxItem Tag="RepeatCount" Content="指定次数（按下循环 N 次）" />
                                 </ComboBox>
                                 <NumberBox x:Name="MacroRepeatBox" Header="重复次数" Width="130" Maximum="99" Minimum="1"
-                                           Value="1" SpinButtonPlacementMode="Compact" ValueChanged="OnMacroRepeatChanged" />
+                                           SpinButtonPlacementMode="Compact" ValueChanged="OnMacroRepeatChanged" />
                             </controls:ResponsiveWrapPanel>
 
                             <controls:ResponsiveWrapPanel Spacing="8" LineSpacing="8">

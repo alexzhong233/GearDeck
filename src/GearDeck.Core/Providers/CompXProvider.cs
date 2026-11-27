@@ -32,6 +32,8 @@ public sealed class CompXProvider : ITunablePeripheralProvider
         0x1038, // SteelSeries
         0x03F0, // HyperX (HP)
         0x0951, // HyperX (Kingston)
+        0xA8A4, // MLOONG Wired
+        0xA8A5, // MLOONG 2.4G
     ];
 
     public bool CanHandleDevice(string deviceId)
@@ -243,8 +245,11 @@ public sealed class CompXProvider : ITunablePeripheralProvider
         ushort vid = (ushort)d.VendorID;
         if (ClaimedVids.Contains(vid)) return true;
         if (vid == 0x0E8D && d.ProductID == 0x0703) return true; // Angry Miao AM Infinity .97
+        if (vid == 0x258A && d.ProductID == 0x010C) return true; // LEOBOG Hi98C Pro Wired
+        if (vid == 0x3554 && d.ProductID == 0xFA07) return true; // LEOBOG Hi98C Pro Bluetooth
         string upper = HidSafe.ProductName(d).ToUpperInvariant();
-        if (upper.Contains("AULA") || upper.Contains("MCHOSE") || upper.Contains("ATK ") || upper.Contains("VXE "))
+        if (upper.Contains("AULA") || upper.Contains("MCHOSE") || upper.Contains("ATK ") || upper.Contains("VXE ") ||
+            upper.Contains("LEOBOG") || upper.Contains("HI98") || upper.Contains("MLOONG"))
             return true;
         if (vid == 0x3554 && !upper.Contains("LAMZU") && !upper.Contains("ATLANTIS") && !upper.Contains("INCA") && !upper.Contains("THORN"))
         {

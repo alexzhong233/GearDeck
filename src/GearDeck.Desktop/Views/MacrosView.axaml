@@ -1,0 +1,195 @@
+<UserControl
+    x:Class="GearDeck.Desktop.Views.MacrosView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:FluentAvalonia.UI.Controls"
+    x:CompileBindings="False">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.label">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+        <Style Selector="TextBlock.meta">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+        <Style Selector="Button.tool">
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer x:Name="RootScrollViewer" VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24,18,24,28" Spacing="14">
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="鼠标宏中心" FontSize="26" FontWeight="SemiBold" />
+                <TextBlock Classes="meta" Text="创建、编辑并试播键盘/鼠标宏；可将多步宏绑定至鼠标侧键或中键触发，也可录入支持板载闪存的硬件。" />
+            </StackPanel>
+
+            <ui:InfoBar x:Name="StatusInfoBar" IsOpen="False" IsClosable="True" />
+
+            <Border x:Name="AdminBanner" IsVisible="False"
+                    Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="16">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="当前以普通用户权限运行（UIPI 限制）" FontSize="14" FontWeight="SemiBold" />
+                    <TextBlock Classes="meta" Text="若需要在以管理员权限运行的游戏/全屏程序（如 CS2、Valorant、Apex 等）中触发软件侧键宏，请使用管理员权限重启 GearDeck。" />
+                    <Button x:Name="RestartAdminBtn" Content="以管理员身份重启 GearDeck"
+                            HorizontalAlignment="Left" Classes="tool" />
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="MacOsBanner" IsVisible="False"
+                    Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="16">
+                <StackPanel Spacing="6">
+                    <TextBlock Text="macOS：辅助功能权限说明" FontSize="14" FontWeight="SemiBold" />
+                    <TextBlock x:Name="MacOsNoticeText" Classes="meta" />
+                </StackPanel>
+            </Border>
+
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="10">
+                    <ToggleSwitch x:Name="GlobalEnableSwitch" Content="全局鼠标宏"
+                                  OnContent="已启用" OffContent="已禁用" />
+                    <TextBlock x:Name="GlobalStateText" Classes="meta" />
+                    <TextBlock Classes="meta" Text="绑定冲突与安全说明：侧键/中键触发会优先接管对应物理按键的原始功能，请为同一按键保留备用操作；切换触发模式（再按或 Esc 停止）与循环宏请勿用于违反游戏规则的场景。修改绑定前先停止回放，避免与正在进行的输入冲突。" />
+                </StackPanel>
+            </Border>
+
+            <Grid x:Name="WorkspaceGrid">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.05*" />
+                    <ColumnDefinition Width="1.25*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Border x:Name="LibraryPane" Grid.Row="0" Grid.Column="0"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="10" Padding="18">
+                    <StackPanel Spacing="12">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="宏预设库" FontSize="17" FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="NewMacroBtn" Content="+ 新建宏" Classes="tool" />
+                                <Button x:Name="CopyMacroBtn" Content="复制" Classes="tool" />
+                                <Button x:Name="DeleteMacroBtn" Content="删除" Classes="tool" />
+                            </StackPanel>
+                        </Grid>
+                        <WrapPanel>
+                            <Button x:Name="ImportBtn" Content="导入 JSON" Classes="tool" Margin="0,0,6,6" />
+                            <Button x:Name="ExportBtn" Content="导出 JSON" Classes="tool" Margin="0,0,6,6" />
+                            <TextBlock Classes="meta" Text="导入追加到宏库，导出包含宏定义与侧键绑定。"
+                                       VerticalAlignment="Center" />
+                        </WrapPanel>
+                        <WrapPanel x:Name="MacroLibraryHost" />
+                    </StackPanel>
+                </Border>
+
+                <StackPanel x:Name="EditorPane" Grid.Row="0" Grid.Column="1" Spacing="14">
+                    <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="10" Padding="18">
+                        <StackPanel Spacing="12">
+                            <TextBlock x:Name="EditorTitleText" Text="宏动作录制与编辑"
+                                       FontSize="17" FontWeight="SemiBold" />
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,8,0">
+                                    <TextBlock Classes="label" Text="宏名称" />
+                                    <TextBox x:Name="MacroNameBox" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="4" Margin="8,0,0,0">
+                                    <TextBlock Classes="label" Text="触发方式" />
+                                    <ComboBox x:Name="MacroLoopCombo" HorizontalAlignment="Stretch">
+                                        <ComboBoxItem Tag="PlayOnce" Content="单次（按下播放 1 次）" />
+                                        <ComboBoxItem Tag="WhileHeld" Content="按住循环（松开即停）" />
+                                        <ComboBoxItem Tag="ToggleUntilKey" Content="切换（再按或 Esc 停止）" />
+                                        <ComboBoxItem Tag="RepeatCount" Content="指定次数（循环 N 次）" />
+                                    </ComboBox>
+                                </StackPanel>
+                            </Grid>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <ui:NumberBox x:Name="MacroRepeatBox" Grid.Column="0"
+                                              Header="重复次数 (1~99)" Maximum="99" Minimum="1"
+                                              Margin="0,0,8,0" />
+                                <ui:NumberBox x:Name="StepDelayBox" Grid.Column="1"
+                                              Header="默认步间延迟 (ms，5~5000)" Maximum="5000" Minimum="5"
+                                              Margin="8,0,0,0" />
+                            </Grid>
+
+                            <TextBlock Text="录制与快捷添加动作" FontSize="14" FontWeight="SemiBold" />
+                            <WrapPanel>
+                                <ToggleButton x:Name="RecordMacroBtn" Content="开始录制键盘按键与鼠标点击"
+                                              Margin="0,0,6,6" />
+                                <Button x:Name="AddKeyPressBtn" Content="+ 按键按下" Classes="tool" Margin="0,0,6,6" />
+                                <Button x:Name="AddKeyReleaseBtn" Content="+ 按键抬起" Classes="tool" Margin="0,0,6,6" />
+                                <Button x:Name="AddLeftClickBtn" Content="+ 鼠标左键点击" Classes="tool" Margin="0,0,6,6" />
+                                <Button x:Name="AddRightClickBtn" Content="+ 鼠标右键点击" Classes="tool" Margin="0,0,6,6" />
+                                <Button x:Name="AddMiddleClickBtn" Content="+ 鼠标中键点击" Classes="tool" Margin="0,0,6,6" />
+                                <Button x:Name="AddDelayBtn" Content="+ 延时" Classes="tool" Margin="0,0,6,6" />
+                                <Button x:Name="ClearStepsBtn" Content="清空步骤" Classes="tool" Margin="0,0,6,6" />
+                            </WrapPanel>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Classes="label" Text="手动选键" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <ComboBox x:Name="ManualKeyCombo" Grid.Column="1" HorizontalAlignment="Stretch" />
+                            </Grid>
+
+                            <TextBox x:Name="RecordFocusTrap" IsReadOnly="True" IsVisible="False"
+                                     Watermark="录制中：请在此框内按键或点击鼠标左/右/中键以记录顺序与真实延迟..." />
+
+                            <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="8" Padding="12" MaxHeight="300">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <StackPanel x:Name="MacroStepsPanel" Spacing="4" />
+                                </ScrollViewer>
+                            </Border>
+
+                            <ProgressBar x:Name="PlaybackBar" Maximum="1" Minimum="0"
+                                         Height="4" IsVisible="False" />
+
+                            <WrapPanel>
+                                <Button x:Name="SaveMacroBtn" Content="保存宏到库" Margin="0,0,6,6" />
+                                <Button x:Name="TestPlayBtn" Content="本地测试回放" Margin="0,0,6,6" />
+                                <Button x:Name="StopPlayBtn" Content="停止回放" Margin="0,0,6,6" />
+                            </WrapPanel>
+
+                            <TextBlock Classes="label" Text="当前宏的侧键绑定" />
+                            <TextBlock x:Name="BindingSummaryText" Classes="meta" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

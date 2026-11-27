@@ -194,7 +194,9 @@ public sealed class AppUpdateService
             {
                 progress?.Report((2, isFallback ? "镜像下载异常，已回退直连 GitHub 下载更新包..." : $"正在下载更新包：{(preferredUrl == fallbackUrl ? "GitHub 直连" : "自定义镜像站")}..."));
                 await DownloadFileAsync(url, zipPath, progress, ct);
-                ValidateDownloadedZip(zipPath, expectedSha256);
+                bool usedCustomMirror = !string.IsNullOrWhiteSpace(fallbackUrl) &&
+                                        !string.Equals(url, fallbackUrl, StringComparison.OrdinalIgnoreCase);
+                ValidateDownloadedZip(zipPath, expectedSha256, requireSha256: usedCustomMirror);
                 return;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -249,7 +251,7 @@ public sealed class AppUpdateService
         File.Move(tmpPath, destinationPath, overwrite: true);
     }
 
-    private static void ValidateDownloadedZip(string zipPath, string expectedSha256)
+    private static void ValidateDownloadedZip(string zipPath, string expectedSha256, bool requireSha256 = false)
     {
         if (!File.Exists(zipPath) || new FileInfo(zipPath).Length < 4)
             throw new InvalidDataException("下载的更新包为空或已损坏。");
@@ -260,6 +262,9 @@ public sealed class AppUpdateService
             int n = fs.Read(header, 0, 2);
             if (n < 2 || header[0] != (byte)'P' || header[1] != (byte)'K')
                 throw new InvalidDataException("下载结果不是有效的 ZIP 压缩包（镜像站可能返回了异常页面）。");
+
+            if (requireSha256 && string.IsNullOrWhiteSpace(expectedSha256))
+                throw new InvalidDataException("自定义镜像下载缺少 SHA-256 校验值，已拒绝并回退直连 GitHub。");
 
             if (!string.IsNullOrWhiteSpace(expectedSha256))
             {
@@ -302,7 +307,7 @@ try {
     }
 
     $normTarget = [System.IO.Path]::GetFullPath($TargetDir).TrimEnd('\') + '\'
-    foreach ($procName in @("GearDeck.Widget", "GearDeck.App")) {
+    foreach ($procName in @("GearDeck.Widget", "GearDeck.Monitor", "GearDeck.App")) {
         Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
             try {
                 $path = $_.MainModule.FileName

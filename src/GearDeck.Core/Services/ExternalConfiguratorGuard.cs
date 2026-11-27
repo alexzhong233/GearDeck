@@ -31,6 +31,9 @@ public static class ExternalConfiguratorGuard
         "AMasterDriver",
         "ATK HUB",
         "ATK V HUB",
+        "OemDrv",
+        "LEOBOG",
+        "LEOBOG ONE",
     ];
 
     private static readonly string[] BrowserProcessNames =
@@ -70,6 +73,9 @@ public static class ExternalConfiguratorGuard
         "Pulsar",
         "Bibimbap",
         "Scyrox",
+        "MLOONG",
+        "mloongplanet",
+        "LEOBOG",
     ];
 
     private static long _manualPauseUntilTicks;
@@ -123,6 +129,8 @@ public static class ExternalConfiguratorGuard
     private static bool TryDetectForegroundConfigurator(out string? detectedLabel)
     {
         detectedLabel = null;
+        if (!OperatingSystem.IsWindows())
+            return false;
         try
         {
             IntPtr hwnd = GetForegroundWindow();

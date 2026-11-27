@@ -1,0 +1,47 @@
+<UserControl
+    x:Class="GearDeck.Desktop.Views.MonitorView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:CompileBindings="False">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.meta">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24,18,24,28" Spacing="14">
+            <StackPanel Spacing="4">
+                <TextBlock Text="系统监控" FontSize="26" FontWeight="SemiBold" />
+                <TextBlock Classes="meta" Text="12 项实时硬件与网络指标每秒采样；可配置任务栏双指标，并显示可拖动的桌面悬浮监控条。" />
+            </StackPanel>
+
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="任务栏双指标" FontSize="16" FontWeight="SemiBold" />
+                    <ToggleSwitch x:Name="MonitorSwitch" OnContent="在任务栏贴片中显示系统监控" OffContent="仅显示外设电量" />
+                    <WrapPanel>
+                        <ComboBox x:Name="TopMetricBox" MinWidth="210" Margin="0,0,8,8" />
+                        <ComboBox x:Name="BottomMetricBox" MinWidth="210" Margin="0,0,8,8" />
+                    </WrapPanel>
+                    <TextBlock x:Name="StatusText" Classes="meta" />
+                    <WrapPanel>
+                        <Button x:Name="FloatingToggleBtn" Content="显示桌面悬浮监控条" Margin="0,0,8,8" />
+                        <Button x:Name="GoWidgetBtn" Content="前往「任务栏贴片」→" Margin="0,0,8,8" />
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <StackPanel Spacing="4">
+                <TextBlock Text="实时指标（12 项）" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Classes="meta" Text="下方读数每秒刷新；无读数的指标会显示「无读数」或不适用说明。" />
+            </StackPanel>
+            <WrapPanel x:Name="MetricsHost" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -58,8 +58,12 @@ public sealed partial class MonitorWindow : Window
 
     private static double RamUsedPercent()
     {
-        var status = new NativeMemoryStatus();
-        GlobalMemoryStatusEx(ref status);
+        var status = new NativeMemoryStatus
+        {
+            Length = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMemoryStatus>(),
+        };
+        if (!GlobalMemoryStatusEx(ref status) || status.TotalPhys == 0)
+            return 0;
         return 100.0 * (status.TotalPhys - status.AvailPhys) / status.TotalPhys;
     }
 

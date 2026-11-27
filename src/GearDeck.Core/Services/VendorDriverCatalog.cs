@@ -84,6 +84,15 @@ public static class VendorDriverCatalog
         null,
         "https://www.flydigi.com/index/down");
 
+    private static readonly LocalDriverInfo LeobogLocal = new(
+        "leobog",
+        "打开 LEOBOG ONE 驱动",
+        ["OemDrv", "LEOBOG ONE"],
+        [],
+        ["LEOBOG ONE", "LEOBOG"],
+        null,
+        "https://www.leobog.com/");
+
     private static readonly WebDriverInfo RazerWeb = new("razer", "打开雷蛇网页驱动", "https://synapse.razer.com");
     private static readonly WebDriverInfo FlydigiWeb = new("flydigi", "打开飞智网页空间站", "https://space_station.flydigi.com/");
     private static readonly WebDriverInfo AtkWeb = new("atk", "打开 ATK 网页驱动", "https://hub.atk.pro");
@@ -96,6 +105,7 @@ public static class VendorDriverCatalog
     private static readonly WebDriverInfo KeychronWeb = new("keychron", "打开 Keychron Launcher", "https://launcher.keychron.com");
     private static readonly WebDriverInfo PulsarWeb = new("pulsar", "打开 Pulsar Bibimbap", "https://bibimbap.pulsar.gg");
     private static readonly WebDriverInfo ScyroxWeb = new("scyrox", "打开 Scyrox 网页驱动", "https://scyrox.net");
+    private static readonly WebDriverInfo MloongWeb = new("mloong", "打开 MLOONG HUB 网页驱动", "https://hub.mloongplanet.com/");
 
     public static VendorDriverLinks Resolve(PeripheralDevice? device)
     {
@@ -145,6 +155,13 @@ public static class VendorDriverCatalog
 
         if (vid is 0x3710 || name.Contains("pulsar"))
             return new VendorDriverLinks(null, PulsarWeb);
+
+        if (vid is 0xA8A4 or 0xA8A5 || id.StartsWith("mloong:") || prov.Contains("mloong") || name.Contains("mx301") || name.Contains("mloong"))
+            return new VendorDriverLinks(null, MloongWeb);
+
+        if ((vid is 0x258A or 0x3554 && (id.StartsWith("leobog:") || name.Contains("leobog") || name.Contains("hi98"))) ||
+            id.StartsWith("leobog:") || prov.Contains("leobog"))
+            return new VendorDriverLinks(LeobogLocal, null);
 
         if (name.Contains("scyrox"))
             return new VendorDriverLinks(null, ScyroxWeb);

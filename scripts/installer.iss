@@ -31,7 +31,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 OutputDir={#OutputDir}
 OutputBaseFilename=GearDeck-Setup-{#MyAppTag}-win-{#Platform}
 SetupIconFile=..\src\GearDeck.App\Assets\app.ico
-UninstallDisplayIcon={app}\GearDeck.App.exe
+UninstallDisplayIcon={app}\GearDeck.Desktop.exe
 Compression=lzma2/normal
 SolidCompression=yes
 WizardStyle=modern
@@ -47,18 +47,19 @@ Name: "desktopicon"; Description: "Create desktop shortcut for GearDeck"; GroupD
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\GearDeck"; Filename: "{app}\GearDeck.App.exe"
+Name: "{group}\GearDeck"; Filename: "{app}\GearDeck.Desktop.exe"
 Name: "{group}\Uninstall GearDeck"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\GearDeck"; Filename: "{app}\GearDeck.App.exe"; Tasks: desktopicon
+Name: "{autodesktop}\GearDeck"; Filename: "{app}\GearDeck.Desktop.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\GearDeck.App.exe"; Description: "Launch GearDeck now"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\GearDeck.Desktop.exe"; Description: "Launch GearDeck now"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure StopRunningGearDeck();
 var
   ResultCode: Integer;
 begin
+  Exec('taskkill.exe', '/F /IM GearDeck.Desktop.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill.exe', '/F /IM GearDeck.App.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill.exe', '/F /IM GearDeck.Widget.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;

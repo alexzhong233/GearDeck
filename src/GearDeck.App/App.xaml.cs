@@ -31,6 +31,8 @@ public partial class App : Application
     private static DispatcherTimer? _commandTimer;
     private static long _lastCommandSeq;
     private static long _lastPositionSeq;
+    private static DateTime _lastCommandWriteUtc;
+    private static DateTime _lastPositionWriteUtc;
     private static long _startedAt;
     private static long _lastResumeRefreshTicks;
 
@@ -115,6 +117,7 @@ public partial class App : Application
             new MchoseProvider(), new AngryMiaoProvider(), new AulaProvider(), new RogProvider(),
             new SonyInzoneProvider(), new FlydigiProvider(),
             new CorsairProvider(), new SteelSeriesProvider(), new HyperXProvider(),
+            new MloongProvider(), new LeobogProvider(),
             new GamepadBatteryProvider(), new BluetoothBatteryProvider(),
         });
         Devices.DevicesUpdated += OnDevicesUpdated;
@@ -240,8 +243,12 @@ public partial class App : Application
 
     private static void StartCommandWatcher()
     {
-        _lastCommandSeq = ReadInitialSeq(Path.Combine(StateDir, "widget-command.json"));
-        _lastPositionSeq = ReadInitialSeq(Path.Combine(StateDir, "widget-position.json"));
+        string cmdPath = Path.Combine(StateDir, "widget-command.json");
+        string posPath = Path.Combine(StateDir, "widget-position.json");
+        _lastCommandSeq = ReadInitialSeq(cmdPath);
+        _lastPositionSeq = ReadInitialSeq(posPath);
+        try { if (File.Exists(cmdPath)) _lastCommandWriteUtc = File.GetLastWriteTimeUtc(cmdPath); } catch { }
+        try { if (File.Exists(posPath)) _lastPositionWriteUtc = File.GetLastWriteTimeUtc(posPath); } catch { }
         _commandTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _commandTimer.Tick += (_, _) => { PollCommand(); PollPosition(); };
         _commandTimer.Start();
@@ -268,7 +275,11 @@ public partial class App : Application
         {
             var path = Path.Combine(StateDir, "widget-command.json");
             if (!File.Exists(path)) return;
+            DateTime writeUtc = File.GetLastWriteTimeUtc(path);
+            if (writeUtc == _lastCommandWriteUtc) return;
+
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            _lastCommandWriteUtc = writeUtc;
             var root = doc.RootElement;
             if (!root.TryGetProperty("Seq", out var seqEl)) return;
             long seq = seqEl.GetInt64();
@@ -317,7 +328,11 @@ public partial class App : Application
         {
             var path = Path.Combine(StateDir, "widget-position.json");
             if (!File.Exists(path)) return;
+            DateTime writeUtc = File.GetLastWriteTimeUtc(path);
+            if (writeUtc == _lastPositionWriteUtc) return;
+
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            _lastPositionWriteUtc = writeUtc;
             var root = doc.RootElement;
             if (!root.TryGetProperty("Seq", out var seqEl)) return;
             long seq = seqEl.GetInt64();
@@ -415,20 +430,7 @@ public partial class App : Application
     private static void OnDevicesUpdated(IReadOnlyList<PeripheralDevice> devices)
     {
         LastDevices = devices;
-        bool receiverChanged = false;
-        foreach (var d in devices)
-        {
-            if (d.Id.StartsWith("atk:", StringComparison.OrdinalIgnoreCase)
-                && !AtkModelCatalog.IsGenericReceiverName(d.Name))
-            {
-                if (!Settings.Current.KnownReceiverModels.TryGetValue(d.Id, out var prev)
-                    || !string.Equals(prev, d.Name, StringComparison.Ordinal))
-                {
-                    Settings.Current.KnownReceiverModels[d.Id] = d.Name;
-                    receiverChanged = true;
-                }
-            }
-        }
+        bool receiverChanged = Settings.UpdateKnownReceiverModels(devices);
         bool batChanged = Settings.RecordObservedDevices(devices);
         if (receiverChanged && !batChanged)
             Settings.Save();

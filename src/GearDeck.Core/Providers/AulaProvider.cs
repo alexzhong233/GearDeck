@@ -299,9 +299,12 @@ public sealed class AulaProvider : ITunablePeripheralProvider
 
     private static bool IsAulaDevice(HidDevice d)
     {
+        string upper = HidSafe.ProductName(d).ToUpperInvariant();
+        if (upper.Contains("LEOBOG") || upper.Contains("HI98")) return false;
         if (d.VendorID == 0x38A6) return true;
         if (d.VendorID == 0x258A && d.ProductID is 0x0138 or 0x0136) return true;
-        string upper = HidSafe.ProductName(d).ToUpperInvariant();
+        if (d.VendorID == 0x3554 && d.ProductID == 0xFA09 && HidSafe.EnumerateDevices(0x258A, 0x010C).Count > 0)
+            return false;
         if (d.VendorID == 0x3554 && (d.ProductID is 0xFA09 or 0xFA0A || upper.Contains("AULA")))
             return true;
         if (d.VendorID == 0x25A7 && upper.Contains("AULA"))

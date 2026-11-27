@@ -28,7 +28,10 @@ public sealed class GamepadBatteryProvider : IPeripheralProvider
         bool hasFlydigi = HidSafe.EnumerateDevicesByVendor(0x37D7).Any(d => (d.ProductID >> 12) == 2);
 
         try { PollPlayStation(results); } catch (Exception ex) { Diag.Log($"DualSense/DS4: {ex.Message}"); }
-        try { PollXInput(results, skipGenericIfFlydigiAwake: hasFlydigi); } catch (Exception ex) { Diag.Log($"XInput: {ex.Message}"); }
+        if (OperatingSystem.IsWindows())
+        {
+            try { PollXInput(results, skipGenericIfFlydigiAwake: hasFlydigi); } catch (Exception ex) { Diag.Log($"XInput: {ex.Message}"); }
+        }
 
         return results;
     }

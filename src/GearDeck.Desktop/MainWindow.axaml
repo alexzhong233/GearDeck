@@ -1,0 +1,100 @@
+<windowing:AppWindow
+    x:Class="GearDeck.Desktop.MainWindow"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:FluentAvalonia.UI.Controls"
+    xmlns:windowing="using:FluentAvalonia.UI.Windowing"
+    x:CompileBindings="False"
+    Title="GearDeck"
+    Width="1260"
+    Height="820"
+    MinWidth="860"
+    MinHeight="560"
+    WindowStartupLocation="CenterScreen"
+    TransparencyLevelHint="Mica,AcrylicBlur,Blur"
+    Background="Transparent">
+
+    <Grid RowDefinitions="48,*">
+        <!-- WinUI Gallery 风格 48px 扩展标题栏 -->
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Height="48" ColumnDefinitions="Auto,*,Auto">
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"
+                        Margin="6,0,0,0">
+                <Button x:Name="TitleBarBackBtn" Width="36" Height="32" Padding="0" IsEnabled="False"
+                        Click="OnTitleBarBackClick">
+                    <TextBlock Text="&#xE72B;" FontFamily="Segoe Fluent Icons, $default" FontSize="12" />
+                </Button>
+                <Button x:Name="TitleBarPaneBtn" Width="36" Height="32" Padding="0"
+                        Click="OnTitleBarPaneClick">
+                    <TextBlock Text="&#xE700;" FontFamily="Segoe Fluent Icons, $default" FontSize="13" />
+                </Button>
+                <Image Source="avares://GearDeck.Desktop/Assets/app.png" Width="18" Height="18"
+                       Margin="8,0,8,0" VerticalAlignment="Center" />
+                <TextBlock x:Name="TitleBarText" Text="GearDeck" FontSize="12" VerticalAlignment="Center"
+                           Margin="0,0,12,0" />
+            </StackPanel>
+
+            <AutoCompleteBox x:Name="TitleBarSearchBox" Grid.Column="1" MaxWidth="380"
+                             Margin="12,0,12,0" VerticalAlignment="Center"
+                             ToolTip.Tip="搜索外设、游戏配置、鼠标宏或设置..."
+                             SelectionChanged="OnSearchSelectionChanged" KeyDown="OnSearchKeyDown" />
+
+            <Border x:Name="RightCaptionColumn" Grid.Column="2" Width="138" />
+        </Grid>
+
+        <ui:NavigationView Grid.Row="1" x:Name="RootNavigation" IsSettingsVisible="False"
+                           OpenPaneLength="230" CompactPaneLength="48" IsPaneOpen="True">
+            <ui:NavigationView.MenuItems>
+                <ui:NavigationViewItem x:Name="DevicesNav" Content="设备总览" Tag="devices">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE7F4;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="MouseNav" Content="鼠标" Tag="mouse">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE962;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="KeyboardNav" Content="键盘" Tag="keyboard">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE765;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="HeadsetNav" Content="耳机" Tag="headset">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE7F5;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="ControllerNav" Content="手柄" Tag="controller">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE7FC;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+
+                <ui:NavigationViewItemSeparator />
+
+                <ui:NavigationViewItem x:Name="GamesNav" Content="游戏与配置切换" Tag="games">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE7FC;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="SensitivityNav" Content="灵敏度换算" Tag="sensitivity">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE8EF;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="MacrosNav" Content="鼠标宏中心" Tag="macros">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE945;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="WidgetNav" Content="任务栏贴片" Tag="widget">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE7F8;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="MonitorNav" Content="系统监控" Tag="monitor">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE9D9;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="DiagnosticsNav" Content="诊断 (Debug)" Tag="diagnostics"
+                                       IsVisible="False">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE9D5;" /></ui:NavigationViewItem.IconSource>
+                </ui:NavigationViewItem>
+            </ui:NavigationView.MenuItems>
+
+            <ui:NavigationView.FooterMenuItems>
+                <ui:NavigationViewItem x:Name="SettingsNav" Content="设置" Tag="settings">
+                    <ui:NavigationViewItem.IconSource><ui:FontIconSource Glyph="&#xE713;" /></ui:NavigationViewItem.IconSource>
+                    <ui:NavigationViewItem.InfoBadge>
+                        <ui:InfoBadge x:Name="SettingsUpdateBadge" Value="1" IsVisible="False" />
+                    </ui:NavigationViewItem.InfoBadge>
+                </ui:NavigationViewItem>
+            </ui:NavigationView.FooterMenuItems>
+
+            <ui:NavigationView.Content>
+                <ContentControl x:Name="PageHost" />
+            </ui:NavigationView.Content>
+        </ui:NavigationView>
+    </Grid>
+</windowing:AppWindow>

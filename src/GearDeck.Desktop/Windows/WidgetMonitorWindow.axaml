@@ -1,0 +1,35 @@
+<Window
+    x:Class="GearDeck.Desktop.Windows.WidgetMonitorWindow"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:CompileBindings="False"
+    Title="GearDeck Monitor"
+    Width="336"
+    Height="300"
+    MinWidth="240"
+    MinHeight="110"
+    WindowStartupLocation="Manual"
+    SystemDecorations="None"
+    TransparencyLevelHint="AcrylicBlur"
+    Background="Transparent"
+    Topmost="True"
+    ShowInTaskbar="False"
+    CanResize="False">
+
+    <Border Background="#F4222020" BorderBrush="#28408080" BorderThickness="1"
+            CornerRadius="14" Padding="12">
+        <Grid RowDefinitions="Auto,*">
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Grid.Column="0" Text="⌁" FontSize="14" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="系统实时监控" FontSize="13" FontWeight="SemiBold"
+                           Margin="8,0,0,0" VerticalAlignment="Center" />
+                <Button x:Name="CloseBtn" Grid.Column="2" Content="×" Width="24" Height="24"
+                        Padding="0" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" />
+            </Grid>
+            <ScrollViewer Grid.Row="1" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="MetricHost" Spacing="6" />
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</Window>

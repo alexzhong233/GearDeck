@@ -131,7 +131,7 @@ public sealed class MacroExecutionService : IDisposable
         if (!_subscribedDevices && App.Devices != null)
         {
             _subscribedDevices = true;
-            App.Devices.DevicesUpdated += _ => RefreshSnapshotOnly();
+            App.Devices.DevicesUpdated += OnDevicesUpdated;
         }
 
         RefreshSnapshotOnly();
@@ -142,20 +142,27 @@ public sealed class MacroExecutionService : IDisposable
             StopHook();
     }
 
+    private void OnDevicesUpdated(IReadOnlyList<PeripheralDevice> _) => RefreshSnapshotOnly();
+
     private void RefreshSnapshotOnly()
     {
-        var rawBindings = App.Settings.Current.LocalButtonMacroBindings;
-        var bindings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var kv in rawBindings)
+        Dictionary<string, string> bindings;
+        Dictionary<string, OnboardMacroDefinition> macros;
+        lock (App.Settings.SyncRoot)
         {
-            if (!string.IsNullOrWhiteSpace(kv.Value))
-                bindings[kv.Key] = kv.Value;
-        }
+            var rawBindings = App.Settings.Current.LocalButtonMacroBindings;
+            bindings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in rawBindings)
+            {
+                if (!string.IsNullOrWhiteSpace(kv.Value))
+                    bindings[kv.Key] = kv.Value;
+            }
 
-        var macros = App.Settings.Current.Macros
-            .Where(m => !string.IsNullOrWhiteSpace(m.Id) && m.Steps.Count > 0)
-            .GroupBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => CloneMacro(g.First()), StringComparer.OrdinalIgnoreCase);
+            macros = App.Settings.Current.Macros
+                .Where(m => !string.IsNullOrWhiteSpace(m.Id) && m.Steps.Count > 0)
+                .GroupBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => CloneMacro(g.First()), StringComparer.OrdinalIgnoreCase);
+        }
 
         // 移除 !d.IsSleeping 限制：无线鼠标按下触发键的瞬间硬件已唤醒，不能因 UI 轮询缓存仍为 IsSleeping 而丢触发
         var mice = App.LastDevices
@@ -589,6 +596,11 @@ public sealed class MacroExecutionService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        if (_subscribedDevices && App.Devices != null)
+        {
+            App.Devices.DevicesUpdated -= OnDevicesUpdated;
+            _subscribedDevices = false;
+        }
         CancelPlayback();
         StopHook();
     }

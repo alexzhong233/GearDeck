@@ -101,21 +101,26 @@ public sealed class DeviceManager : IDisposable
     {
         if (!bypassCoexistenceGuard && ExternalConfiguratorGuard.IsBackgroundYieldActive(out string? yieldReason))
         {
+            bool hasCached = false;
             lock (_gate)
             {
                 if (_lastKnown.Count > 0)
                 {
                     Diag.Log($"[Coexistence] 跳过本轮后台 HID 轮询: {yieldReason}");
                     LastScanCompletedUtc = DateTimeOffset.UtcNow;
-                    ScanCompleted?.Invoke();
-                    return Task.CompletedTask;
+                    hasCached = true;
                 }
+            }
+            if (hasCached)
+            {
+                ScanCompleted?.Invoke();
+                return Task.CompletedTask;
             }
         }
 
-        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
+        if (_disposed || Interlocked.CompareExchange(ref _running, 1, 0) != 0)
         {
-            if (isHotplug)
+            if (isHotplug && !_disposed)
                 Interlocked.Exchange(ref _pendingHotplugRefresh, 1);
             return Task.CompletedTask;
         }
@@ -125,8 +130,15 @@ public sealed class DeviceManager : IDisposable
             bool acquired = false;
             try
             {
-                acquired = await _hidLock.WaitAsync(TimeSpan.FromSeconds(8));
-                if (!acquired) return;
+                try
+                {
+                    acquired = await _hidLock.WaitAsync(TimeSpan.FromSeconds(8));
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+                if (!acquired || _disposed) return;
 
                 foreach (var line in Diag.DumpHidInventory())
                     Diag.Log(line);
@@ -146,10 +158,15 @@ public sealed class DeviceManager : IDisposable
                         return (Provider: p, Succeeded: false, Items: (IReadOnlyList<PeripheralDevice>)Array.Empty<PeripheralDevice>());
                     }
                 }).ToArray();
-                Task.WaitAll(tasks, TimeSpan.FromSeconds(6));
+                var allTasks = Task.WhenAll(tasks);
+                bool allDone = await Task.WhenAny(allTasks, Task.Delay(TimeSpan.FromSeconds(6))) == allTasks;
+                if (!allDone)
+                    Diag.Log("部分设备提供器扫描超过 6s 超时，已先汇总已完成项");
 
+                List<PeripheralDevice> list;
                 lock (_gate)
                 {
+                    if (_disposed) return;
                     foreach (var t in tasks)
                     {
                         if (t.IsCompletedSuccessfully && t.Result.Succeeded)
@@ -167,11 +184,18 @@ public sealed class DeviceManager : IDisposable
                     foreach (var kv in unified.ActiveTransportRouting)
                         _activeTransportRouting[kv.Key] = kv.Value;
 
-                    var list = _lastKnown.Values.OrderBy(d => d.Kind).ThenBy(d => d.Name).ToList();
-                    DevicesUpdated?.Invoke(list);
+                    list = _lastKnown.Values.OrderBy(d => d.Kind).ThenBy(d => d.Name).ToList();
                     LastScanCompletedUtc = DateTimeOffset.UtcNow;
+                }
+
+                if (!_disposed)
+                {
+                    DevicesUpdated?.Invoke(list);
                     ScanCompleted?.Invoke();
                 }
+            }
+            catch (ObjectDisposedException)
+            {
             }
             catch (Exception ex)
             {
@@ -179,7 +203,10 @@ public sealed class DeviceManager : IDisposable
             }
             finally
             {
-                if (acquired) _hidLock.Release();
+                if (acquired)
+                {
+                    try { _hidLock.Release(); } catch (ObjectDisposedException) { }
+                }
                 Interlocked.Exchange(ref _running, 0);
                 if (!_disposed && Interlocked.Exchange(ref _pendingHotplugRefresh, 0) == 1)
                     _ = RefreshAsync(bypassCoexistenceGuard: false, isHotplug: false);
@@ -189,6 +216,16 @@ public sealed class DeviceManager : IDisposable
 
     public async Task<DeviceTuningCapabilities> QueryCapabilitiesAsync(string deviceId)
     {
+        if (_disposed)
+        {
+            return new DeviceTuningCapabilities
+            {
+                DeviceId = deviceId,
+                IsOnline = false,
+                StatusMessage = "设备管理器已关闭。",
+            };
+        }
+
         string effectiveId = ResolveActiveDeviceId(deviceId);
         var provider = _providers.OfType<ITunablePeripheralProvider>().FirstOrDefault(p => p.CanHandleDevice(effectiveId));
         if (provider == null && !string.Equals(effectiveId, deviceId, StringComparison.OrdinalIgnoreCase))
@@ -207,12 +244,20 @@ public sealed class DeviceManager : IDisposable
             };
         }
 
-        await _hidLock.WaitAsync();
+        bool acquired = false;
         try
         {
+            await _hidLock.WaitAsync();
+            acquired = true;
+            if (_disposed)
+                return new DeviceTuningCapabilities { DeviceId = deviceId, IsOnline = false, StatusMessage = "设备管理器已关闭。" };
             var caps = await Task.Run(() => provider.QueryCapabilities(effectiveId));
             caps.DeviceId = deviceId;
             return caps;
+        }
+        catch (ObjectDisposedException)
+        {
+            return new DeviceTuningCapabilities { DeviceId = deviceId, IsOnline = false, StatusMessage = "设备管理器已关闭。" };
         }
         catch (Exception ex)
         {
@@ -226,12 +271,18 @@ public sealed class DeviceManager : IDisposable
         }
         finally
         {
-            _hidLock.Release();
+            if (acquired)
+            {
+                try { _hidLock.Release(); } catch (ObjectDisposedException) { }
+            }
         }
     }
 
     public async Task<DeviceTuningResult> ApplySettingsAsync(string deviceId, DeviceTuningUpdate update)
     {
+        if (_disposed)
+            return new DeviceTuningResult(false, "设备管理器已关闭。");
+
         string effectiveId = ResolveActiveDeviceId(deviceId);
         var provider = _providers.OfType<ITunablePeripheralProvider>().FirstOrDefault(p => p.CanHandleDevice(effectiveId));
         if (provider == null && !string.Equals(effectiveId, deviceId, StringComparison.OrdinalIgnoreCase))
@@ -243,13 +294,21 @@ public sealed class DeviceManager : IDisposable
         if (provider == null)
             return new DeviceTuningResult(false, "该设备暂不支持写入硬件参数。");
 
-        await _hidLock.WaitAsync();
+        bool acquired = false;
         try
         {
+            await _hidLock.WaitAsync();
+            acquired = true;
+            if (_disposed)
+                return new DeviceTuningResult(false, "设备管理器已关闭。");
             var res = await Task.Run(() => provider.ApplySettings(effectiveId, update));
             if (res.Capabilities != null)
                 res.Capabilities.DeviceId = deviceId;
             return res;
+        }
+        catch (ObjectDisposedException)
+        {
+            return new DeviceTuningResult(false, "设备管理器已关闭。");
         }
         catch (Exception ex)
         {
@@ -258,7 +317,10 @@ public sealed class DeviceManager : IDisposable
         }
         finally
         {
-            _hidLock.Release();
+            if (acquired)
+            {
+                try { _hidLock.Release(); } catch (ObjectDisposedException) { }
+            }
         }
     }
 

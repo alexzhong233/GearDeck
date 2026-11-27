@@ -11,6 +11,10 @@ param(
 
     [string]$Platform = "x64",
 
+    [string]$AppOutDir = "",
+
+    [switch]$SkipRootLatestJson,
+
     [switch]$RequireInstaller
 )
 
@@ -20,12 +24,23 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$appOutDir = Join-Path $repoRoot "src\GearDeck.App\bin\$Platform\$Configuration\net8.0-windows10.0.22621.0"
-$appExe = Join-Path $appOutDir "GearDeck.App.exe"
-$widgetExe = Join-Path $appOutDir "widget\GearDeck.Widget.exe"
+if ([string]::IsNullOrWhiteSpace($AppOutDir)) {
+    $resolvedAppOutDir = Join-Path $repoRoot "src\GearDeck.Desktop\bin\$Configuration\net8.0"
+}
+else {
+    $resolvedAppOutDir = if ([System.IO.Path]::IsPathRooted($AppOutDir)) {
+        $AppOutDir
+    } else {
+        Join-Path $repoRoot $AppOutDir
+    }
+    $resolvedAppOutDir = [System.IO.Path]::GetFullPath($resolvedAppOutDir)
+}
+
+$appExe = Join-Path $resolvedAppOutDir "GearDeck.Desktop.exe"
+$widgetExe = Join-Path $resolvedAppOutDir "widget\GearDeck.Widget.exe"
 
 if (-not (Test-Path $appExe)) {
-    throw "GearDeck.App.exe not found at: $appExe"
+    throw "GearDeck.Desktop.exe not found at: $appExe"
 }
 if (-not (Test-Path $widgetExe)) {
     throw "GearDeck.Widget.exe not found at: $widgetExe"
@@ -44,14 +59,14 @@ if (Test-Path $releaseDir) {
 New-Item -ItemType Directory -Path $fullStage -Force | Out-Null
 New-Item -ItemType Directory -Path $patchStage -Force | Out-Null
 
-Write-Host "[package-release] Staging full portable release from $appOutDir ..."
+Write-Host "[package-release] Staging full portable release from $resolvedAppOutDir ..."
 
 # 1. Full standalone release staging (exclude PDBs and dev runtimeconfig)
-Get-ChildItem -Path $appOutDir -Recurse -File | ForEach-Object {
+Get-ChildItem -Path $resolvedAppOutDir -Recurse -File | ForEach-Object {
     if ($_.Extension -eq ".pdb" -or $_.Name -like "*.runtimeconfig.dev.json") {
         return
     }
-    $rel = $_.FullName.Substring($appOutDir.Length).TrimStart('\', '/')
+    $rel = $_.FullName.Substring($resolvedAppOutDir.Length).TrimStart('\', '/')
     $dest = Join-Path $fullStage $rel
     $destDir = Split-Path -Parent $dest
     if (-not (Test-Path $destDir)) {
@@ -100,42 +115,31 @@ else {
 
 Write-Host "[package-release] Staging fast patch release ..."
 
-# 3. Fast binary & UI patch zip for in-app self-update (reuses existing WinAppSDK runtime DLLs)
+# 3. Fast binary & UI patch zip for in-app self-update
 $rootPatchNames = @(
-    "GearDeck.App.exe",
-    "GearDeck.App.dll",
-    "GearDeck.App.deps.json",
-    "GearDeck.App.runtimeconfig.json",
+    "GearDeck.Desktop.exe",
+    "GearDeck.Desktop.dll",
+    "GearDeck.Desktop.deps.json",
+    "GearDeck.Desktop.runtimeconfig.json",
     "GearDeck.Core.dll",
-    "HidSharp.dll",
-    "resources.pri"
+    "HidSharp.dll"
 )
 
 foreach ($name in $rootPatchNames) {
-    $src = Join-Path $appOutDir $name
+    $src = Join-Path $resolvedAppOutDir $name
     if (Test-Path $src) {
         Copy-Item -Path $src -Destination (Join-Path $patchStage $name) -Force
     }
 }
 
-Get-ChildItem -Path $appOutDir -Filter "*.xbf" -Recurse -File | ForEach-Object {
-    $rel = $_.FullName.Substring($appOutDir.Length).TrimStart('\', '/')
-    $dest = Join-Path $patchStage $rel
-    $destDir = Split-Path -Parent $dest
-    if (-not (Test-Path $destDir)) {
-        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-    }
-    Copy-Item -Path $_.FullName -Destination $dest -Force
-}
-
 foreach ($sub in @("Assets", "widget")) {
-    $srcSub = Join-Path $appOutDir $sub
+    $srcSub = Join-Path $resolvedAppOutDir $sub
     if (Test-Path $srcSub) {
         Get-ChildItem -Path $srcSub -Recurse -File | ForEach-Object {
             if ($_.Extension -eq ".pdb" -or $_.Name -like "*.runtimeconfig.dev.json") {
                 return
             }
-            $rel = $_.FullName.Substring($appOutDir.Length).TrimStart('\', '/')
+            $rel = $_.FullName.Substring($resolvedAppOutDir.Length).TrimStart('\', '/')
             $dest = Join-Path $patchStage $rel
             $destDir = Split-Path -Parent $dest
             if (-not (Test-Path $destDir)) {
@@ -183,9 +187,12 @@ $jsonText = $manifest | ConvertTo-Json -Depth 4
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 $releaseLatestPath = Join-Path $releaseDir "latest.json"
-$rootLatestPath = Join-Path $repoRoot "latest.json"
 [System.IO.File]::WriteAllText($releaseLatestPath, $jsonText, $utf8NoBom)
-[System.IO.File]::WriteAllText($rootLatestPath, $jsonText, $utf8NoBom)
+
+if (-not $SkipRootLatestJson) {
+    $rootLatestPath = Join-Path $repoRoot "latest.json"
+    [System.IO.File]::WriteAllText($rootLatestPath, $jsonText, $utf8NoBom)
+}
 
 Write-Host "[package-release] Done:"
 Write-Host "  Full     : $fullZipPath ($fullSize bytes, SHA256=$fullHash)"
@@ -193,4 +200,4 @@ Write-Host "  Patch    : $patchZipPath ($patchSize bytes, SHA256=$patchHash)"
 if ($installerBuilt) {
     Write-Host "  Installer: $installerExePath ($installerSize bytes, SHA256=$installerHash)"
 }
-Write-Host "  JSON     : $releaseLatestPath & $rootLatestPath"
+Write-Host "  JSON     : $releaseLatestPath"

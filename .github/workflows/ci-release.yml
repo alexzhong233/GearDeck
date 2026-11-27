@@ -1,4 +1,4 @@
-name: CI & Release
+name: CI & Release (Windows + macOS)
 
 on:
   push:
@@ -9,15 +9,24 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version override (e.g. 1.0.2)'
+        description: 'Release version override (e.g. 2.0.0-beta.1)'
         required: false
+      prerelease:
+        description: 'Publish as pre-release (Beta)'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 jobs:
-  build-test-package:
+  build-windows:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
 
     steps:
       - name: Checkout repository
@@ -31,7 +40,7 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Resolve package version
+      - name: Resolve package version & release channel
         id: ver
         shell: pwsh
         run: |
@@ -43,20 +52,39 @@ jobs:
             [xml]$props = Get-Content "Directory.Build.props"
             $v = $props.Project.PropertyGroup.Version.Trim()
           }
+          $tag = "v$v"
+          $isPre = ($v -match '-') -or ("${{ github.event.inputs.prerelease }}" -eq "true")
+          $preFlag = if ($isPre) { "true" } else { "false" }
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Resolved Version: $v"
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "prerelease=$preFlag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Resolved Version: $v (tag=$tag, prerelease=$preFlag)"
 
-      - name: Restore and run unit tests
+      - name: Restore and run unit tests (Windows)
         run: |
-          dotnet restore GearDeck.slnx
+          dotnet restore tests\GearDeck.Tests\GearDeck.Tests.csproj
           dotnet test tests\GearDeck.Tests\GearDeck.Tests.csproj -c Release --no-restore
 
-      - name: Restore and Build GearDeck.Widget and GearDeck.App (Release x64)
+      - name: Publish self-contained Windows bundle (Desktop + Widget)
+        shell: pwsh
         run: |
-          msbuild src\GearDeck.Widget\GearDeck.Widget.csproj /t:Restore /p:Configuration=Release /p:Platform=x64
-          msbuild src\GearDeck.Widget\GearDeck.Widget.csproj /t:Build /p:Configuration=Release /p:Platform=x64
-          msbuild src\GearDeck.App\GearDeck.App.csproj /t:Restore /p:Configuration=Release /p:Platform=x64
-          msbuild src\GearDeck.App\GearDeck.App.csproj /t:Build /p:Configuration=Release /p:Platform=x64
+          $v = "${{ steps.ver.outputs.version }}"
+          dotnet publish src\GearDeck.Desktop\GearDeck.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Version=$v -o publish\win-x64
+          dotnet publish src\GearDeck.Widget\GearDeck.Widget.csproj -c Release -r win-x64 --self-contained true -p:Version=$v -o publish\win-x64\widget
+
+      - name: Run GearDeck.Widget self-checks
+        shell: pwsh
+        run: |
+          $w = "publish\win-x64\widget\GearDeck.Widget.exe"
+          $p1 = Start-Process -FilePath $w -ArgumentList '--render-test="publish\r.png"' -Wait -PassThru -NoNewWindow
+          $p2 = Start-Process -FilePath $w -ArgumentList '--window-test="publish\w.png"' -Wait -PassThru -NoNewWindow
+          if ($p1.ExitCode -ne 0 -or $p2.ExitCode -ne 0) {
+            throw "Widget check failed: render=$($p1.ExitCode), window=$($p2.ExitCode)"
+          }
+          if (-not (Test-Path "publish\r.png") -or -not (Test-Path "publish\w.png")) {
+            throw "Widget test PNG outputs missing."
+          }
+          Remove-Item "publish\r.png","publish\w.png" -Force
 
       - name: Ensure Inno Setup 6 is installed
         shell: pwsh
@@ -65,34 +93,193 @@ jobs:
             choco install innosetup -y --no-progress
           }
 
-      - name: Package Installer (.exe), Portable ZIP, Patch ZIP, and latest.json
+      - name: Package Windows Installer, Portable ZIP, Patch ZIP & latest.json
         shell: pwsh
         run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\package-release.ps1 `
-            -Version "${{ steps.ver.outputs.version }}" `
-            -RepoSlug "${{ github.repository }}" `
-            -Configuration Release `
-            -Platform x64 `
-            -RequireInstaller
+          $argsList = @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", "scripts\package-release.ps1",
+            "-Version", "${{ steps.ver.outputs.version }}",
+            "-RepoSlug", "${{ github.repository }}",
+            "-Configuration", "Release",
+            "-Platform", "x64",
+            "-AppOutDir", "publish\win-x64",
+            "-RequireInstaller"
+          )
+          if ("${{ steps.ver.outputs.prerelease }}" -eq "true") {
+            $argsList += "-SkipRootLatestJson"
+          }
+          & pwsh @argsList
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Upload Release Artifacts
+      - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GearDeck-v${{ steps.ver.outputs.version }}-win-x64
+          name: GearDeck-${{ steps.ver.outputs.tag }}-win-x64
           path: |
-            releases/v${{ steps.ver.outputs.version }}/*.exe
-            releases/v${{ steps.ver.outputs.version }}/*.zip
-            releases/v${{ steps.ver.outputs.version }}/latest.json
+            releases/${{ steps.ver.outputs.tag }}/*.exe
+            releases/${{ steps.ver.outputs.tag }}/*.zip
+            releases/${{ steps.ver.outputs.tag }}/latest.json
+
+  build-macos:
+    runs-on: macos-latest
+    needs: build-windows
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [ osx-arm64, osx-x64 ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore and run unit tests (macOS)
+        run: |
+          dotnet restore tests/GearDeck.Tests/GearDeck.Tests.csproj
+          dotnet test tests/GearDeck.Tests/GearDeck.Tests.csproj -c Release --no-restore
+
+      - name: Publish self-contained macOS binary (${{ matrix.rid }})
+        env:
+          VER: ${{ needs.build-windows.outputs.version }}
+          RID: ${{ matrix.rid }}
+        run: |
+          dotnet publish src/GearDeck.Desktop/GearDeck.Desktop.csproj \
+            -c Release -r "${RID}" --self-contained true -p:Version="${VER}" -o "publish/${RID}"
+
+      - name: Build GearDeck.app bundle, DMG, and ZIP (${{ matrix.rid }})
+        env:
+          VER: ${{ needs.build-windows.outputs.version }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+          RID: ${{ matrix.rid }}
+        run: |
+          set -euo pipefail
+          STAGE="releases/${TAG}/mac-${RID}"
+          APP="${STAGE}/GearDeck.app"
+          mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources"
+
+          # Generate GearDeck.icns from app.png using sips + iconutil
+          ICONSET="${STAGE}/GearDeck.iconset"
+          mkdir -p "${ICONSET}"
+          SRC_PNG="src/GearDeck.App/Assets/app.png"
+          for sz in 16 32 128 256 512; do
+            sips -z $sz $sz "${SRC_PNG}" --out "${ICONSET}/icon_${sz}x${sz}.png" >/dev/null
+            sz2=$((sz * 2))
+            sips -z $sz2 $sz2 "${SRC_PNG}" --out "${ICONSET}/icon_${sz}x${sz}@2x.png" >/dev/null
+          done
+          iconutil -c icns "${ICONSET}" -o "${APP}/Contents/Resources/GearDeck.icns"
+          rm -rf "${ICONSET}"
+
+          # Copy self-contained payload (strip PDBs)
+          cp -R publish/${RID}/* "${APP}/Contents/MacOS/"
+          find "${APP}/Contents/MacOS" -name "*.pdb" -delete
+          chmod +x "${APP}/Contents/MacOS/GearDeck.Desktop"
+
+          SHORT_VER="${VER%%-*}"
+          cat <<'EOF' | sed 's/^          //' > "${APP}/Contents/Info.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>
+            <string>GearDeck</string>
+            <key>CFBundleDisplayName</key>
+            <string>GearDeck</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.geardeck.desktop</string>
+            <key>CFBundleVersion</key>
+            <string>__SHORT_VER__</string>
+            <key>CFBundleShortVersionString</key>
+            <string>__VER__</string>
+            <key>CFBundleExecutable</key>
+            <string>GearDeck.Desktop</string>
+            <key>CFBundleIconFile</key>
+            <string>GearDeck</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>12.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+            <key>NSInputMonitoringUsageDescription</key>
+            <string>GearDeck 需要输入监控/HID 访问权限以读取并调节键鼠硬件参数。</string>
+          </dict>
+          </plist>
+          EOF
+          sed -i '' "s/__SHORT_VER__/${SHORT_VER}/g; s/__VER__/${VER}/g" "${APP}/Contents/Info.plist"
+          plutil -lint "${APP}/Contents/Info.plist"
+
+          codesign --force --deep --sign - "${APP}"
+
+          OUT_DIR="releases/${TAG}"
+          ditto -c -k --sequesterRsrc --keepParent "${APP}" "${OUT_DIR}/GearDeck-${TAG}-${RID}.zip"
+
+          DMG_STAGE="${STAGE}/dmg"
+          mkdir -p "${DMG_STAGE}"
+          cp -R "${APP}" "${DMG_STAGE}/"
+          ln -s /Applications "${DMG_STAGE}/Applications"
+          hdiutil create -volname "GearDeck" -srcfolder "${DMG_STAGE}" -ov -format UDZO "${OUT_DIR}/GearDeck-${TAG}-${RID}.dmg"
+
+      - name: Upload macOS Artifacts (${{ matrix.rid }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: GearDeck-${{ needs.build-windows.outputs.tag }}-${{ matrix.rid }}
+          path: |
+            releases/${{ needs.build-windows.outputs.tag }}/GearDeck-*-${{ matrix.rid }}.dmg
+            releases/${{ needs.build-windows.outputs.tag }}/GearDeck-*-${{ matrix.rid }}.zip
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [ build-windows, build-macos ]
+
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Write release notes
+        env:
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          cat <<'EOF' | sed 's/^          //' > release-notes.md
+          ## GearDeck 跨平台预览版 (Windows + macOS Beta)
+
+          > 本版本基于 **Avalonia + FluentAvaloniaUI** 完成双端重构，保留外设调参、灵敏度换算、游戏配置自动切换、鼠标宏、系统监控与 Windows 任务栏贴片。
+
+          ### 下载说明
+          - **Windows (x64 · 免安装运行库)**：
+            - `GearDeck-Setup-*-win-x64.exe`：一键安装版（可平滑覆盖升级旧版）
+            - `GearDeck-v*-win-x64.zip`：绿色免安装压缩包
+          - **macOS (Apple Silicon M 系列请选 `osx-arm64`，Intel 请选 `osx-x64`)**：
+            - `GearDeck-v*-osx-*.dmg` / `.zip`（内置完整 `GearDeck.app`）
+            - **macOS 首次打开提示“已损坏/无法验证开发者”时**（因测试版未经过 Apple 公证），请先拖入 `/Applications` 后在终端执行：
+              ```bash
+              xattr -cr /Applications/GearDeck.app
+              ```
+            - 如需读取键盘/鼠标 HID 与监听前台应用，请在「系统设置 → 隐私与安全性」授予输入监控与辅助功能权限。
+
+          ### 本版亮点
+          - **全新跨平台桌面端 (`GearDeck.Desktop`)**：Win11 Mica / macOS AcrylicBlur 毛玻璃质感，兼容原有 `settings.json`
+          - **新增硬件支持**：名龙星球 `MLOONG MX301 PRO / PRO V2 / PRO X` 与 `LEOBOG Hi98C Pro`（USB-C / 2.4G / BT）
+          - **轮询频率可调**：HID 设备轮询默认 `15s`（`5~300s`），前台游戏检测默认 `1000ms`（`250~5000ms`）
+          EOF
+          ls -la dist/*
 
       - name: Publish GitHub Release on Tag
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: GearDeck ${{ github.ref_name }}
-          generate_release_notes: true
+          name: GearDeck ${{ github.ref_name }} (Beta)
+          prerelease: ${{ needs.build-windows.outputs.prerelease == 'true' }}
+          body_path: release-notes.md
           files: |
-            releases/v${{ steps.ver.outputs.version }}/GearDeck-Setup-*-win-x64.exe
-            releases/v${{ steps.ver.outputs.version }}/GearDeck-v*-win-x64.zip
-            releases/v${{ steps.ver.outputs.version }}/GearDeck-patch-v*-win-x64.zip
-            releases/v${{ steps.ver.outputs.version }}/latest.json
+            dist/**/*.exe
+            dist/**/*.dmg
+            dist/**/*.zip
+            dist/**/latest.json

@@ -1,0 +1,115 @@
+<UserControl
+    x:Class="GearDeck.Desktop.Views.WidgetView"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:FluentAvalonia.UI.Controls"
+    x:CompileBindings="False">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.meta">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24,18,24,28" Spacing="14">
+            <StackPanel Spacing="4">
+                <TextBlock Text="任务栏贴片" FontSize="26" FontWeight="SemiBold" />
+                <TextBlock Classes="meta" Text="配置贴片开关、嵌入/悬浮、对齐与偏移、尺寸字号、分组图标和任务栏监控双指标；macOS 仅显示菜单栏状态说明。" />
+            </StackPanel>
+
+            <StackPanel x:Name="MacStatusPanel" IsVisible="False" Spacing="6">
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="10" Padding="18">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="macOS 菜单栏状态" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Classes="meta" Text="macOS 没有 Windows 任务栏，贴片开关、嵌入/悬浮、对齐、水平偏移、尺寸字号、分组图标与双指标参数均不适用，已在下方隐藏。" />
+                        <TextBlock Classes="meta" Text="外设状态请通过屏幕顶部菜单栏图标与托盘菜单查看；系统监控可在「系统监控」页面或桌面悬浮监控条中查看。" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <StackPanel x:Name="WindowsWidgetPanel" Spacing="14">
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="10" Padding="18">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="显示与位置" FontSize="16" FontWeight="SemiBold" />
+                        <ToggleSwitch x:Name="VisibleSwitch" OnContent="显示任务栏贴片" OffContent="隐藏任务栏贴片" />
+                        <ToggleSwitch x:Name="EmbedSwitch" OnContent="固定到任务栏（取消则自由悬浮）" OffContent="自由悬浮（不固定到任务栏）" />
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="快捷位置预设" FontWeight="SemiBold" />
+                            <WrapPanel>
+                                <Button x:Name="PresetLeftWeatherBtn" Content="左侧（天气旁）" Margin="0,0,8,8" />
+                                <Button x:Name="PresetMidLeftBtn" Content="中左区域" Margin="0,0,8,8" />
+                                <Button x:Name="PresetMidRightBtn" Content="中右区域" Margin="0,0,8,8" />
+                                <Button x:Name="PresetRightTrayBtn" Content="右侧（托盘旁）" Margin="0,0,8,8" />
+                            </WrapPanel>
+                        </StackPanel>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="锚点基准" FontWeight="SemiBold" />
+                            <ComboBox x:Name="AlignCombo" MinWidth="280">
+                                <ComboBoxItem Content="靠左锚点（从左侧开始计算偏移）" />
+                                <ComboBoxItem Content="靠右锚点（从系统托盘左侧开始计算偏移）" />
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="水平位置微调（拖动滑块实时移动）" FontWeight="SemiBold" />
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <Slider x:Name="OffsetSlider" Grid.Column="0" Maximum="1200" Minimum="-1200"
+                                        VerticalAlignment="Center" Margin="0,0,10,0" />
+                                <ui:NumberBox x:Name="OffsetBox" Grid.Column="1" Width="150" Maximum="2000" Minimum="-2000"
+                                              Margin="0,0,10,0" />
+                                <Button x:Name="ResetOffsetBtn" Grid.Column="2" Content="偏移归零" VerticalAlignment="Center" />
+                            </Grid>
+                            <TextBlock Classes="meta" Text="方向统一为：负数向左移动，正数向右移动；也可在任务栏上按住贴片直接左右拖动。" />
+                        </StackPanel>
+
+                        <WrapPanel>
+                            <ui:NumberBox x:Name="HeightBox" Header="贴片高度" Maximum="60" Minimum="24" Width="160" Margin="0,0,8,8" />
+                            <ui:NumberBox x:Name="FontBox" Header="字号" Maximum="20" Minimum="9" Width="120" Margin="0,0,8,8" />
+                            <ui:NumberBox x:Name="BlockBox" Header="每组最小宽度" Maximum="220" Minimum="48" Width="160" Margin="0,0,8,8" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="10" Padding="18">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="分组与图标" FontSize="16" FontWeight="SemiBold" />
+                        <StackPanel x:Name="GroupHost" Spacing="10" />
+                        <TextBlock Text="新建自定义组" FontWeight="SemiBold" />
+                        <TextBox x:Name="GroupNameBox" Watermark="例如：FPS 鼠标" />
+                        <TextBlock Classes="meta" Text="选择设备" />
+                        <StackPanel x:Name="DeviceCheckHost" Spacing="4" />
+                        <Button x:Name="CreateGroupBtn" Content="创建组" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="10" Padding="18">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="任务栏监控双指标" FontSize="16" FontWeight="SemiBold" />
+                        <ToggleSwitch x:Name="MonitorSwitch" OnContent="在任务栏贴片中显示系统监控" OffContent="仅显示外设电量" />
+                        <WrapPanel>
+                            <ComboBox x:Name="TopMetricBox" MinWidth="210" Margin="0,0,8,8" />
+                            <ComboBox x:Name="BottomMetricBox" MinWidth="210" Margin="0,0,8,8" />
+                        </WrapPanel>
+                        <TextBlock x:Name="MonitorStatusText" Classes="meta" />
+                        <Button x:Name="GoMonitorBtn" Content="前往「系统监控」配置更多指标 →" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock x:Name="HintText" Classes="meta" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

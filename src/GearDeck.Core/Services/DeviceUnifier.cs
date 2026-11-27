@@ -66,6 +66,17 @@ public static partial class DeviceUnifier
         (0x37B0, 0x0009, 0x000A),
     ];
 
+    private static readonly (ushort WiredVid, ushort WiredPid, ushort WirelessVid, ushort WirelessPid)[] CrossVidTransportPairs =
+    [
+        // MLOONG
+        (0xA8A4, 0x2255, 0xA8A5, 0x2255), // MX301 PRO / V2
+        (0xA8A4, 0xFB36, 0xA8A5, 0xFB35), // MX301 PRO X
+
+        // LEOBOG
+        (0x258A, 0x010C, 0x3554, 0xFA09), // Hi98C Pro USB-C <-> 2.4G
+        (0x258A, 0x010C, 0x3554, 0xFA07), // Hi98C Pro USB-C <-> Bluetooth
+    ];
+
     private static readonly HashSet<string> NoiseTokens = new(StringComparer.OrdinalIgnoreCase)
     {
         "logitech", "razer", "wlmouse", "lamzu", "atk", "vxe", "vgn", "mchose",
@@ -82,10 +93,22 @@ public static partial class DeviceUnifier
     ];
 
     public static bool IsKnownTransportPair(ushort vid, ushort wiredPid, ushort wirelessPid)
+        => IsKnownTransportPair(vid, wiredPid, vid, wirelessPid);
+
+    public static bool IsKnownTransportPair(ushort wiredVid, ushort wiredPid, ushort wirelessVid, ushort wirelessPid)
     {
-        foreach (var pair in KnownTransportPairs)
+        if (wiredVid == wirelessVid)
         {
-            if (pair.VendorId == vid && pair.WiredPid == wiredPid && pair.WirelessPid == wirelessPid)
+            foreach (var pair in KnownTransportPairs)
+            {
+                if (pair.VendorId == wiredVid && pair.WiredPid == wiredPid && pair.WirelessPid == wirelessPid)
+                    return true;
+            }
+        }
+        foreach (var pair in CrossVidTransportPairs)
+        {
+            if (pair.WiredVid == wiredVid && pair.WiredPid == wiredPid &&
+                pair.WirelessVid == wirelessVid && pair.WirelessPid == wirelessPid)
                 return true;
         }
         return false;
@@ -99,6 +122,11 @@ public static partial class DeviceUnifier
             if (pair.VendorId == v && pair.WiredPid == p)
                 return true;
         }
+        foreach (var pair in CrossVidTransportPairs)
+        {
+            if (pair.WiredVid == v && pair.WiredPid == p)
+                return true;
+        }
         return false;
     }
 
@@ -108,6 +136,11 @@ public static partial class DeviceUnifier
         foreach (var pair in KnownTransportPairs)
         {
             if (pair.VendorId == v && pair.WirelessPid == p)
+                return true;
+        }
+        foreach (var pair in CrossVidTransportPairs)
+        {
+            if (pair.WirelessVid == v && pair.WirelessPid == p)
                 return true;
         }
         return false;
@@ -198,9 +231,9 @@ public static partial class DeviceUnifier
                 if (pairedWireless.Contains(wlIdx) || wlIdx == wIdx) continue;
                 var wireless = rawDevices[wlIdx];
                 if (wired.Kind != wireless.Kind) continue;
-                if (wireless.VendorId != wVid || wireless.ProductId is not { } wlPid) continue;
+                if (wireless.VendorId is not { } wlVid || wireless.ProductId is not { } wlPid) continue;
 
-                if (IsKnownTransportPair(wVid, wPid, wlPid))
+                if (IsKnownTransportPair(wVid, wPid, wlVid, wlPid))
                 {
                     pairedWireless.Add(wlIdx);
                     consumedWiredIdx.Add(wIdx);
