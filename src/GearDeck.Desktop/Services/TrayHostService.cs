@@ -76,7 +76,8 @@ public sealed class TrayHostService : IDisposable
         Action onExit,
         Action? onSystemResume = null,
         Action<string>? onOpenDevice = null,
-        Action? onOpenWidget = null)
+        Action? onOpenWidget = null,
+        Action? onSystemPowerOff = null)
     {
         _onOpenMain = onOpenMain;
         _onOpenGames = onOpenGames;
@@ -98,7 +99,8 @@ public sealed class TrayHostService : IDisposable
                 _onOpenWidget ?? _onOpenMain,
                 _onRefreshDevices,
                 _onExit,
-                _onSystemResume);
+                _onSystemResume,
+                onSystemPowerOff);
             return;
         }
 

@@ -31,6 +31,7 @@ public sealed class MacStatusBarService : IDisposable
     private static IntPtr s_targetClass;
     private static MenuActionDelegate? s_menuActionTrampoline;
     private static WakeNotificationDelegate? s_wakeTrampoline;
+    private static WakeNotificationDelegate? s_powerOffTrampoline;
     private static MacStatusBarService? s_activeInstance;
 
     private readonly Action _onOpenMain;
@@ -41,6 +42,7 @@ public sealed class MacStatusBarService : IDisposable
     private readonly Action _onRefreshDevices;
     private readonly Action _onExit;
     private readonly Action? _onSystemResume;
+    private readonly Action? _onSystemPowerOff;
 
     private readonly Dictionary<int, Action> _tagActions = new();
     private IntPtr _statusItem;
@@ -48,6 +50,7 @@ public sealed class MacStatusBarService : IDisposable
     private IntPtr _targetInstance;
     private IntPtr _monoFont;
     private IntPtr _wakeNotifName;
+    private IntPtr _powerOffNotifName;
     private DispatcherTimer? _metricsTimer;
     private bool _wakeRegistered;
     private bool _disposed;
@@ -62,7 +65,8 @@ public sealed class MacStatusBarService : IDisposable
         Action onOpenWidget,
         Action onRefreshDevices,
         Action onExit,
-        Action? onSystemResume)
+        Action? onSystemResume,
+        Action? onSystemPowerOff = null)
     {
         _onOpenMain = onOpenMain;
         _onOpenDevice = onOpenDevice;
@@ -72,6 +76,7 @@ public sealed class MacStatusBarService : IDisposable
         _onRefreshDevices = onRefreshDevices;
         _onExit = onExit;
         _onSystemResume = onSystemResume;
+        _onSystemPowerOff = onSystemPowerOff;
 
         if (!OperatingSystem.IsMacOS())
             return;
@@ -303,16 +308,30 @@ public sealed class MacStatusBarService : IDisposable
             IntPtr nc = objc_msgSend(ws, sel_registerName("notificationCenter"));
             if (nc == IntPtr.Zero) return;
             _wakeNotifName = CreateNsString("NSWorkspaceDidWakeNotification");
-            if (_wakeNotifName == IntPtr.Zero) return;
+            if (_wakeNotifName != IntPtr.Zero)
+            {
+                objc_msgSend_addObserver(
+                    nc,
+                    sel_registerName("addObserver:selector:name:object:"),
+                    _targetInstance,
+                    sel_registerName("onWakeNotification:"),
+                    _wakeNotifName,
+                    IntPtr.Zero);
+                _wakeRegistered = true;
+            }
 
-            objc_msgSend_addObserver(
-                nc,
-                sel_registerName("addObserver:selector:name:object:"),
-                _targetInstance,
-                sel_registerName("onWakeNotification:"),
-                _wakeNotifName,
-                IntPtr.Zero);
-            _wakeRegistered = true;
+            _powerOffNotifName = CreateNsString("NSWorkspaceWillPowerOffNotification");
+            if (_powerOffNotifName != IntPtr.Zero)
+            {
+                objc_msgSend_addObserver(
+                    nc,
+                    sel_registerName("addObserver:selector:name:object:"),
+                    _targetInstance,
+                    sel_registerName("onPowerOffNotification:"),
+                    _powerOffNotifName,
+                    IntPtr.Zero);
+                _wakeRegistered = true;
+            }
         }
         catch { }
     }
@@ -332,10 +351,13 @@ public sealed class MacStatusBarService : IDisposable
             IntPtr cls = objc_allocateClassPair(objc_getClass("NSObject"), "GearDeckMenuTarget", 0);
             s_menuActionTrampoline = OnObjCMenuAction;
             s_wakeTrampoline = OnObjCWakeNotification;
+            s_powerOffTrampoline = OnObjCPowerOffNotification;
             class_addMethod(cls, sel_registerName("onMenuItem:"),
                 Marshal.GetFunctionPointerForDelegate(s_menuActionTrampoline), "v@:@");
             class_addMethod(cls, sel_registerName("onWakeNotification:"),
                 Marshal.GetFunctionPointerForDelegate(s_wakeTrampoline), "v@:@");
+            class_addMethod(cls, sel_registerName("onPowerOffNotification:"),
+                Marshal.GetFunctionPointerForDelegate(s_powerOffTrampoline), "v@:@");
             objc_registerClassPair(cls);
             s_targetClass = cls;
         }
@@ -362,6 +384,14 @@ public sealed class MacStatusBarService : IDisposable
         catch { }
     }
 
+    private static void OnObjCPowerOffNotification(IntPtr self, IntPtr cmd, IntPtr notification)
+    {
+        var inst = s_activeInstance;
+        if (inst == null || inst._disposed) return;
+        try { inst._onSystemPowerOff?.Invoke(); }
+        catch { }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -383,7 +413,8 @@ public sealed class MacStatusBarService : IDisposable
                     if (nc != IntPtr.Zero)
                         objc_msgSend_ptr(nc, sel_registerName("removeObserver:"), _targetInstance);
                 }
-                if (_wakeNotifName != IntPtr.Zero) CFRelease(_wakeNotifName);
+                if (_wakeNotifName != IntPtr.Zero) { CFRelease(_wakeNotifName); _wakeNotifName = IntPtr.Zero; }
+                if (_powerOffNotifName != IntPtr.Zero) { CFRelease(_powerOffNotifName); _powerOffNotifName = IntPtr.Zero; }
                 if (_statusItem != IntPtr.Zero)
                 {
                     IntPtr sysBar = objc_msgSend(objc_getClass("NSStatusBar"), sel_registerName("systemStatusBar"));

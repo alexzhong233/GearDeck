@@ -34,6 +34,7 @@ public partial class App : Application
     private static DateTime _lastPositionWriteUtc;
     private static long _startedAt;
     private static long _lastResumeRefreshTicks;
+    private static volatile bool _systemShuttingDown;
 
     public static DeviceManager Devices { get; private set; } = null!;
     public static SettingsService Settings { get; private set; } = null!;
@@ -129,6 +130,7 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            desktop.ShutdownRequested += OnDesktopShutdownRequested;
 
             bool startMinimized = cmdArgs.Any(a => string.Equals(a, "--minimized", StringComparison.OrdinalIgnoreCase))
                 || Settings.Current.LaunchMinimizedToTray;
@@ -142,10 +144,11 @@ public partial class App : Application
             onOpenMacros: () => UiPost(() => { ShowMainWindowCore(); _mainWindow?.OpenMacrosPage(); }),
             onToggleWidget: () => UiPost(ToggleWidget),
             onRefreshDevices: RequestRefresh,
-            onExit: () => UiPost(ExitCore),
+            onExit: () => UiPost(() => ExitCore()),
             onSystemResume: ScheduleResumeRefresh,
             onOpenDevice: id => UiPost(() => { ShowMainWindowCore(); _mainWindow?.OpenDevice(id); }),
-            onOpenWidget: () => UiPost(() => { ShowMainWindowCore(); _mainWindow?.OpenWidgetPage(); }));
+            onOpenWidget: () => UiPost(() => { ShowMainWindowCore(); _mainWindow?.OpenWidgetPage(); }),
+            onSystemPowerOff: () => _systemShuttingDown = true);
 
         if (OperatingSystem.IsMacOS())
         {
@@ -527,6 +530,36 @@ public partial class App : Application
 
     public static void Exit() => (Application.Current as App)?.ExitCore();
 
+    public static bool ShouldCancelMacShutdown(bool isMacOs, bool isExiting, bool systemShuttingDown, bool closeToTray)
+        => isMacOs && !isExiting && !systemShuttingDown && closeToTray;
+
+    private void OnDesktopShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
+    {
+        if (ShouldCancelMacShutdown(
+                OperatingSystem.IsMacOS(),
+                IsExiting,
+                _systemShuttingDown,
+                Settings?.Current.CloseToTray == true))
+        {
+            e.Cancel = true;
+            UiPost(HideMainWindowToTray);
+            return;
+        }
+
+        if (!IsExiting)
+            ExitCore(invokeDesktopShutdown: false);
+    }
+
+    private void HideMainWindowToTray()
+    {
+        if (IsExiting || _mainWindow is null) return;
+        try
+        {
+            _mainWindow.Close();
+        }
+        catch { }
+    }
+
     private void ShowMainWindowCore()
     {
         if (IsExiting) return;
@@ -560,7 +593,7 @@ public partial class App : Application
         }
     }
 
-    private void ExitCore()
+    private void ExitCore(bool invokeDesktopShutdown = true)
     {
         if (IsExiting) return;
         IsExiting = true;
@@ -592,7 +625,7 @@ public partial class App : Application
         try { _singleInstance?.Dispose(); } catch { }
         try { _macLockStream?.Dispose(); _macLockStream = null; } catch { }
 
-        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        if (invokeDesktopShutdown && ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             desktop.Shutdown();
     }
 }

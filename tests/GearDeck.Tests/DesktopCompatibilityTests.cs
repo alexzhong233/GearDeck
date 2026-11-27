@@ -177,4 +177,14 @@ public class DesktopCompatibilityTests
         var children = peer.GetChildren();
         Assert.NotNull(children);
     }
+
+    [Fact]
+    public void MacCommandQ_CancelsShutdownOnlyWhenCloseToTrayEnabledAndNotExiting()
+    {
+        Assert.True(GearDeck.Desktop.App.ShouldCancelMacShutdown(isMacOs: true, isExiting: false, systemShuttingDown: false, closeToTray: true));
+        Assert.False(GearDeck.Desktop.App.ShouldCancelMacShutdown(isMacOs: true, isExiting: true, systemShuttingDown: false, closeToTray: true));
+        Assert.False(GearDeck.Desktop.App.ShouldCancelMacShutdown(isMacOs: true, isExiting: false, systemShuttingDown: true, closeToTray: true));
+        Assert.False(GearDeck.Desktop.App.ShouldCancelMacShutdown(isMacOs: true, isExiting: false, systemShuttingDown: false, closeToTray: false));
+        Assert.False(GearDeck.Desktop.App.ShouldCancelMacShutdown(isMacOs: false, isExiting: false, systemShuttingDown: false, closeToTray: true));
+    }
 }
