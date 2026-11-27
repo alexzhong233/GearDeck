@@ -37,7 +37,10 @@ else {
 }
 
 $appExe = Join-Path $resolvedAppOutDir "GearDeck.Desktop.exe"
-$widgetExe = Join-Path $resolvedAppOutDir "widget\GearDeck.Widget.exe"
+$widgetExe = Join-Path $resolvedAppOutDir "GearDeck.Widget.exe"
+if (-not (Test-Path $widgetExe)) {
+    $widgetExe = Join-Path $resolvedAppOutDir "widget\GearDeck.Widget.exe"
+}
 
 if (-not (Test-Path $appExe)) {
     throw "GearDeck.Desktop.exe not found at: $appExe"
@@ -121,6 +124,10 @@ $rootPatchNames = @(
     "GearDeck.Desktop.dll",
     "GearDeck.Desktop.deps.json",
     "GearDeck.Desktop.runtimeconfig.json",
+    "GearDeck.Widget.exe",
+    "GearDeck.Widget.dll",
+    "GearDeck.Widget.deps.json",
+    "GearDeck.Widget.runtimeconfig.json",
     "GearDeck.Core.dll",
     "HidSharp.dll"
 )

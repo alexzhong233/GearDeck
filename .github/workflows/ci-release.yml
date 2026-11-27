@@ -63,6 +63,7 @@ jobs:
       - name: Restore and run unit tests (Windows)
         run: |
           dotnet restore tests\GearDeck.Tests\GearDeck.Tests.csproj
+          dotnet restore src\GearDeck.Widget\GearDeck.Widget.csproj
           dotnet test tests\GearDeck.Tests\GearDeck.Tests.csproj -c Release --no-restore
 
       - name: Publish self-contained Windows bundle (Desktop + Widget)
@@ -70,12 +71,12 @@ jobs:
         run: |
           $v = "${{ steps.ver.outputs.version }}"
           dotnet publish src\GearDeck.Desktop\GearDeck.Desktop.csproj -c Release -r win-x64 --self-contained true -p:Version=$v -o publish\win-x64
-          dotnet publish src\GearDeck.Widget\GearDeck.Widget.csproj -c Release -r win-x64 --self-contained true -p:Version=$v -o publish\win-x64\widget
+          dotnet publish src\GearDeck.Widget\GearDeck.Widget.csproj -c Release -r win-x64 --self-contained true -p:Version=$v -o publish\win-x64
 
       - name: Run GearDeck.Widget self-checks
         shell: pwsh
         run: |
-          $w = "publish\win-x64\widget\GearDeck.Widget.exe"
+          $w = "publish\win-x64\GearDeck.Widget.exe"
           $p1 = Start-Process -FilePath $w -ArgumentList '--render-test="publish\r.png"' -Wait -PassThru -NoNewWindow
           $p2 = Start-Process -FilePath $w -ArgumentList '--window-test="publish\w.png"' -Wait -PassThru -NoNewWindow
           if ($p1.ExitCode -ne 0 -or $p2.ExitCode -ne 0) {

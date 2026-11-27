@@ -1,13 +1,9 @@
 using System.Diagnostics;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
-using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using System.Windows.Forms;
 using GearDeck.Metrics;
+using SkiaSharp;
 
 namespace GearDeck.Widget;
 
@@ -31,6 +27,9 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        try { SetProcessDpiAwarenessContext(new IntPtr(-4) /* DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */); }
+        catch { }
+
         var renderArg = args.FirstOrDefault(a => a.StartsWith("--render-test=", StringComparison.OrdinalIgnoreCase));
         if (renderArg != null)
         {
@@ -53,19 +52,24 @@ internal static class Program
         bool isBg = args.Any(a => string.Equals(a, "--widget-bg", StringComparison.OrdinalIgnoreCase));
         if (!isBg)
         {
-            // 用户直接双击 Widget.exe 时，唤醒已运行的 GearDeck 主面板或拉起主程序，避免无界面退出或报错
             if (TryWakeMainApp())
                 return;
 
-            string appExe = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "GearDeck.App.exe"));
-            if (File.Exists(appExe))
+            string? mainExe = new[]
+            {
+                Path.Combine(AppContext.BaseDirectory, "GearDeck.Desktop.exe"),
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "GearDeck.Desktop.exe")),
+                Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "GearDeck.App.exe")),
+            }.FirstOrDefault(File.Exists);
+
+            if (mainExe != null)
             {
                 try
                 {
-                    Process.Start(new ProcessStartInfo(appExe)
+                    Process.Start(new ProcessStartInfo(mainExe)
                     {
                         UseShellExecute = true,
-                        WorkingDirectory = Path.GetDirectoryName(appExe)!,
+                        WorkingDirectory = Path.GetDirectoryName(mainExe)!,
                     });
                 }
                 catch (Exception ex)
@@ -89,10 +93,8 @@ internal static class Program
         {
             Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
             File.WriteAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} start\n");
-            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
-            Application.ThreadException += (_, e) => Log("UI: " + e.Exception);
-            ApplicationConfiguration.Initialize();
-            Application.Run(new TaskbarForm());
+            using var widget = new TaskbarWindow();
+            widget.RunMessageLoop();
         }
         catch (Exception ex)
         {
@@ -147,6 +149,17 @@ internal static class Program
         ],
     };
 
+    private static void SavePng(SKBitmap bmp, string outPath)
+    {
+        var dir = Path.GetDirectoryName(outPath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        using var img = SKImage.FromBitmap(bmp);
+        using var data = img.Encode(SKEncodedImageFormat.Png, 100)
+            ?? throw new InvalidOperationException("Failed to encode PNG");
+        using var fs = File.Create(outPath);
+        data.SaveTo(fs);
+    }
+
     private static void RunRenderTest(string outPath, bool dark, string? customIcon = null)
     {
         var state = CreateSampleState();
@@ -181,7 +194,7 @@ internal static class Program
             {
                 for (int x = dualBlock.Bounds.Left; x < Math.Min(bmp.Width, dualBlock.Bounds.Right); x++)
                 {
-                    if (bmp.GetPixel(x, y).A > 32)
+                    if (bmp.GetPixel(x, y).Alpha > 32)
                     {
                         if (y < midY) topInk++;
                         else botInk++;
@@ -191,52 +204,179 @@ internal static class Program
             if (topInk == 0 || botInk == 0)
                 throw new InvalidOperationException($"Dual-line stacked chip render failed: topInk={topInk}, botInk={botInk}");
         }
-        var dir = Path.GetDirectoryName(outPath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        bmp.Save(outPath, ImageFormat.Png);
+        SavePng(bmp, outPath);
     }
 
     private static void RunWindowTest(string outPath)
     {
-        ApplicationConfiguration.Initialize();
-        using var mockTray = new Form
+        string mockClass = $"GearDeckMockTray_{Environment.TickCount64}";
+        IntPtr bgBrush = CreateSolidBrush(0x00DADADA); // RGB(218, 218, 218)
+        Win32WndProc mockProc = DefWindowProcW;
+        var wc = new WNDCLASSEXW
         {
-            FormBorderStyle = FormBorderStyle.None,
-            ShowInTaskbar = false,
-            StartPosition = FormStartPosition.Manual,
-            Bounds = new Rectangle(100, 100, 900, 72),
-            BackColor = Color.FromArgb(218, 218, 218),
+            cbSize = (uint)Marshal.SizeOf<WNDCLASSEXW>(),
+            lpfnWndProc = Marshal.GetFunctionPointerForDelegate(mockProc),
+            hInstance = GetModuleHandleW(null),
+            hbrBackground = bgBrush,
+            lpszClassName = mockClass,
         };
-        mockTray.Show();
+        RegisterClassExW(ref wc);
 
-        using var widget = new TaskbarForm(testMode: true);
-        widget.Show();
-        Application.DoEvents();
-        if (!widget.AttachTestParent(mockTray.Handle, CreateSampleState()))
+        IntPtr mockHwnd = CreateWindowExW(
+            0x00000080 /* WS_EX_TOOLWINDOW */,
+            mockClass,
+            "MockTray",
+            unchecked((int)0x80000000) | 0x10000000 /* WS_POPUP | WS_VISIBLE */,
+            100, 100, 900, 72,
+            IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
+        if (mockHwnd == IntPtr.Zero)
         {
+            DeleteObject(bgBrush);
             Environment.Exit(2);
             return;
         }
 
-        Application.DoEvents();
-        Thread.Sleep(80);
-        Application.DoEvents();
-        using var bmp = new Bitmap(mockTray.Width, mockTray.Height, PixelFormat.Format32bppArgb);
-        using (var g = Graphics.FromImage(bmp))
+        try
         {
-            IntPtr hdc = g.GetHdc();
-            PrintWindow(mockTray.Handle, hdc, 2);
-            g.ReleaseHdc(hdc);
+            using var widget = new TaskbarWindow(testMode: true);
+            PumpEvents();
+            if (!widget.AttachTestParent(mockHwnd, CreateSampleState()))
+            {
+                Environment.Exit(2);
+                return;
+            }
+
+            PumpEvents();
+            Thread.Sleep(80);
+            PumpEvents();
+
+            const int w = 900, h = 72;
+            IntPtr screenDc = GetDC(IntPtr.Zero);
+            IntPtr memDc = CreateCompatibleDC(screenDc);
+            var bmi = new BITMAPINFOHEADER
+            {
+                biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
+                biWidth = w,
+                biHeight = -h,
+                biPlanes = 1,
+                biBitCount = 32,
+                biCompression = 0,
+            };
+            IntPtr hDib = CreateDIBSection(memDc, ref bmi, 0, out IntPtr bitsPtr, IntPtr.Zero, 0);
+            IntPtr oldBmp = SelectObject(memDc, hDib);
+            try
+            {
+                PrintWindow(mockHwnd, memDc, 2);
+                byte[] pixels = new byte[w * h * 4];
+                Marshal.Copy(bitsPtr, pixels, 0, pixels.Length);
+                for (int i = 3; i < pixels.Length; i += 4)
+                    if (pixels[i] == 0) pixels[i] = 255;
+
+                using var skBmp = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+                Marshal.Copy(pixels, 0, skBmp.GetPixels(), pixels.Length);
+                SavePng(skBmp, outPath);
+            }
+            finally
+            {
+                if (oldBmp != IntPtr.Zero) SelectObject(memDc, oldBmp);
+                if (hDib != IntPtr.Zero) DeleteObject(hDib);
+                if (memDc != IntPtr.Zero) DeleteDC(memDc);
+                if (screenDc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, screenDc);
+            }
         }
-        var dir = Path.GetDirectoryName(outPath);
-        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        bmp.Save(outPath, ImageFormat.Png);
-        widget.Close();
-        mockTray.Close();
+        finally
+        {
+            DestroyWindow(mockHwnd);
+            UnregisterClassW(mockClass, wc.hInstance);
+            DeleteObject(bgBrush);
+            GC.KeepAlive(mockProc);
+        }
     }
 
-    [DllImport("user32.dll")]
-    private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
+    private static void PumpEvents()
+    {
+        while (PeekMessageW(out MSG msg, IntPtr.Zero, 0, 0, 1 /* PM_REMOVE */))
+        {
+            TranslateMessage(ref msg);
+            DispatchMessageW(ref msg);
+        }
+    }
+
+    internal delegate IntPtr Win32WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    internal struct WNDCLASSEXW
+    {
+        public uint cbSize;
+        public uint style;
+        public IntPtr lpfnWndProc;
+        public int cbClsExtra;
+        public int cbWndExtra;
+        public IntPtr hInstance;
+        public IntPtr hIcon;
+        public IntPtr hCursor;
+        public IntPtr hbrBackground;
+        public string? lpszMenuName;
+        public string lpszClassName;
+        public IntPtr hIconSm;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MSG
+    {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public int ptX;
+        public int ptY;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BITMAPINFOHEADER
+    {
+        public uint biSize;
+        public int biWidth;
+        public int biHeight;
+        public ushort biPlanes;
+        public ushort biBitCount;
+        public uint biCompression;
+        public uint biSizeImage;
+        public int biXPelsPerMeter;
+        public int biYPelsPerMeter;
+        public uint biClrUsed;
+        public uint biClrImportant;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] internal static extern IntPtr GetModuleHandleW(string? lpModuleName);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern ushort RegisterClassExW(ref WNDCLASSEXW lpwcx);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern bool UnregisterClassW(string lpClassName, IntPtr hInstance);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] internal static extern IntPtr CreateWindowExW(int dwExStyle, string lpClassName, string lpWindowName, int dwStyle, int X, int Y, int nWidth, int nHeight, IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
+    [DllImport("user32.dll")] internal static extern bool DestroyWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] internal static extern IntPtr DefWindowProcW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] internal static extern bool PeekMessageW(out MSG lpMsg, IntPtr hWnd, uint min, uint max, uint removeMsg);
+    [DllImport("user32.dll")] internal static extern bool TranslateMessage(ref MSG lpMsg);
+    [DllImport("user32.dll")] internal static extern IntPtr DispatchMessageW(ref MSG lpMsg);
+    [DllImport("user32.dll")] internal static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
+    [DllImport("user32.dll")] internal static extern IntPtr GetDC(IntPtr hWnd);
+    [DllImport("user32.dll")] internal static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+    [DllImport("user32.dll")] internal static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("gdi32.dll")] internal static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+    [DllImport("gdi32.dll")] internal static extern bool DeleteDC(IntPtr hdc);
+    [DllImport("gdi32.dll")] internal static extern IntPtr CreateSolidBrush(uint color);
+    [DllImport("gdi32.dll")] internal static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
+    [DllImport("gdi32.dll")] internal static extern bool DeleteObject(IntPtr obj);
+    [DllImport("gdi32.dll")] internal static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFOHEADER pbmi, uint usage, out IntPtr ppvBits, IntPtr hSection, uint offset);
+}
+
+internal readonly record struct IntRect(int X, int Y, int Width, int Height)
+{
+    public int Left => X;
+    public int Top => Y;
+    public int Right => X + Width;
+    public int Bottom => Y + Height;
+    public bool Contains(int px, int py) => px >= X && px < X + Width && py >= Y && py < Y + Height;
 }
 
 internal sealed class WidgetState
@@ -275,7 +415,7 @@ internal enum BlockKind { Group, Monitor }
 
 internal sealed class Block
 {
-    public Block(BlockKind kind, string groupId, string glyph, string iconPath, string text, string tip, bool low, bool dim, Rectangle bounds, string metricTop, string metricBottom, string textTop = "", string textBottom = "")
+    public Block(BlockKind kind, string groupId, string glyph, string iconPath, string text, string tip, bool low, bool dim, IntRect bounds, string metricTop, string metricBottom, string textTop = "", string textBottom = "")
     {
         Kind = kind;
         GroupId = groupId;
@@ -302,7 +442,7 @@ internal sealed class Block
     public string Tip { get; }
     public bool Low { get; }
     public bool Dim { get; }
-    public Rectangle Bounds { get; }
+    public IntRect Bounds { get; }
     public string MetricTop { get; }
     public string MetricBottom { get; }
 }
@@ -317,30 +457,23 @@ internal sealed class WidgetLayout
 
 internal static class TaskbarRenderer
 {
-    private static readonly string IconFontFamily;
-    private static readonly string TextFontFamily;
-    private static readonly FontStyle TextFontStyle;
+    private static readonly SKTypeface IconTypeface;
+    private static readonly SKTypeface TextTypeface;
     private static readonly object IconCacheLock = new();
-    private static readonly Dictionary<string, (DateTime WriteUtc, Bitmap Bmp)> IconCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, (DateTime WriteUtc, SKBitmap Bmp)> IconCache = new(StringComparer.OrdinalIgnoreCase);
 
     static TaskbarRenderer()
     {
-        using var fonts = new InstalledFontCollection();
-        var names = new HashSet<string>(fonts.Families.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
-        IconFontFamily = names.Contains("Segoe Fluent Icons") ? "Segoe Fluent Icons" : "Segoe MDL2 Assets";
-        if (names.Contains("Segoe UI Semibold"))
-        {
-            TextFontFamily = "Segoe UI Semibold";
-            TextFontStyle = FontStyle.Regular;
-        }
-        else
-        {
-            TextFontFamily = "Segoe UI";
-            TextFontStyle = FontStyle.Bold;
-        }
+        var families = new HashSet<string>(SKFontManager.Default.FontFamilies, StringComparer.OrdinalIgnoreCase);
+        string iconFamily = families.Contains("Segoe Fluent Icons") ? "Segoe Fluent Icons" : "Segoe MDL2 Assets";
+        IconTypeface = SKTypeface.FromFamilyName(iconFamily, SKFontStyle.Normal) ?? SKTypeface.Default;
+
+        TextTypeface = families.Contains("Segoe UI Semibold")
+            ? (SKTypeface.FromFamilyName("Segoe UI Semibold", SKFontStyle.Normal) ?? SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold) ?? SKTypeface.Default)
+            : (SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold) ?? SKTypeface.Default);
     }
 
-    private static Bitmap? TryGetCustomIcon(string? iconPath)
+    private static SKBitmap? TryGetCustomIcon(string? iconPath)
     {
         if (string.IsNullOrWhiteSpace(iconPath)) return null;
         try
@@ -356,19 +489,11 @@ internal static class TaskbarRenderer
                     IconCache.Remove(iconPath);
                 }
 
-                Bitmap loaded;
-                if (iconPath.EndsWith(".ico", StringComparison.OrdinalIgnoreCase))
-                {
-                    using var fs = File.OpenRead(iconPath);
-                    using var ico = new Icon(fs, new Size(64, 64));
-                    loaded = ico.ToBitmap();
-                }
-                else
-                {
-                    using var fs = File.OpenRead(iconPath);
-                    using var tmp = new Bitmap(fs);
-                    loaded = new Bitmap(tmp);
-                }
+                SKBitmap? loaded = iconPath.EndsWith(".ico", StringComparison.OrdinalIgnoreCase)
+                    ? DecodeIcoFile(iconPath)
+                    : SKBitmap.Decode(iconPath);
+
+                if (loaded == null) return null;
                 IconCache[iconPath] = (writeUtc, loaded);
                 return loaded;
             }
@@ -379,22 +504,82 @@ internal static class TaskbarRenderer
         }
     }
 
-    private static StringFormat CreateStringFormat()
+    private static SKBitmap? DecodeIcoFile(string icoPath)
     {
-        var sf = (StringFormat)StringFormat.GenericTypographic.Clone();
-        sf.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces;
-        return sf;
+        IntPtr hIcon = LoadImageW(IntPtr.Zero, icoPath, 1 /* IMAGE_ICON */, 64, 64, 0x0010 /* LR_LOADFROMFILE */);
+        if (hIcon == IntPtr.Zero) return null;
+        try
+        {
+            if (!GetIconInfo(hIcon, out ICONINFO ii)) return null;
+            try
+            {
+                IntPtr hBmp = ii.hbmColor != IntPtr.Zero ? ii.hbmColor : ii.hbmMask;
+                if (hBmp == IntPtr.Zero) return null;
+                var bm = new BITMAP();
+                if (GetObjectW(hBmp, Marshal.SizeOf<BITMAP>(), ref bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0)
+                    return null;
+                int w = bm.bmWidth;
+                int h = ii.hbmColor != IntPtr.Zero ? bm.bmHeight : Math.Max(1, bm.bmHeight / 2);
+                var bmi = new Program.BITMAPINFOHEADER
+                {
+                    biSize = (uint)Marshal.SizeOf<Program.BITMAPINFOHEADER>(),
+                    biWidth = w,
+                    biHeight = -h,
+                    biPlanes = 1,
+                    biBitCount = 32,
+                    biCompression = 0,
+                };
+                byte[] pixels = new byte[w * h * 4];
+                IntPtr hdc = Program.GetDC(IntPtr.Zero);
+                try
+                {
+                    if (GetDIBits(hdc, hBmp, 0, (uint)h, pixels, ref bmi, 0) == 0)
+                        return null;
+                }
+                finally { Program.ReleaseDC(IntPtr.Zero, hdc); }
+
+                bool anyAlpha = false;
+                for (int i = 3; i < pixels.Length; i += 4)
+                    if (pixels[i] != 0) { anyAlpha = true; break; }
+                if (!anyAlpha)
+                    for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
+
+                var sk = new SKBitmap(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Unpremul));
+                Marshal.Copy(pixels, 0, sk.GetPixels(), pixels.Length);
+                return sk;
+            }
+            finally
+            {
+                if (ii.hbmColor != IntPtr.Zero) Program.DeleteObject(ii.hbmColor);
+                if (ii.hbmMask != IntPtr.Zero) Program.DeleteObject(ii.hbmMask);
+            }
+        }
+        finally
+        {
+            DestroyIcon(hIcon);
+        }
     }
 
-    private static (Font IconFont, Font TextFont, Font SmallFont, Font TwoLineFont) CreateFonts(int fontSizeDip, double scale)
+    private static SKPaint CreatePaint(SKTypeface typeface, float textSizePx, SKColor color = default) => new()
+    {
+        Typeface = typeface,
+        TextSize = textSizePx,
+        Color = color,
+        IsAntialias = true,
+        SubpixelText = true,
+        LcdRenderText = false,
+    };
+
+    private static (SKPaint Icon, SKPaint Text, SKPaint Small, SKPaint TwoLine) CreatePaints(int fontSizeDip, double scale)
     {
         int clamped = Math.Clamp(fontSizeDip, 9, 20);
         float fontPx = clamped * (float)scale;
-        var iconFont = new Font(IconFontFamily, fontPx * 1.12f, FontStyle.Regular, GraphicsUnit.Pixel);
-        var textFont = new Font(TextFontFamily, fontPx, TextFontStyle, GraphicsUnit.Pixel);
-        var smallFont = new Font(TextFontFamily, Math.Max(9f * (float)scale, fontPx * 0.82f), TextFontStyle, GraphicsUnit.Pixel);
-        var twoLineFont = new Font(TextFontFamily, Math.Max(7.5f * (float)scale, fontPx * 0.74f), TextFontStyle, GraphicsUnit.Pixel);
-        return (iconFont, textFont, smallFont, twoLineFont);
+        return (
+            CreatePaint(IconTypeface, fontPx * 1.12f),
+            CreatePaint(TextTypeface, fontPx),
+            CreatePaint(TextTypeface, Math.Max(9f * (float)scale, fontPx * 0.82f)),
+            CreatePaint(TextTypeface, Math.Max(7.5f * (float)scale, fontPx * 0.74f))
+        );
     }
 
     private static readonly SystemMetricsSnapshot RefSnapshot = new()
@@ -430,15 +615,11 @@ internal static class TaskbarRenderer
         int blockGap = (int)Math.Round(2 * scale);
         int minBlockW = (int)Math.Round(Math.Clamp(state.BlockWidth, 48, 220) * scale);
 
-        var (iconFont, textFont, smallFont, twoLineFont) = CreateFonts(state.FontSize, scale);
-        using var _1 = iconFont;
-        using var _2 = textFont;
-        using var _3 = smallFont;
-        using var _4 = twoLineFont;
-        using var probeBmp = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
-        using var g = Graphics.FromImage(probeBmp);
-        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-        using var sf = CreateStringFormat();
+        var (iconPaint, textPaint, smallPaint, twoLinePaint) = CreatePaints(state.FontSize, scale);
+        using var _1 = iconPaint;
+        using var _2 = textPaint;
+        using var _3 = smallPaint;
+        using var _4 = twoLinePaint;
 
         int iconPx = Math.Max(14, (int)Math.Round(Math.Clamp(state.FontSize, 9, 20) * scale * 1.25));
         int x = edgePad;
@@ -446,17 +627,15 @@ internal static class TaskbarRenderer
         {
             float iconW = TryGetCustomIcon(grp.IconPath) != null
                 ? iconPx
-                : g.MeasureString(grp.Glyph, iconFont, PointF.Empty, sf).Width;
+                : iconPaint.MeasureText(grp.Glyph ?? "");
             bool twoLine = !string.IsNullOrEmpty(grp.TextTop) && !string.IsNullOrEmpty(grp.TextBottom);
             float textW = twoLine
-                ? Math.Max(
-                    g.MeasureString(grp.TextTop, twoLineFont, PointF.Empty, sf).Width,
-                    g.MeasureString(grp.TextBottom, twoLineFont, PointF.Empty, sf).Width)
-                : g.MeasureString(grp.Text, textFont, PointF.Empty, sf).Width;
+                ? Math.Max(twoLinePaint.MeasureText(grp.TextTop), twoLinePaint.MeasureText(grp.TextBottom))
+                : textPaint.MeasureText(grp.Text ?? "");
             int contentW = (int)Math.Ceiling(iconW + gap + textW);
             int w = Math.Max(minBlockW, contentW + innerPadX * 2);
-            blocks.Add(new Block(BlockKind.Group, grp.GroupId, grp.Glyph, grp.IconPath ?? "", grp.Text, grp.Tip, grp.Low, grp.Dim,
-                new Rectangle(x, 0, w, blockH), "", "", grp.TextTop ?? "", grp.TextBottom ?? ""));
+            blocks.Add(new Block(BlockKind.Group, grp.GroupId, grp.Glyph ?? "", grp.IconPath ?? "", grp.Text ?? "", grp.Tip ?? "", grp.Low, grp.Dim,
+                new IntRect(x, 0, w, blockH), "", "", grp.TextTop ?? "", grp.TextBottom ?? ""));
             x += w + blockGap;
         }
 
@@ -467,13 +646,11 @@ internal static class TaskbarRenderer
             string refTop = SystemMetricsEngine.FormatTaskbar(state.MonitorTop, RefSnapshot);
             string refBot = SystemMetricsEngine.FormatTaskbar(state.MonitorBottom, RefSnapshot);
             float maxW = Math.Max(
-                Math.Max(g.MeasureString(top, smallFont, PointF.Empty, sf).Width,
-                         g.MeasureString(refTop, smallFont, PointF.Empty, sf).Width),
-                Math.Max(g.MeasureString(bottom, smallFont, PointF.Empty, sf).Width,
-                         g.MeasureString(refBot, smallFont, PointF.Empty, sf).Width));
+                Math.Max(smallPaint.MeasureText(top), smallPaint.MeasureText(refTop)),
+                Math.Max(smallPaint.MeasureText(bottom), smallPaint.MeasureText(refBot)));
             int mw = Math.Max((int)Math.Round(78 * scale), (int)Math.Ceiling(maxW) + innerPadX * 2);
             blocks.Add(new Block(BlockKind.Monitor, "__monitor__", "\uE950", "", "", "", false, false,
-                new Rectangle(x, 0, mw, blockH), state.MonitorTop, state.MonitorBottom));
+                new IntRect(x, 0, mw, blockH), state.MonitorTop, state.MonitorBottom));
             x += mw;
         }
         else if (blocks.Count > 0)
@@ -491,43 +668,63 @@ internal static class TaskbarRenderer
         };
     }
 
-    public static Bitmap RenderBitmap(WidgetLayout layout, bool light, bool embedded, double scale, int hoverIndex, SystemMetricsSnapshot metrics)
+    public static SKBitmap RenderBitmap(WidgetLayout layout, bool light, bool embedded, double scale, int hoverIndex, SystemMetricsSnapshot metrics)
     {
-        var bmp = new Bitmap(Math.Max(1, layout.Width), Math.Max(1, layout.Height), PixelFormat.Format32bppArgb);
-        using var g = Graphics.FromImage(bmp);
-        g.Clear(Color.FromArgb(0, 0, 0, 0));
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+        var info = new SKImageInfo(Math.Max(1, layout.Width), Math.Max(1, layout.Height), SKColorType.Bgra8888, SKAlphaType.Premul);
+        var bmp = new SKBitmap(info);
+        using var canvas = new SKCanvas(bmp);
+        canvas.Clear(SKColors.Transparent);
 
         if (embedded)
         {
             // Alpha=1 keeps the background visually transparent over the taskbar while guaranteeing mouse hit-testing across the whole strip.
-            using var hitFill = new SolidBrush(Color.FromArgb(1, 128, 128, 128));
-            g.FillRectangle(hitFill, 0, 0, bmp.Width, bmp.Height);
+            using var hitPaint = new SKPaint { Color = new SKColor(128, 128, 128, 1), Style = SKPaintStyle.Fill };
+            canvas.DrawRect(0, 0, bmp.Width, bmp.Height, hitPaint);
         }
         else
         {
-            var pillRect = new RectangleF(0.5f, 0.5f, bmp.Width - 1f, bmp.Height - 1f);
+            var pillRect = new SKRect(0.5f, 0.5f, bmp.Width - 0.5f, bmp.Height - 0.5f);
             float pillRadius = (float)(8 * scale);
-            using var bgBrush = new SolidBrush(light ? Color.FromArgb(234, 246, 246, 246) : Color.FromArgb(234, 32, 32, 32));
-            using var borderPen = new Pen(light ? Color.FromArgb(45, 0, 0, 0) : Color.FromArgb(55, 255, 255, 255), 1f);
-            FillRounded(g, bgBrush, borderPen, pillRect, pillRadius);
+            using var bgPaint = new SKPaint
+            {
+                Color = light ? new SKColor(246, 246, 246, 234) : new SKColor(32, 32, 32, 234),
+                IsAntialias = true,
+                Style = SKPaintStyle.Fill,
+            };
+            using var borderPaint = new SKPaint
+            {
+                Color = light ? new SKColor(0, 0, 0, 45) : new SKColor(255, 255, 255, 55),
+                IsAntialias = true,
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1f,
+            };
+            canvas.DrawRoundRect(pillRect, pillRadius, pillRadius, bgPaint);
+            canvas.DrawRoundRect(pillRect, pillRadius, pillRadius, borderPaint);
         }
 
-        var (iconFont, textFont, smallFont, twoLineFont) = CreateFonts(layout.FontSize, scale);
-        using var _1 = iconFont;
-        using var _2 = textFont;
-        using var _3 = smallFont;
-        using var _4 = twoLineFont;
-        using var sf = CreateStringFormat();
+        var (iconPaint, textPaint, smallPaint, twoLinePaint) = CreatePaints(layout.FontSize, scale);
+        using var _1 = iconPaint;
+        using var _2 = textPaint;
+        using var _3 = smallPaint;
+        using var _4 = twoLinePaint;
 
-        var primaryColor = light ? Color.FromArgb(255, 20, 20, 20) : Color.FromArgb(255, 246, 246, 246);
-        var dimColor = light ? Color.FromArgb(205, 58, 58, 58) : Color.FromArgb(195, 205, 205, 205);
-        var lowColor = light ? Color.FromArgb(255, 196, 43, 28) : Color.FromArgb(255, 255, 153, 164);
+        var primaryColor = light ? new SKColor(20, 20, 20, 255) : new SKColor(246, 246, 246, 255);
+        var dimColor = light ? new SKColor(58, 58, 58, 205) : new SKColor(205, 205, 205, 195);
+        var lowColor = light ? new SKColor(196, 43, 28, 255) : new SKColor(255, 153, 164, 255);
 
-        using var hoverBrush = new SolidBrush(light ? Color.FromArgb(145, 255, 255, 255) : Color.FromArgb(32, 255, 255, 255));
-        using var hoverPen = new Pen(light ? Color.FromArgb(22, 0, 0, 0) : Color.FromArgb(36, 255, 255, 255), 1f);
+        using var hoverFill = new SKPaint
+        {
+            Color = light ? new SKColor(255, 255, 255, 145) : new SKColor(255, 255, 255, 32),
+            IsAntialias = true,
+            Style = SKPaintStyle.Fill,
+        };
+        using var hoverBorder = new SKPaint
+        {
+            Color = light ? new SKColor(0, 0, 0, 22) : new SKColor(255, 255, 255, 36),
+            IsAntialias = true,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1f,
+        };
 
         float gap = (float)(4 * scale);
         float innerPadX = (float)(8 * scale);
@@ -539,34 +736,36 @@ internal static class TaskbarRenderer
             var b = layout.Blocks[i];
             if (i == hoverIndex)
             {
-                var hRect = new RectangleF(b.Bounds.X, hoverMarginY, b.Bounds.Width, Math.Max(8f, bmp.Height - hoverMarginY * 2f));
-                FillRounded(g, hoverBrush, hoverPen, hRect, hoverRadius);
+                float hh = Math.Max(8f, bmp.Height - hoverMarginY * 2f);
+                var hRect = new SKRect(b.Bounds.X, hoverMarginY, b.Bounds.X + b.Bounds.Width, hoverMarginY + hh);
+                canvas.DrawRoundRect(hRect, hoverRadius, hoverRadius, hoverFill);
+                canvas.DrawRoundRect(hRect, hoverRadius, hoverRadius, hoverBorder);
             }
 
             if (b.Kind == BlockKind.Monitor)
             {
                 string top = SystemMetricsEngine.FormatTaskbar(b.MetricTop, metrics);
                 string bottom = SystemMetricsEngine.FormatTaskbar(b.MetricBottom, metrics);
-                using var fgBrush = new SolidBrush(primaryColor);
+                smallPaint.Color = primaryColor;
                 float tx = b.Bounds.X + innerPadX;
+                smallPaint.GetFontMetrics(out var sfm);
+                float lineH = sfm.Descent - sfm.Ascent;
+
                 if (string.IsNullOrEmpty(bottom))
                 {
-                    var ts = g.MeasureString(top, smallFont, PointF.Empty, sf);
-                    float yMid = Math.Max(0f, (bmp.Height - ts.Height) / 2f);
-                    g.DrawString(top, smallFont, fgBrush, tx, yMid, sf);
+                    float baseline = Math.Max(0f, (bmp.Height - lineH) / 2f) - sfm.Ascent;
+                    canvas.DrawText(top, tx, baseline, smallPaint);
                 }
                 else
                 {
-                    var ts1 = g.MeasureString(top, smallFont, PointF.Empty, sf);
-                    var ts2 = g.MeasureString(bottom, smallFont, PointF.Empty, sf);
                     float lineGap = (float)(2 * scale);
-                    if (ts1.Height + lineGap + ts2.Height > bmp.Height - 2f)
-                        lineGap = Math.Max(0f, bmp.Height - 2f - ts1.Height - ts2.Height);
-                    float totalH = ts1.Height + lineGap + ts2.Height;
+                    if (lineH * 2f + lineGap > bmp.Height - 2f)
+                        lineGap = Math.Max(0f, bmp.Height - 2f - lineH * 2f);
+                    float totalH = lineH * 2f + lineGap;
                     float topY = Math.Max(0f, (bmp.Height - totalH) / 2f);
-                    float botY = Math.Min(Math.Max(0f, bmp.Height - ts2.Height), topY + ts1.Height + lineGap);
-                    g.DrawString(top, smallFont, fgBrush, tx, topY, sf);
-                    g.DrawString(bottom, smallFont, fgBrush, tx, botY, sf);
+                    float botY = Math.Min(Math.Max(0f, bmp.Height - lineH), topY + lineH + lineGap);
+                    canvas.DrawText(top, tx, topY - sfm.Ascent, smallPaint);
+                    canvas.DrawText(bottom, tx, botY - sfm.Ascent, smallPaint);
                 }
             }
             else
@@ -574,20 +773,10 @@ internal static class TaskbarRenderer
                 var iconColor = b.Dim ? dimColor : primaryColor;
                 var textColor = b.Low ? lowColor : (b.Dim ? dimColor : primaryColor);
                 bool hasTwoLines = !string.IsNullOrEmpty(b.TextTop) && !string.IsNullOrEmpty(b.TextBottom);
-                SizeF tsTop = default, tsBot = default, tsSingle = default;
-                float textW;
-                if (hasTwoLines)
-                {
-                    tsTop = g.MeasureString(b.TextTop, twoLineFont, PointF.Empty, sf);
-                    tsBot = g.MeasureString(b.TextBottom, twoLineFont, PointF.Empty, sf);
-                    textW = Math.Max(tsTop.Width, tsBot.Width);
-                }
-                else
-                {
-                    tsSingle = g.MeasureString(b.Text, textFont, PointF.Empty, sf);
-                    textW = tsSingle.Width;
-                }
-                using var textBrush = new SolidBrush(textColor);
+
+                float textW = hasTwoLines
+                    ? Math.Max(twoLinePaint.MeasureText(b.TextTop), twoLinePaint.MeasureText(b.TextBottom))
+                    : textPaint.MeasureText(b.Text);
 
                 float textX;
                 var customBmp = TryGetCustomIcon(b.IconPath);
@@ -598,52 +787,53 @@ internal static class TaskbarRenderer
                     float sx = b.Bounds.X + Math.Max(2f, (b.Bounds.Width - totalW) / 2f);
                     float iy = Math.Max(0f, (bmp.Height - iconSize) / 2f);
 
-                    var prevInterp = g.InterpolationMode;
-                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    using var imgPaint = new SKPaint
+                    {
+                        IsAntialias = true,
+                        FilterQuality = SKFilterQuality.High,
+                        Color = b.Dim ? new SKColor(255, 255, 255, 166) : SKColors.White,
+                    };
                     lock (IconCacheLock)
                     {
-                        if (b.Dim)
-                        {
-                            using var ia = new ImageAttributes();
-                            ia.SetColorMatrix(new ColorMatrix { Matrix33 = 0.65f });
-                            g.DrawImage(customBmp, new Rectangle((int)Math.Round(sx), (int)Math.Round(iy), (int)Math.Round(iconSize), (int)Math.Round(iconSize)),
-                                0, 0, customBmp.Width, customBmp.Height, GraphicsUnit.Pixel, ia);
-                        }
-                        else
-                        {
-                            g.DrawImage(customBmp, sx, iy, iconSize, iconSize);
-                        }
+                        var dst = new SKRect(sx, iy, sx + iconSize, iy + iconSize);
+                        canvas.DrawBitmap(customBmp, dst, imgPaint);
                     }
-                    g.InterpolationMode = prevInterp;
                     textX = sx + iconSize + gap;
                 }
                 else
                 {
-                    var gs = g.MeasureString(b.Glyph, iconFont, PointF.Empty, sf);
-                    float totalW = gs.Width + gap + textW;
+                    float iconW = iconPaint.MeasureText(b.Glyph);
+                    float totalW = iconW + gap + textW;
                     float sx = b.Bounds.X + Math.Max(2f, (b.Bounds.Width - totalW) / 2f);
-                    float iy = Math.Max(0f, (bmp.Height - gs.Height) / 2f);
-
-                    using var iconBrush = new SolidBrush(iconColor);
-                    g.DrawString(b.Glyph, iconFont, iconBrush, sx, iy, sf);
-                    textX = sx + gs.Width + gap;
+                    iconPaint.GetFontMetrics(out var ifm);
+                    float iconH = ifm.Descent - ifm.Ascent;
+                    float iy = Math.Max(0f, (bmp.Height - iconH) / 2f) - ifm.Ascent;
+                    iconPaint.Color = iconColor;
+                    canvas.DrawText(b.Glyph, sx, iy, iconPaint);
+                    textX = sx + iconW + gap;
                 }
 
                 if (hasTwoLines)
                 {
+                    twoLinePaint.Color = textColor;
+                    twoLinePaint.GetFontMetrics(out var tfm);
+                    float lineH = tfm.Descent - tfm.Ascent;
                     float lineGap = (float)(1.5 * scale);
-                    if (tsTop.Height + lineGap + tsBot.Height > bmp.Height - 2f)
-                        lineGap = Math.Max(0f, bmp.Height - 2f - tsTop.Height - tsBot.Height);
-                    float totalH = tsTop.Height + lineGap + tsBot.Height;
+                    if (lineH * 2f + lineGap > bmp.Height - 2f)
+                        lineGap = Math.Max(0f, bmp.Height - 2f - lineH * 2f);
+                    float totalH = lineH * 2f + lineGap;
                     float topY = Math.Max(0f, (bmp.Height - totalH) / 2f);
-                    float botY = Math.Min(Math.Max(0f, bmp.Height - tsBot.Height), topY + tsTop.Height + lineGap);
-                    g.DrawString(b.TextTop, twoLineFont, textBrush, textX, topY, sf);
-                    g.DrawString(b.TextBottom, twoLineFont, textBrush, textX, botY, sf);
+                    float botY = Math.Min(Math.Max(0f, bmp.Height - lineH), topY + lineH + lineGap);
+                    canvas.DrawText(b.TextTop, textX, topY - tfm.Ascent, twoLinePaint);
+                    canvas.DrawText(b.TextBottom, textX, botY - tfm.Ascent, twoLinePaint);
                 }
                 else
                 {
-                    float ty = Math.Max(0f, (bmp.Height - tsSingle.Height) / 2f);
-                    g.DrawString(b.Text, textFont, textBrush, textX, ty, sf);
+                    textPaint.Color = textColor;
+                    textPaint.GetFontMetrics(out var sfm);
+                    float lineH = sfm.Descent - sfm.Ascent;
+                    float ty = Math.Max(0f, (bmp.Height - lineH) / 2f) - sfm.Ascent;
+                    canvas.DrawText(b.Text, textX, ty, textPaint);
                 }
             }
         }
@@ -651,28 +841,36 @@ internal static class TaskbarRenderer
         return bmp;
     }
 
-    private static void FillRounded(Graphics g, Brush fill, Pen border, RectangleF rect, float radius)
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ICONINFO
     {
-        float r = Math.Min(radius, Math.Min(rect.Width, rect.Height) / 2f);
-        if (r <= 0.5f)
-        {
-            g.FillRectangle(fill, rect);
-            g.DrawRectangle(border, rect.X, rect.Y, rect.Width, rect.Height);
-            return;
-        }
-        float d = r * 2f;
-        using var path = new GraphicsPath();
-        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
-        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
-        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
-        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        g.FillPath(fill, path);
-        g.DrawPath(border, path);
+        public bool fIcon;
+        public int xHotspot;
+        public int yHotspot;
+        public IntPtr hbmMask;
+        public IntPtr hbmColor;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BITMAP
+    {
+        public int bmType;
+        public int bmWidth;
+        public int bmHeight;
+        public int bmWidthBytes;
+        public ushort bmPlanes;
+        public ushort bmBitsPixel;
+        public IntPtr bmBits;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr LoadImageW(IntPtr hInst, string name, uint type, int cx, int cy, uint fuLoad);
+    [DllImport("user32.dll")] private static extern bool GetIconInfo(IntPtr hIcon, out ICONINFO piconinfo);
+    [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr hIcon);
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] private static extern int GetObjectW(IntPtr hgdiobj, int cbBuffer, ref BITMAP lpvObject);
+    [DllImport("gdi32.dll")] private static extern int GetDIBits(IntPtr hdc, IntPtr hbmp, uint uStartScan, uint cScanLines, byte[] lpvBits, ref Program.BITMAPINFOHEADER lpbi, uint uUsage);
 }
 
-internal sealed class TaskbarForm : Form
+internal sealed class TaskbarWindow : IDisposable
 {
     private const int GwlStyle = -16;
     private const int GwlExStyle = -20;
@@ -699,15 +897,35 @@ internal sealed class TaskbarForm : Form
     private const uint WineventSkipOwnProcess = 0x0002;
     private const uint MonitorDefaultToNearest = 2;
     private const int DwmwaCloaked = 14;
+    private const int WmDestroy = 0x0002;
     private const int WmMouseActivate = 0x0021;
+    private const int WmTimer = 0x0113;
+    private const int WmMouseMove = 0x0200;
+    private const int WmLButtonDown = 0x0201;
+    private const int WmLButtonUp = 0x0202;
+    private const int WmMouseLeave = 0x02A3;
+    private const int WmUser = 0x0400;
+    private const int WmFallbackReevaluate = WmUser + 42;
     private const int MaNoActivate = 3;
     private const int SwHide = 0;
+    private const uint TmeLeave = 0x00000002;
+    private const int TtmAddToolW = WmUser + 50;
+    private const int TtmUpdateTipTextW = WmUser + 57;
+    private const uint TtfIdIsHwnd = 0x0001;
+    private const uint TtfSubclass = 0x0010;
 
     private static readonly IntPtr HwndTopMost = new(-1);
     private static readonly string StatePath = Path.Combine(Program.BaseDir, "widget-state.json");
 
-    private readonly ToolTip _tip = new() { InitialDelay = 250, ReshowDelay = 100, ShowAlways = true };
-    private readonly System.Windows.Forms.Timer _timer;
+    private readonly string _className;
+    private readonly Program.Win32WndProc _wndProc;
+    private readonly IntPtr _hInstance;
+    private IntPtr _hwnd;
+    private IntPtr _tooltipHwnd;
+    private string _currentTip = "";
+    private bool _trackingLeave;
+    private bool _disposed;
+
     private WidgetState _state = new();
     private WidgetLayout? _layout;
     private List<Block> _blocks = [];
@@ -762,58 +980,188 @@ internal sealed class TaskbarForm : Form
     private IntPtr _hookFg;
     private long _lastZCheckTick;
 
-    public TaskbarForm(bool testMode = false)
+    public IntPtr Handle => _hwnd;
+    private bool IsHandleCreated => _hwnd != IntPtr.Zero && !_disposed;
+
+    public TaskbarWindow(bool testMode = false)
     {
         _testMode = testMode;
         _childLayeredFailed = !testMode;
-        Text = "GearDeck Widget";
-        FormBorderStyle = FormBorderStyle.None;
-        ShowInTaskbar = false;
-        StartPosition = FormStartPosition.Manual;
 
         _metrics = SystemMetricsEngine.Sample();
         _lastStatsTick = Environment.TickCount64;
         _lastLight = IsLight();
 
-        _timer = new System.Windows.Forms.Timer { Interval = 100 };
-        _timer.Tick += (_, _) => TickLoop();
-        if (!_testMode)
-            _timer.Start();
-    }
+        _hInstance = Program.GetModuleHandleW(null);
+        _className = $"GearDeckWidgetWnd_{Guid.NewGuid():N}";
+        _wndProc = WndProc;
 
-    protected override CreateParams CreateParams
-    {
-        get
+        var wc = new Program.WNDCLASSEXW
         {
-            var cp = base.CreateParams;
-            cp.ExStyle |= WsExLayered | WsExToolWindow | WsExNoActivate;
-            return cp;
+            cbSize = (uint)Marshal.SizeOf<Program.WNDCLASSEXW>(),
+            lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc),
+            hInstance = _hInstance,
+            hCursor = LoadCursorW(IntPtr.Zero, new IntPtr(32512) /* IDC_ARROW */),
+            lpszClassName = _className,
+        };
+        Program.RegisterClassExW(ref wc);
+
+        int exStyle = WsExLayered | WsExToolWindow | WsExNoActivate;
+        _hwnd = Program.CreateWindowExW(
+            exStyle,
+            _className,
+            "GearDeck Widget",
+            WsPopup | (testMode ? WsVisible : 0),
+            0, 0, _width, _height,
+            IntPtr.Zero, IntPtr.Zero, _hInstance, IntPtr.Zero);
+
+        if (!_testMode && _hwnd != IntPtr.Zero)
+        {
+            InitTooltip();
+            EnsureWinEventHooks();
+            ReadStateIfChanged();
+            EnsureModeAndPosition(forceRender: true);
+            SetTimer(_hwnd, 1, 100, IntPtr.Zero);
         }
     }
 
-    protected override bool ShowWithoutActivation => true;
-
-    protected override void OnPaintBackground(PaintEventArgs e) { }
-
-    protected override void OnPaint(PaintEventArgs e) { }
-
-    protected override void WndProc(ref Message m)
+    public void RunMessageLoop()
     {
-        if (m.Msg == WmMouseActivate)
+        while (GetMessageW(out var msg, IntPtr.Zero, 0, 0) > 0)
         {
-            m.Result = (IntPtr)MaNoActivate;
+            Program.TranslateMessage(ref msg);
+            Program.DispatchMessageW(ref msg);
+        }
+    }
+
+    private void InitTooltip()
+    {
+        _tooltipHwnd = Program.CreateWindowExW(
+            WsExTopMost,
+            "tooltips_class32",
+            "",
+            unchecked((int)0x80000000) | 0x01 /* TTS_ALWAYSTIP */,
+            0, 0, 0, 0,
+            _hwnd, IntPtr.Zero, _hInstance, IntPtr.Zero);
+
+        if (_tooltipHwnd == IntPtr.Zero) return;
+
+        var ti = new TOOLINFOW
+        {
+            cbSize = Marshal.SizeOf<TOOLINFOW>(),
+            uFlags = TtfIdIsHwnd | TtfSubclass,
+            hwnd = _hwnd,
+            uId = _hwnd,
+            lpszText = IntPtr.Zero,
+        };
+        IntPtr mem = Marshal.AllocHGlobal(ti.cbSize);
+        try
+        {
+            Marshal.StructureToPtr(ti, mem, false);
+            SendMessageW(_tooltipHwnd, TtmAddToolW, IntPtr.Zero, mem);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(mem);
+        }
+    }
+
+    private void SetTipText(string text)
+    {
+        text ??= "";
+        if (string.Equals(_currentTip, text, StringComparison.Ordinal))
             return;
+        _currentTip = text;
+        if (_tooltipHwnd == IntPtr.Zero) return;
+
+        IntPtr textPtr = Marshal.StringToHGlobalUni(text);
+        var ti = new TOOLINFOW
+        {
+            cbSize = Marshal.SizeOf<TOOLINFOW>(),
+            uFlags = TtfIdIsHwnd | TtfSubclass,
+            hwnd = _hwnd,
+            uId = _hwnd,
+            lpszText = textPtr,
+        };
+        IntPtr mem = Marshal.AllocHGlobal(ti.cbSize);
+        try
+        {
+            Marshal.StructureToPtr(ti, mem, false);
+            SendMessageW(_tooltipHwnd, TtmUpdateTipTextW, IntPtr.Zero, mem);
         }
-        base.WndProc(ref m);
+        finally
+        {
+            Marshal.FreeHGlobal(mem);
+            Marshal.FreeHGlobal(textPtr);
+        }
     }
 
-    protected override void OnShown(EventArgs e)
+    private IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
-        base.OnShown(e);
-        if (_testMode) return;
-        EnsureWinEventHooks();
-        ReadStateIfChanged();
-        EnsureModeAndPosition(forceRender: true);
+        switch (msg)
+        {
+            case WmMouseActivate:
+                return new IntPtr(MaNoActivate);
+
+            case WmTimer:
+                if (wParam.ToInt64() == 1 && !_testMode)
+                    TickLoop();
+                return IntPtr.Zero;
+
+            case WmFallbackReevaluate:
+                EnsureModeAndPosition(forceRender: true);
+                return IntPtr.Zero;
+
+            case 0x02E0 /* WM_DPICHANGED */:
+                _dirtyRender = true;
+                EnsureModeAndPosition(forceRender: true);
+                return IntPtr.Zero;
+
+            case WmLButtonDown:
+                HandleMouseDown();
+                return IntPtr.Zero;
+
+            case WmMouseMove:
+            {
+                if (!_trackingLeave)
+                {
+                    var tme = new TRACKMOUSEEVENT
+                    {
+                        cbSize = (uint)Marshal.SizeOf<TRACKMOUSEEVENT>(),
+                        dwFlags = TmeLeave,
+                        hwndTrack = hwnd,
+                    };
+                    TrackMouseEvent(ref tme);
+                    _trackingLeave = true;
+                }
+                int lp = lParam.ToInt32();
+                int x = unchecked((short)(lp & 0xFFFF));
+                int y = unchecked((short)((lp >> 16) & 0xFFFF));
+                HandleMouseMove(x, y);
+                return IntPtr.Zero;
+            }
+
+            case WmMouseLeave:
+                _trackingLeave = false;
+                HandleMouseLeave();
+                return IntPtr.Zero;
+
+            case WmLButtonUp:
+            {
+                int lp = lParam.ToInt32();
+                int x = unchecked((short)(lp & 0xFFFF));
+                int y = unchecked((short)((lp >> 16) & 0xFFFF));
+                HandleMouseUp(x, y);
+                return IntPtr.Zero;
+            }
+
+            case WmDestroy:
+                KillTimer(hwnd, 1);
+                if (!_testMode)
+                    PostQuitMessage(0);
+                return IntPtr.Zero;
+        }
+        return Program.DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
     private void EnsureWinEventHooks()
@@ -829,7 +1177,7 @@ internal sealed class TaskbarForm : Form
 
     private void OnWinEvent(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
     {
-        if (!IsHandleCreated || IsDisposed || _testMode || !_state.Embedded || _usingChildMode || _hiddenByFullscreen)
+        if (!IsHandleCreated || _testMode || !_state.Embedded || _usingChildMode || _hiddenByFullscreen)
             return;
         if (IsPopupFlyoutOpen())
             return;
@@ -1128,12 +1476,12 @@ internal sealed class TaskbarForm : Form
                 }
                 else
                 {
-                    var wa = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1040);
+                    var wa = GetPrimaryWorkArea();
                     _floatX = wa.Right - _width - (int)Math.Round(24 * scale);
                     _floatY = wa.Bottom - _height - (int)Math.Round(24 * scale);
                 }
             }
-            var vs = SystemInformation.VirtualScreen;
+            var vs = GetVirtualScreen();
             _floatX = Math.Clamp(_floatX, vs.Left, Math.Max(vs.Left, vs.Right - _width));
             _floatY = Math.Clamp(_floatY, vs.Top, Math.Max(vs.Top, vs.Bottom - _height));
         }
@@ -1177,7 +1525,6 @@ internal sealed class TaskbarForm : Form
 
     internal bool AttachTestParent(IntPtr parentTray, WidgetState sampleState)
     {
-        _timer.Stop();
         _state = sampleState;
         _lastLight = true;
         _metrics = new SystemMetricsSnapshot
@@ -1231,16 +1578,33 @@ internal sealed class TaskbarForm : Form
         _dirtyRender = false;
     }
 
-    private bool ApplyBitmapToWindow(Bitmap bmp, bool allowFallback)
+    private bool ApplyBitmapToWindow(SKBitmap bmp, bool allowFallback)
     {
-        IntPtr screenDc = GetDC(IntPtr.Zero);
-        IntPtr memDc = CreateCompatibleDC(screenDc);
+        IntPtr screenDc = Program.GetDC(IntPtr.Zero);
+        IntPtr memDc = Program.CreateCompatibleDC(screenDc);
         IntPtr hBitmap = IntPtr.Zero;
         IntPtr oldBitmap = IntPtr.Zero;
         try
         {
-            hBitmap = bmp.GetHbitmap(Color.FromArgb(0));
-            oldBitmap = SelectObject(memDc, hBitmap);
+            var bmi = new Program.BITMAPINFOHEADER
+            {
+                biSize = (uint)Marshal.SizeOf<Program.BITMAPINFOHEADER>(),
+                biWidth = bmp.Width,
+                biHeight = -bmp.Height, // top-down matching SKBitmap memory layout
+                biPlanes = 1,
+                biBitCount = 32,
+                biCompression = 0,
+            };
+            hBitmap = Program.CreateDIBSection(memDc, ref bmi, 0, out IntPtr bitsPtr, IntPtr.Zero, 0);
+            if (hBitmap == IntPtr.Zero || bitsPtr == IntPtr.Zero)
+                return false;
+
+            int rowBytes = bmp.Width * 4;
+            using var pixmap = bmp.PeekPixels();
+            if (pixmap == null || !pixmap.ReadPixels(pixmap.Info, bitsPtr, rowBytes, 0, 0))
+                return false;
+
+            oldBitmap = Program.SelectObject(memDc, hBitmap);
             var size = new SIZE { cx = bmp.Width, cy = bmp.Height };
             var ptSrc = new POINT { X = 0, Y = 0 };
             var blend = new BLENDFUNCTION
@@ -1278,7 +1642,7 @@ internal sealed class TaskbarForm : Form
                 if (allowFallback && _usingChildMode && !_childLayeredFailed)
                 {
                     _childLayeredFailed = true;
-                    BeginInvoke(new Action(() => EnsureModeAndPosition(forceRender: true)));
+                    PostMessageW(Handle, WmFallbackReevaluate, IntPtr.Zero, IntPtr.Zero);
                 }
                 return false;
             }
@@ -1294,28 +1658,25 @@ internal sealed class TaskbarForm : Form
         }
         finally
         {
-            if (oldBitmap != IntPtr.Zero) SelectObject(memDc, oldBitmap);
-            if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
-            if (memDc != IntPtr.Zero) DeleteDC(memDc);
-            if (screenDc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, screenDc);
+            if (oldBitmap != IntPtr.Zero) Program.SelectObject(memDc, oldBitmap);
+            if (hBitmap != IntPtr.Zero) Program.DeleteObject(hBitmap);
+            if (memDc != IntPtr.Zero) Program.DeleteDC(memDc);
+            if (screenDc != IntPtr.Zero) Program.ReleaseDC(IntPtr.Zero, screenDc);
         }
     }
 
-    protected override void OnMouseDown(MouseEventArgs e)
+    private void HandleMouseDown()
     {
-        base.OnMouseDown(e);
-        if (e.Button != MouseButtons.Left) return;
         _dragging = true;
         _moved = false;
         GetCursorPos(out _dragCursorStart);
         _dragWinStartX = _state.Embedded ? _relX : _floatX;
         _dragWinStartY = _state.Embedded ? _relY : _floatY;
-        Capture = true;
+        SetCapture(Handle);
     }
 
-    protected override void OnMouseMove(MouseEventArgs e)
+    private void HandleMouseMove(int x, int y)
     {
-        base.OnMouseMove(e);
         if (_dragging)
         {
             GetCursorPos(out var cur);
@@ -1353,7 +1714,7 @@ internal sealed class TaskbarForm : Form
                 }
                 else
                 {
-                    var vs = SystemInformation.VirtualScreen;
+                    var vs = GetVirtualScreen();
                     _floatX = Math.Clamp(_dragWinStartX + dx, vs.Left, Math.Max(vs.Left, vs.Right - _width));
                     _floatY = Math.Clamp(_dragWinStartY + dy, vs.Top, Math.Max(vs.Top, vs.Bottom - _height));
                     SetWindowPos(Handle, HwndTopMost, _floatX, _floatY, 0, 0, SwpNoActivate | SwpNoSize);
@@ -1363,37 +1724,34 @@ internal sealed class TaskbarForm : Form
             }
         }
 
-        int hit = _blocks.FindIndex(b => b.Bounds.Contains(e.Location));
+        int hit = _blocks.FindIndex(b => b.Bounds.Contains(x, y));
         if (hit != _hover)
         {
             _hover = hit;
             _monitorHoverSince = Environment.TickCount64;
             _monitorHoverSent = false;
             if (_state.FlyoutOnHover || (hit >= 0 && _blocks[hit].Kind == BlockKind.Monitor))
-                _tip.SetToolTip(this, "");
+                SetTipText("");
             else
-                _tip.SetToolTip(this, hit >= 0 ? _blocks[hit].Tip : "");
+                SetTipText(hit >= 0 ? _blocks[hit].Tip : "");
             RenderCurrent();
         }
     }
 
-    protected override void OnMouseLeave(EventArgs e)
+    private void HandleMouseLeave()
     {
-        base.OnMouseLeave(e);
         _monitorHoverSent = false;
         if (_hover != -1)
         {
             _hover = -1;
-            _tip.SetToolTip(this, "");
+            SetTipText("");
             RenderCurrent();
         }
     }
 
-    protected override void OnMouseUp(MouseEventArgs e)
+    private void HandleMouseUp(int x, int y)
     {
-        base.OnMouseUp(e);
-        if (e.Button != MouseButtons.Left) return;
-        Capture = false;
+        ReleaseCapture();
         _dragging = false;
         if (_moved)
         {
@@ -1402,7 +1760,7 @@ internal sealed class TaskbarForm : Form
             return;
         }
 
-        var hit = _blocks.FirstOrDefault(b => b.Bounds.Contains(e.Location));
+        var hit = _blocks.FirstOrDefault(b => b.Bounds.Contains(x, y));
         try
         {
             if (hit != null)
@@ -1489,6 +1847,25 @@ internal sealed class TaskbarForm : Form
         catch { }
     }
 
+    private static RECT GetPrimaryWorkArea()
+    {
+        var rc = new RECT();
+        if (SystemParametersInfoW(0x0030 /* SPI_GETWORKAREA */, 0, ref rc, 0) && rc.Right > rc.Left && rc.Bottom > rc.Top)
+            return rc;
+        return new RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1040 };
+    }
+
+    private static RECT GetVirtualScreen()
+    {
+        int left = GetSystemMetrics(76 /* SM_XVIRTUALSCREEN */);
+        int top = GetSystemMetrics(77 /* SM_YVIRTUALSCREEN */);
+        int w = GetSystemMetrics(78 /* SM_CXVIRTUALSCREEN */);
+        int h = GetSystemMetrics(79 /* SM_CYVIRTUALSCREEN */);
+        if (w <= 0 || h <= 0)
+            return new RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 };
+        return new RECT { Left = left, Top = top, Right = left + w, Bottom = top + h };
+    }
+
     private static bool IsWin11CenteredWithWidgets(IntPtr tray)
     {
         try
@@ -1567,14 +1944,16 @@ internal sealed class TaskbarForm : Form
         catch { return true; }
     }
 
-    protected override void OnFormClosed(FormClosedEventArgs e)
+    public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         if (_hookFg != IntPtr.Zero) { UnhookWinEvent(_hookFg); _hookFg = IntPtr.Zero; }
         _winEventProc = null;
-        _timer.Stop();
-        _timer.Dispose();
-        _tip.Dispose();
-        base.OnFormClosed(e);
+        if (_tooltipHwnd != IntPtr.Zero) { Program.DestroyWindow(_tooltipHwnd); _tooltipHwnd = IntPtr.Zero; }
+        if (_hwnd != IntPtr.Zero) { KillTimer(_hwnd, 1); Program.DestroyWindow(_hwnd); _hwnd = IntPtr.Zero; }
+        Program.UnregisterClassW(_className, _hInstance);
+        GC.KeepAlive(_wndProc);
     }
 
     private delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
@@ -1604,12 +1983,18 @@ internal sealed class TaskbarForm : Form
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hwnd, ref POINT lpPoint);
-    [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hwnd);
-    [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
-    [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-    [DllImport("gdi32.dll")] private static extern bool DeleteDC(IntPtr hdc);
-    [DllImport("gdi32.dll")] private static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
-    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr obj);
+    [DllImport("user32.dll")] private static extern IntPtr SetCapture(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern bool ReleaseCapture();
+    [DllImport("user32.dll")] private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT lpEventTrack);
+    [DllImport("user32.dll")] private static extern IntPtr SetTimer(IntPtr hWnd, uint nIDEvent, uint uElapse, IntPtr lpTimerFunc);
+    [DllImport("user32.dll")] private static extern bool KillTimer(IntPtr hWnd, uint uIDEvent);
+    [DllImport("user32.dll")] private static extern int GetMessageW(out Program.MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+    [DllImport("user32.dll")] private static extern void PostQuitMessage(int nExitCode);
+    [DllImport("user32.dll")] private static extern bool PostMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr SendMessageW(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr LoadCursorW(IntPtr hInstance, IntPtr lpCursorName);
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int nIndex);
+    [DllImport("user32.dll")] private static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, ref RECT pvParam, uint fWinIni);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UpdateLayeredWindow(
@@ -1631,6 +2016,29 @@ internal sealed class TaskbarForm : Form
         public RECT rcMonitor;
         public RECT rcWork;
         public uint dwFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TRACKMOUSEEVENT
+    {
+        public uint cbSize;
+        public uint dwFlags;
+        public IntPtr hwndTrack;
+        public uint dwHoverTime;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TOOLINFOW
+    {
+        public int cbSize;
+        public uint uFlags;
+        public IntPtr hwnd;
+        public IntPtr uId;
+        public RECT rect;
+        public IntPtr hinst;
+        public IntPtr lpszText;
+        public IntPtr lParam;
+        public IntPtr lpReserved;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

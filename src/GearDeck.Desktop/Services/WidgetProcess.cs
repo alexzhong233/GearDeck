@@ -16,12 +16,12 @@ public static class WidgetProcess
 
     private static string ResolveExePath()
     {
-        string nested = Path.Combine(AppContext.BaseDirectory, "widget", "GearDeck.Widget.exe");
-        if (File.Exists(nested))
-            return nested;
-
         string adjacent = Path.Combine(AppContext.BaseDirectory, "GearDeck.Widget.exe");
-        return File.Exists(adjacent) ? adjacent : nested;
+        if (File.Exists(adjacent))
+            return adjacent;
+
+        string nested = Path.Combine(AppContext.BaseDirectory, "widget", "GearDeck.Widget.exe");
+        return File.Exists(nested) ? nested : adjacent;
     }
 
     private static string StatePath => Path.Combine(

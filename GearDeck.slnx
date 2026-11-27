@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/GearDeck.Core/GearDeck.Core.csproj" />
     <Project Path="src/GearDeck.Desktop/GearDeck.Desktop.csproj" />
+    <Project Path="src/GearDeck.Widget/GearDeck.Widget.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/GearDeck.Tests/GearDeck.Tests.csproj" />

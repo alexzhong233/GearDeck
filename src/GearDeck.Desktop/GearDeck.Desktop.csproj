@@ -40,28 +40,44 @@
   </ItemGroup>
 
   <Target Name="CopyWidget" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <ItemGroup>
-      <_WidgetFiles Include="..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\**\*.*"
-                    Condition="Exists('..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')" />
-      <_WidgetFiles Include="..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\**\*.*"
-                    Condition="!Exists('..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\GearDeck.Widget.exe') and Exists('..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')" />
+    <MSBuild Projects="..\GearDeck.Widget\GearDeck.Widget.csproj"
+             Properties="Configuration=$(Configuration)"
+             Condition="'$(DesignTimeBuild)' != 'true' and Exists('..\GearDeck.Widget\obj\project.assets.json')" />
+    <PropertyGroup>
+      <_WidgetOutDir Condition="Exists('..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\</_WidgetOutDir>
+      <_WidgetOutDir Condition="'$(_WidgetOutDir)' == '' and Exists('..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\</_WidgetOutDir>
+      <_WidgetOutDir Condition="'$(_WidgetOutDir)' == '' and Exists('..\GearDeck.Widget\bin\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\$(Configuration)\net8.0-windows\</_WidgetOutDir>
+      <_WidgetOutDir Condition="'$(_WidgetOutDir)' == '' and Exists('..\GearDeck.Widget\bin\$(Configuration)\net8.0-windows\win-x64\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\$(Configuration)\net8.0-windows\win-x64\</_WidgetOutDir>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(_WidgetOutDir)' != ''">
+      <_WidgetFiles Include="$(_WidgetOutDir)GearDeck.Widget.exe" />
+      <_WidgetFiles Include="$(_WidgetOutDir)GearDeck.Widget.dll" />
+      <_WidgetFiles Include="$(_WidgetOutDir)GearDeck.Widget.deps.json" />
+      <_WidgetFiles Include="$(_WidgetOutDir)GearDeck.Widget.runtimeconfig.json" />
     </ItemGroup>
     <Copy SourceFiles="@(_WidgetFiles)"
-          DestinationFolder="$(OutDir)widget\%(RecursiveDir)"
+          DestinationFolder="$(OutDir)"
           SkipUnchangedFiles="true"
           Condition="'@(_WidgetFiles)' != ''" />
+    <RemoveDir Directories="$(OutDir)widget" Condition="Exists('$(OutDir)widget')" />
   </Target>
 
   <Target Name="CopyWidgetToPublish" AfterTargets="Publish" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <ItemGroup>
-      <_WidgetPubFiles Include="..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\**\*.*"
-                       Condition="Exists('..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')" />
-      <_WidgetPubFiles Include="..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\**\*.*"
-                       Condition="!Exists('..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\GearDeck.Widget.exe') and Exists('..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')" />
+    <PropertyGroup>
+      <_WidgetPubDir Condition="Exists('..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\x64\$(Configuration)\net8.0-windows\</_WidgetPubDir>
+      <_WidgetPubDir Condition="'$(_WidgetPubDir)' == '' and Exists('..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\AnyCPU\$(Configuration)\net8.0-windows\</_WidgetPubDir>
+      <_WidgetPubDir Condition="'$(_WidgetPubDir)' == '' and Exists('..\GearDeck.Widget\bin\$(Configuration)\net8.0-windows\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\$(Configuration)\net8.0-windows\</_WidgetPubDir>
+      <_WidgetPubDir Condition="'$(_WidgetPubDir)' == '' and Exists('..\GearDeck.Widget\bin\$(Configuration)\net8.0-windows\win-x64\GearDeck.Widget.exe')">..\GearDeck.Widget\bin\$(Configuration)\net8.0-windows\win-x64\</_WidgetPubDir>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(_WidgetPubDir)' != ''">
+      <_WidgetPubFiles Include="$(_WidgetPubDir)GearDeck.Widget.exe" />
+      <_WidgetPubFiles Include="$(_WidgetPubDir)GearDeck.Widget.dll" />
+      <_WidgetPubFiles Include="$(_WidgetPubDir)GearDeck.Widget.deps.json" />
+      <_WidgetPubFiles Include="$(_WidgetPubDir)GearDeck.Widget.runtimeconfig.json" />
     </ItemGroup>
     <Copy SourceFiles="@(_WidgetPubFiles)"
-          DestinationFolder="$(PublishDir)widget\%(RecursiveDir)"
+          DestinationFolder="$(PublishDir)"
           SkipUnchangedFiles="true"
-          Condition="'$(PublishDir)' != '' and !Exists('$(PublishDir)widget\GearDeck.Widget.exe') and '@(_WidgetPubFiles)' != ''" />
+          Condition="'$(PublishDir)' != '' and !Exists('$(PublishDir)GearDeck.Widget.exe') and '@(_WidgetPubFiles)' != ''" />
   </Target>
 </Project>
