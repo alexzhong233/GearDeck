@@ -1,0 +1,611 @@
+{
+  "version": 5,
+  "syncedCount": 65,
+  "failureCount": 4,
+  "rules": [
+    {
+      "id": "logi_pro_x3_superstrike",
+      "name": "Logitech PRO X3 SUPERSTRIKE",
+      "vidPid": "046d:c54f",
+      "preset": "logitech_gpx",
+      "cloudUrl": "https://resource.logitech.com/w_692,c_lpad,ar_4:3,q_auto,f_auto,dpr_1.0/d_transparent.gif/content/dam/gaming/en/products/pro-x-superlight-2/gallery-1-pro-x-superlight-2-gaming-mouse-black.png",
+      "assetFile": "images/e98697676d781831.png"
+    },
+    {
+      "id": "logi_pro_x3_superstrike_wired",
+      "name": "Logitech PRO X3 SUPERSTRIKE (Wired)",
+      "vidPid": "046d:c0a9",
+      "preset": "logitech_gpx",
+      "cloudUrl": "https://resource.logitech.com/w_692,c_lpad,ar_4:3,q_auto,f_auto,dpr_1.0/d_transparent.gif/content/dam/gaming/en/products/pro-x-superlight-2/gallery-1-pro-x-superlight-2-gaming-mouse-black.png",
+      "assetFile": "images/e98697676d781831.png"
+    },
+    {
+      "id": "logi_gpx_superlight",
+      "name": "Logitech G PRO X Superlight",
+      "vidPid": "046d:c094",
+      "preset": "logitech_gpx",
+      "piperSvg": "logitech-g-pro-x-wireless-superlight.svg",
+      "assetFile": "images/e9c9a537207b6d58.png"
+    },
+    {
+      "id": "logi_gpw",
+      "name": "Logitech G PRO Wireless",
+      "vidPid": "046d:c088",
+      "preset": "logitech_gpx",
+      "piperSvg": "logitech-g-pro-wireless.svg",
+      "assetFile": "images/bb44f201fb4864ed.png"
+    },
+    {
+      "id": "logi_g502",
+      "name": "Logitech G502 / G502 X",
+      "vidPid": "046d:c08b",
+      "preset": "logitech_g502",
+      "piperSvg": "logitech-g502-x-plus.svg",
+      "assetFile": "images/9624256a4eabc4e2.png"
+    },
+    {
+      "id": "am_infinity_97",
+      "name": "Angry Miao AM Infinity .97",
+      "vidPid": "0e8d:0703",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png",
+      "assetFile": "images/31b03e9eb6d2520c.png"
+    },
+    {
+      "id": "am_infinity_97_wired",
+      "name": "Angry Miao AM Infinity .97 (Wired)",
+      "vidPid": "0e8d:0880",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png",
+      "assetFile": "images/31b03e9eb6d2520c.png"
+    },
+    {
+      "id": "am_infinity_97_alt",
+      "name": "Angry Miao AM Infinity .97",
+      "vidPid": "35a1:0035",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png",
+      "assetFile": "images/31b03e9eb6d2520c.png"
+    },
+    {
+      "id": "am_infinity_100r2_dongle",
+      "name": "Angry Miao AM INFINITY .100R2",
+      "vidPid": "0e8d:0704",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30r2-mouse.png",
+      "assetFile": "images/2ac8769bd7ebb69b.png"
+    },
+    {
+      "id": "am_infinity_100r2_wired",
+      "name": "Angry Miao AM INFINITY .100R2 (Wired)",
+      "vidPid": "0e8d:0881",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30r2-mouse.png",
+      "assetFile": "images/2ac8769bd7ebb69b.png"
+    },
+    {
+      "id": "am_infinity_am30_dongle",
+      "name": "Angry Miao AM Infinity Mouse",
+      "vidPid": "3151:5007",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30-mouse.png",
+      "assetFile": "images/3ba3cf3feb599103.png"
+    },
+    {
+      "id": "am_infinity_am30_wired",
+      "name": "Angry Miao AM Infinity Mouse (Wired)",
+      "vidPid": "3151:402a",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30-mouse.png",
+      "assetFile": "images/3ba3cf3feb599103.png"
+    },
+    {
+      "id": "am_infinity_wired",
+      "name": "Angry Miao AM Infinity (Wired)",
+      "vidPid": "3151:3010",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/am30-mouse.png",
+      "assetFile": "images/3ba3cf3feb599103.png"
+    },
+    {
+      "id": "razer_viper_v3_pro",
+      "name": "Razer Viper V3 Pro",
+      "vidPid": "1532:00c1",
+      "preset": "razer_viper_v3_pro",
+      "cloudUrl": "https://assets2.razerzone.com/images/pnx.assets/05b2ecb314fa052d217b254d5a3c86c9/viper-v3-pro-black-500x500.webp",
+      "assetFile": "images/c6d9ff390e8203d0.png"
+    },
+    {
+      "id": "razer_viper_v3_pro_wired",
+      "name": "Razer Viper V3 Pro Wired",
+      "vidPid": "1532:00c0",
+      "preset": "razer_viper_v3_pro",
+      "cloudUrl": "https://assets2.razerzone.com/images/pnx.assets/05b2ecb314fa052d217b254d5a3c86c9/viper-v3-pro-black-500x500.webp",
+      "assetFile": "images/c6d9ff390e8203d0.png"
+    },
+    {
+      "id": "wlmouse_beast_x_v2",
+      "name": "WLmouse Beast X V2 8K",
+      "vidPid": "36a7:a856",
+      "preset": "wlmouse_beast_x_v2",
+      "cloudUrl": "https://www.wlmouse.com/cdn/shop/files/9ed5786037e96b6a3eb76ee579be7e4c.png",
+      "assetFile": "images/aebddb97cda4f3ff.png"
+    },
+    {
+      "id": "wlmouse_beast_g",
+      "name": "WLmouse Beast G 8K",
+      "vidPid": "36a7:a860",
+      "preset": "wlmouse_beast_g",
+      "cloudUrl": "https://www.wlmouse.com/cdn/shop/files/9ed5786037e96b6a3eb76ee579be7e4c.png",
+      "assetFile": "images/aebddb97cda4f3ff.png"
+    },
+    {
+      "id": "aula_kunlun_l5_dongle",
+      "name": "AULA 昆仑 L5 Ultra",
+      "vidPid": "38a6:2f1a",
+      "preset": "aula_kunlun_l5",
+      "cloudUrl": "https://cdn2.aulacn.com/storage/20261015/UGa1792055906WIAjQC.jpg",
+      "assetFile": "images/15309bdfb5832391.png"
+    },
+    {
+      "id": "aula_kunlun_l5_wired",
+      "name": "AULA 昆仑 L5 Ultra (Wired)",
+      "vidPid": "38a6:2f0c",
+      "preset": "aula_kunlun_l5",
+      "cloudUrl": "https://cdn2.aulacn.com/storage/20261015/UGa1792055906WIAjQC.jpg",
+      "assetFile": "images/15309bdfb5832391.png"
+    },
+    {
+      "id": "aula_sc380",
+      "name": "AULA SC380 Pro",
+      "vidPid": "258a:0138",
+      "preset": "aula_sc_symm",
+      "piperSvg": "glorious-model-o.svg",
+      "assetFile": "images/1f636624671a4b0d.png"
+    },
+    {
+      "id": "rog_scope_2_rx_98",
+      "name": "ROG 游侠 2 RX 98 无线",
+      "vidPid": "0b05:1b7a",
+      "preset": "rog_scope_98",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/172952e2-c635-4e01-b4a0-5634dd55142b/ROG%20Strix%20Scope%20II%2096%20Wireless%2001.png",
+      "assetFile": "images/12898bddb9daafea.png"
+    },
+    {
+      "id": "rog_falchion_ace_hfx",
+      "name": "ROG 魔导士 Ace HFX 75",
+      "vidPid": "0b05:1c7d",
+      "preset": "rog_falchion_75he",
+      "cloudUrl": "https://dlcdnwebimgs.asus.com/gain/21597AB2-8BDD-4E12-83EC-45C6B2DC9B03/w717/h525/fwebp",
+      "assetFile": "images/2181ba419b047a95.png"
+    },
+    {
+      "id": "rog_delta_ii",
+      "name": "ROG Delta II",
+      "vidPid": "0b05:1afa",
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/b15882bc-d8fe-4638-98ea-01c66296de9b/A701_2400x2400_1.png",
+      "assetFile": "images/9c5fd4e00d12e33b.png"
+    },
+    {
+      "id": "sony_inzone_buds",
+      "name": "Sony INZONE Buds",
+      "vidPid": "054c:0ec2",
+      "preset": "sony_inzone_buds",
+      "cloudUrl": "https://helpguide.sony.net/mdr/2977/v1/en/contents/image/i0010_wfg700n.png",
+      "assetFile": "images/664679e4328c9610.png"
+    },
+    {
+      "id": "sony_inzone_headset",
+      "name": "Sony INZONE H9 / H7 / H5",
+      "vid": "054c",
+      "kind": "Headset",
+      "keywords": [
+        "h9",
+        "h7",
+        "h5",
+        "inzone"
+      ],
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://helpguide.sony.net/mdr/2977/v1/en/contents/image/i0010_wfg700n.png",
+      "assetFile": "images/664679e4328c9610.png"
+    },
+    {
+      "id": "pulsar_family",
+      "name": "Pulsar X2 / Xlite / Feinmann 家族",
+      "vid": "3710",
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "glorious-model-o.svg",
+      "assetFile": "images/1f636624671a4b0d.png"
+    },
+    {
+      "id": "pulsar_legacy_kw",
+      "name": "Pulsar X2 / Xlite",
+      "keywords": [
+        "pulsar",
+        "x2v2",
+        "x2h",
+        "xlite",
+        "feinmann",
+        "tenz"
+      ],
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "glorious-model-o.svg",
+      "assetFile": "images/1f636624671a4b0d.png"
+    },
+    {
+      "id": "rapoo_vt_kw",
+      "name": "Rapoo VT 无线系列",
+      "keywords": [
+        "rapoo",
+        "vt9",
+        "vt1",
+        "vt3",
+        "雷柏"
+      ],
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "logitech-g-pro-wireless.svg",
+      "assetFile": "images/bb44f201fb4864ed.png"
+    },
+    {
+      "id": "ninjutso_sora_kw",
+      "name": "Ninjutso Sora 系列",
+      "keywords": [
+        "ninjutso",
+        "sora"
+      ],
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "glorious-model-o.svg",
+      "assetFile": "images/1f636624671a4b0d.png"
+    },
+    {
+      "id": "finalmouse_family",
+      "name": "Finalmouse ULX / Starlight 家族",
+      "vid": "361d",
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "glorious-model-o.svg",
+      "assetFile": "images/1f636624671a4b0d.png"
+    },
+    {
+      "id": "steelseries_headset_family",
+      "name": "SteelSeries Arctis Nova 系列耳机",
+      "vid": "1038",
+      "kind": "Headset",
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/b15882bc-d8fe-4638-98ea-01c66296de9b/A701_2400x2400_1.png",
+      "assetFile": "images/9c5fd4e00d12e33b.png"
+    },
+    {
+      "id": "corsair_headset_family",
+      "name": "Corsair Void / Virtuoso / HS80 耳机",
+      "vid": "1b1c",
+      "kind": "Headset",
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/b15882bc-d8fe-4638-98ea-01c66296de9b/A701_2400x2400_1.png",
+      "assetFile": "images/9c5fd4e00d12e33b.png"
+    },
+    {
+      "id": "hyperx_cloud_family",
+      "name": "HyperX Cloud 系列无线耳机",
+      "keywords": [
+        "hyperx",
+        "cloud"
+      ],
+      "kind": "Headset",
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/b15882bc-d8fe-4638-98ea-01c66296de9b/A701_2400x2400_1.png",
+      "assetFile": "images/9c5fd4e00d12e33b.png"
+    },
+    {
+      "id": "wooting_kb_family",
+      "name": "Wooting HE 磁轴键盘家族",
+      "vid": "31e3",
+      "kind": "Keyboard",
+      "preset": "rog_falchion_75he",
+      "cloudUrl": "https://dlcdnwebimgs.asus.com/gain/21597AB2-8BDD-4E12-83EC-45C6B2DC9B03/w717/h525/fwebp",
+      "assetFile": "images/2181ba419b047a95.png"
+    },
+    {
+      "id": "keychron_kb_family",
+      "name": "Keychron Q / K / V 机械与磁轴键盘",
+      "vid": "3434",
+      "kind": "Keyboard",
+      "preset": "rog_scope_98",
+      "piperSvg": "logitech-g-pro-keyboard.svg",
+      "assetFile": "images/c00475753ffed2e7.png"
+    },
+    {
+      "id": "monsgeek_kb_family",
+      "name": "MonsGeek / Akko 磁轴键盘",
+      "keywords": [
+        "monsgeek",
+        "fun60",
+        "m1"
+      ],
+      "kind": "Keyboard",
+      "preset": "rog_falchion_75he",
+      "piperSvg": "logitech-g-pro-keyboard.svg",
+      "assetFile": "images/c00475753ffed2e7.png"
+    },
+    {
+      "id": "drunkdeer_kb_family",
+      "name": "DrunkDeer A75 / G65 磁轴键盘",
+      "vid": "352d",
+      "kind": "Keyboard",
+      "preset": "rog_falchion_75he",
+      "piperSvg": "logitech-g-pro-keyboard.svg",
+      "assetFile": "images/c00475753ffed2e7.png"
+    },
+    {
+      "id": "nuphy_kb_family",
+      "name": "NuPhy Air / Halo / Field 键盘",
+      "vid": "19f5",
+      "kind": "Keyboard",
+      "preset": "rog_falchion_75he",
+      "piperSvg": "logitech-g-pro-keyboard.svg",
+      "assetFile": "images/c00475753ffed2e7.png"
+    },
+    {
+      "id": "ps_controller_family",
+      "name": "PlayStation DualSense / DualShock 4",
+      "keywords": [
+        "dualsense",
+        "dualshock"
+      ],
+      "kind": "Controller",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png",
+      "assetFile": "images/6eabf505a8e55852.png"
+    },
+    {
+      "id": "nintendo_switch_pro_family",
+      "name": "Nintendo Switch Pro / Joy-Con",
+      "vid": "057e",
+      "kind": "Controller",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png",
+      "assetFile": "images/6eabf505a8e55852.png"
+    },
+    {
+      "id": "bitdo_controller_family",
+      "name": "8BitDo 控制器家族",
+      "vid": "2dc8",
+      "kind": "Controller",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png",
+      "assetFile": "images/6eabf505a8e55852.png"
+    },
+    {
+      "id": "flydigi_cd2_dock",
+      "name": "飞智充电底座 CD2",
+      "vidPid": "37d7:6001",
+      "preset": "flydigi_cd2_dock",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png",
+      "assetFile": "images/6eabf505a8e55852.png"
+    },
+    {
+      "id": "flydigi_apex5",
+      "name": "飞智八爪鱼 5",
+      "vidPid": "37d7:2501",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png",
+      "assetFile": "images/6eabf505a8e55852.png"
+    },
+    {
+      "id": "flydigi_vader5",
+      "name": "飞智黑武士 5 Pro",
+      "vidPid": "37d7:2401",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png",
+      "assetFile": "images/6eabf505a8e55852.png"
+    },
+    {
+      "id": "flydigi_apex6_pro",
+      "name": "飞智八爪鱼 6 / 6 Pro",
+      "vidPid": "37d7:2502",
+      "preset": "flydigi_apex6_pro",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex6-pro.png",
+      "assetFile": "images/c562bc70357d3d50.png"
+    },
+    {
+      "id": "flydigi_apex4_dinput",
+      "name": "飞智八爪鱼 4",
+      "vidPid": "04b4:2412",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex4.png",
+      "assetFile": "images/8461c9f49bf9adbe.png"
+    },
+    {
+      "id": "wlmouse_family",
+      "name": "WLmouse 家族",
+      "vid": "36a7",
+      "preset": "wlmouse_beast_x_v2",
+      "cloudUrl": "https://www.wlmouse.com/cdn/shop/files/9ed5786037e96b6a3eb76ee579be7e4c.png",
+      "assetFile": "images/aebddb97cda4f3ff.png"
+    },
+    {
+      "id": "lamzu_ergo_kw",
+      "name": "Lamzu 高背工学家族 (Inca/Thorn/Paro)",
+      "vid": "37b0",
+      "preset": "lamzu_inca_ergo",
+      "cloudUrl": "https://lamzu.com/cdn/shop/files/3_44a7403b-e6a7-419c-9910-a7679e7315fd.png",
+      "assetFile": "images/01cc062180ef39a6.png"
+    },
+    {
+      "id": "lamzu_symm_family",
+      "name": "Lamzu 对称家族 (Maya/Atlantis)",
+      "vid": "373e",
+      "preset": "lamzu_maya_symm",
+      "cloudUrl": "https://lamzu.com/cdn/shop/files/3_44a7403b-e6a7-419c-9910-a7679e7315fd.png",
+      "assetFile": "images/01cc062180ef39a6.png"
+    },
+    {
+      "id": "atk_family",
+      "name": "ATK / VXE 家族",
+      "vid": "373b",
+      "preset": "atk_blazing_sky",
+      "piperSvg": "glorious-model-o.svg",
+      "assetFile": "images/1f636624671a4b0d.png"
+    },
+    {
+      "id": "vxe_family",
+      "name": "VXE / VGN 家族",
+      "vid": "34d7",
+      "preset": "atk_blazing_sky",
+      "piperSvg": "glorious-model-o.svg",
+      "assetFile": "images/1f636624671a4b0d.png"
+    },
+    {
+      "id": "razer_family",
+      "name": "Razer 鼠标家族",
+      "vid": "1532",
+      "kind": "Mouse",
+      "preset": "razer_viper_v3_pro",
+      "cloudUrl": "https://assets2.razerzone.com/images/pnx.assets/05b2ecb314fa052d217b254d5a3c86c9/viper-v3-pro-black-500x500.webp",
+      "assetFile": "images/c6d9ff390e8203d0.png"
+    },
+    {
+      "id": "logitech_family",
+      "name": "Logitech 鼠标家族",
+      "vid": "046d",
+      "kind": "Mouse",
+      "preset": "logitech_gpx",
+      "piperSvg": "logitech-g-pro-x-wireless-superlight.svg",
+      "assetFile": "images/e9c9a537207b6d58.png"
+    },
+    {
+      "id": "rog_keyboard_family",
+      "name": "ROG 键盘家族",
+      "vid": "0b05",
+      "kind": "Keyboard",
+      "preset": "rog_scope_98",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/172952e2-c635-4e01-b4a0-5634dd55142b/ROG%20Strix%20Scope%20II%2096%20Wireless%2001.png",
+      "assetFile": "images/12898bddb9daafea.png"
+    },
+    {
+      "id": "steelseries_family",
+      "name": "SteelSeries 鼠标家族",
+      "vid": "1038",
+      "kind": "Mouse",
+      "preset": "steelseries_sensei",
+      "piperSvg": "steelseries-sensei310.svg",
+      "assetFile": "images/b47900440967fb70.png"
+    },
+    {
+      "id": "am_family",
+      "name": "Angry Miao 家族",
+      "keywords": [
+        "angry",
+        "infinity",
+        "怒喵"
+      ],
+      "kind": "Mouse",
+      "preset": "am_infinity_97",
+      "cloudUrl": "https://ammaster.angrymiao.com/mouse/assets/device_am35_a-3df1ebac.png",
+      "assetFile": "images/31b03e9eb6d2520c.png"
+    },
+    {
+      "id": "aula_mouse_family",
+      "name": "AULA 狼蛛鼠标家族",
+      "keywords": [
+        "aula",
+        "狼蛛",
+        "昆仑"
+      ],
+      "kind": "Mouse",
+      "preset": "aula_kunlun_l5",
+      "cloudUrl": "https://cdn2.aulacn.com/storage/20261015/UGa1792055906WIAjQC.jpg",
+      "assetFile": "images/15309bdfb5832391.png"
+    },
+    {
+      "id": "lamzu_kw_family",
+      "name": "Lamzu 关键词",
+      "keywords": [
+        "lamzu",
+        "maya",
+        "atlantis",
+        "inca",
+        "paro"
+      ],
+      "kind": "Mouse",
+      "preset": "lamzu_maya_symm",
+      "cloudUrl": "https://lamzu.com/cdn/shop/files/3_44a7403b-e6a7-419c-9910-a7679e7315fd.png",
+      "assetFile": "images/01cc062180ef39a6.png"
+    },
+    {
+      "id": "flydigi_cd2_kw",
+      "name": "飞智底座关键词",
+      "keywords": [
+        "cd2",
+        "底座"
+      ],
+      "kind": "Controller",
+      "preset": "flydigi_cd2_dock",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png",
+      "assetFile": "images/6eabf505a8e55852.png"
+    },
+    {
+      "id": "fallback_controller",
+      "name": "通用手柄默认",
+      "kind": "Controller",
+      "preset": "flydigi_apex5",
+      "cloudUrl": "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex5.png",
+      "assetFile": "images/6eabf505a8e55852.png"
+    },
+    {
+      "id": "fallback_headset_sony",
+      "name": "Sony INZONE 耳机",
+      "keywords": [
+        "inzone",
+        "sony"
+      ],
+      "kind": "Headset",
+      "preset": "sony_inzone_buds",
+      "cloudUrl": "https://helpguide.sony.net/mdr/2977/v1/en/contents/image/i0010_wfg700n.png",
+      "assetFile": "images/664679e4328c9610.png"
+    },
+    {
+      "id": "fallback_headset",
+      "name": "通用耳机默认",
+      "kind": "Headset",
+      "preset": "rog_delta_ii",
+      "cloudUrl": "https://press.asus.com/assets/w_640,h_640/b15882bc-d8fe-4638-98ea-01c66296de9b/A701_2400x2400_1.png",
+      "assetFile": "images/9c5fd4e00d12e33b.png"
+    },
+    {
+      "id": "fallback_kb_75",
+      "name": "75% 磁轴紧凑键盘",
+      "keywords": [
+        "75",
+        "falchion",
+        "魔导士"
+      ],
+      "kind": "Keyboard",
+      "preset": "rog_falchion_75he",
+      "cloudUrl": "https://dlcdnwebimgs.asus.com/gain/21597AB2-8BDD-4E12-83EC-45C6B2DC9B03/w717/h525/fwebp",
+      "assetFile": "images/2181ba419b047a95.png"
+    },
+    {
+      "id": "fallback_keyboard",
+      "name": "通用键盘默认",
+      "kind": "Keyboard",
+      "preset": "rog_scope_98",
+      "piperSvg": "logitech-g-pro-keyboard.svg",
+      "assetFile": "images/c00475753ffed2e7.png"
+    },
+    {
+      "id": "fallback_mouse",
+      "name": "通用竞技鼠标默认",
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "piperSvg": "fallback.svg",
+      "assetFile": "images/26879a667adf571b.png"
+    }
+  ],
+  "gallery": []
+}
