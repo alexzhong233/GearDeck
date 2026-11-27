@@ -47,9 +47,11 @@
                     Background="{DynamicResource SubtleFillColorSecondaryBrush}"
                     BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1" CornerRadius="10" Padding="16">
-                <StackPanel Spacing="6">
-                    <TextBlock Text="macOS：辅助功能权限说明" FontSize="14" FontWeight="SemiBold" />
+                <StackPanel Spacing="8">
+                    <TextBlock Text="macOS：辅助功能与宏配置说明" FontSize="14" FontWeight="SemiBold" />
                     <TextBlock x:Name="MacOsNoticeText" Classes="meta" />
+                    <Button x:Name="OpenMacAccessibilityBtn" Content="打开辅助功能设置"
+                            HorizontalAlignment="Left" Classes="tool" />
                 </StackPanel>
             </Border>
 

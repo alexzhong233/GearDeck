@@ -60,6 +60,22 @@ public static class Diag
         {
             lines.Add($"枚举失败: {ex.Message}");
         }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                lines.Add($"macOS InputMonitoring={MacIOKitHid.CheckInputMonitoringAccess()}");
+                foreach (var m in MacIOKitHid.Enumerate().OrderBy(x => x.VendorId).ThenBy(x => x.ProductId))
+                {
+                    lines.Add($"[IOKit] {m.VendorId:X4}:{m.ProductId:X4} up=0x{m.PrimaryUsagePage:X4}:0x{m.PrimaryUsage:X4} in={m.MaxInputReportSize} out={m.MaxOutputReportSize} feat={m.MaxFeatureReportSize} loc=0x{m.LocationId:X} transport={m.Transport} name={m.Product}");
+                }
+            }
+            catch (Exception ex)
+            {
+                lines.Add($"macOS IOKit 枚举失败: {ex.Message}");
+            }
+        }
         return lines;
     }
 

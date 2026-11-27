@@ -201,4 +201,170 @@ public class MloongLeobogProtocolTests
         Assert.Equal("leobog:3554-FA09", res2.Devices[0].Id);
         Assert.Equal("leobog:258A-010C", res2.ActiveTransportRouting["leobog:3554-FA09"]);
     }
+
+    [Fact]
+    public void MloongMx301Pro_Accepts0xAAReplyAndPreservesWakeupRaw()
+    {
+        var batReply = new byte[64];
+        batReply[0] = 0xAA;
+        batReply[1] = 0x30;
+        batReply[8] = 63;
+        batReply[9] = 0;
+        Assert.True(MloongProvider.ParseMx301BatteryReply(batReply, out byte lvl, out bool chg));
+        Assert.Equal(63, lvl);
+        Assert.False(chg);
+
+        var cfgReply = new byte[64];
+        cfgReply[0] = 0xAA;
+        cfgReply[1] = 0x0E;
+        cfgReply[10] = 3; // 500 Hz
+        cfgReply[11] = 1; // 1 stage
+        cfgReply[12] = 1;
+        cfgReply[13] = 0x20; cfgReply[14] = 0x03; // 800 DPI
+        cfgReply[48] = 1;
+        cfgReply[49] = 1;
+        cfgReply[50] = 0x20; // MotionSync
+        cfgReply[51] = 3;
+        cfgReply[52] = 2;
+        cfgReply[53] = 0;
+        cfgReply[54] = 0x10; // Observed real hardware byte[54]
+
+        var parsed = MloongProvider.ParseMx301ConfigReply(cfgReply);
+        Assert.NotNull(parsed);
+        Assert.Equal((byte)0x10, parsed!.WakeupRaw);
+        Assert.Equal(800, parsed.DpiStages[0]);
+
+        var write = MloongProvider.BuildMx301ConfigWrite(cfgReply, parsed);
+        Assert.Equal((byte)0x10, write[54]);
+    }
+
+    [Fact]
+    public void LeobogHi98CPro_ExtractsLenFromHeaderAndAssemblesOutOfOrderPackets()
+    {
+        // Mock 21-byte frame where byte[4]&0x0F == 1 and trailing padding exists
+        var batReply21 = new byte[21];
+        batReply21[0] = 0x13;
+        batReply21[1] = 0x4A;
+        batReply21[2] = 1;
+        batReply21[3] = 0;
+        batReply21[4] = 0x01;
+        batReply21[5] = 88;
+        batReply21[19] = LeobogProvider.ComputeWirelessChecksum(batReply21);
+        batReply21[20] = 0xFF; // 21st buffer byte ignored
+
+        Assert.True(LeobogProvider.ParseWirelessPacket(batReply21, out var batPayload));
+        Assert.Single(batPayload);
+        Assert.Equal(88, LeobogProvider.ParseWirelessBatteryPayload(batPayload));
+
+        // 128B config split across 10 packets (9 * 14 + 2 = 128), supplied out-of-order
+        var cfg128 = new byte[128];
+        cfg128[0x0A] = 10; // Snake
+        cfg128[0x0F] = 1;  // WinLock
+        cfg128[0x18] = 12; // 360s sleep
+        cfg128[0x1B] = 2;  // macOS
+        cfg128[126] = 0x5A;
+        cfg128[127] = 0xA5;
+
+        var packets = new List<byte[]>();
+        for (int idx = 0; idx < 10; idx++)
+        {
+            int offset = idx * 14;
+            int len = Math.Min(14, cfg128.Length - offset);
+            var pkt = new byte[21];
+            pkt[0] = 0x13;
+            pkt[1] = 0x44;
+            pkt[2] = 10;
+            pkt[3] = (byte)idx;
+            pkt[4] = (byte)len;
+            Array.Copy(cfg128, offset, pkt, 5, len);
+            pkt[19] = LeobogProvider.ComputeWirelessChecksum(pkt);
+            packets.Add(pkt);
+        }
+        packets.Reverse();
+
+        var assembled = LeobogProvider.AssembleWirelessConfig(packets);
+        Assert.NotNull(assembled);
+        Assert.Equal(cfg128, assembled);
+        Assert.Equal("Windows", LeobogProvider.MapOsMode(0));
+        Assert.Equal("Android", LeobogProvider.MapOsMode(1));
+        Assert.Equal("macOS", LeobogProvider.MapOsMode(2));
+
+        // 实机 0x3554:0xFA09 接收器 PrimaryUsage 为 0x0001:0x0006 + 0xFF02:0x0002，即使配置接口 UsagePairs 含鼠标也应识别为 LEOBOG
+        var fa09Kbd = new GearDeck.Core.Hid.MacHidInterfaceInfo(
+            1, 0x3554, 0xFA09, 0x0001, 0x0006, 8, 1, 0, 0, "USB", "2.4G Wireless Receiver", "Compx", "", [], false, true, []);
+        var fa09Cfg = new GearDeck.Core.Hid.MacHidInterfaceInfo(
+            2, 0x3554, 0xFA09, 0xFF02, 0x0002, 21, 20, 8, 0, "USB", "2.4G Wireless Receiver", "Compx", "", [], true, true, []);
+        Assert.True(LeobogProvider.IsLeobogFa09Dongle([fa09Kbd, fa09Cfg]));
+
+        var aulaMouse = new GearDeck.Core.Hid.MacHidInterfaceInfo(
+            3, 0x3554, 0xFA09, 0x0001, 0x0002, 8, 1, 0, 0, "USB", "AULA Wireless Mouse", "Compx", "", [], true, false, []);
+        Assert.False(LeobogProvider.IsLeobogFa09Dongle([aulaMouse]));
+    }
+
+    [Fact]
+    public void LeobogHi98CPro_StudioModelsAndWirelessKeymapAssembly_WorkCorrectly()
+    {
+        // 1. 101 键布局完整性与唯一 ID / MatrixIndex
+        Assert.Equal(101, Hi98CLayout.Keys.Count);
+        Assert.Equal(101, Hi98CLayout.Keys.Select(k => k.Id).Distinct().Count());
+        Assert.All(Hi98CLayout.Keys, k => Assert.InRange(k.DefaultMatrixIndex, 0, Hi98CLayout.MatrixSlotCount - 1));
+
+        // 2. 组装 504B (36包) 默认层无线 0x41 分包 -> 自动补齐到 512B，并通过矩阵校准 101/101
+        var rawLayer0 = new byte[Hi98CLayout.LayerByteLength];
+        foreach (var spec in Hi98CLayout.Keys)
+            Array.Copy(spec.DefaultRecord.Bytes, 0, rawLayer0, spec.DefaultMatrixIndex * 4, 4);
+
+        const int totalPackets = 36; // 36 * 14 = 504
+        var packets = new List<byte[]>();
+        for (int idx = 0; idx < totalPackets; idx++)
+        {
+            var pkt = new byte[20];
+            pkt[0] = 0x13;
+            pkt[1] = 0x41;
+            pkt[2] = totalPackets;
+            pkt[3] = (byte)idx;
+            pkt[4] = 14;
+            Array.Copy(rawLayer0, idx * 14, pkt, 5, 14);
+            pkt[19] = LeobogProvider.ComputeWirelessChecksum(pkt);
+            packets.Add(pkt);
+        }
+        packets.Reverse();
+
+        var assembled = LeobogProvider.AssembleWirelessBlock(
+            packets, expectedCmd: 0x41, targetLength: 512,
+            minRequiredBytes: Hi98CLayout.LayerByteLength, verifyMagicTail: false);
+        Assert.NotNull(assembled);
+        Assert.Equal(512, assembled!.Length);
+        Assert.Equal(rawLayer0, assembled.Take(Hi98CLayout.LayerByteLength));
+
+        var cal = Hi98MatrixCalibrator.Calibrate(assembled);
+        Assert.Equal(101, cal.MatchedCount);
+        Assert.True(cal.IsFullyVerified);
+        Assert.Contains(53, cal.DetectedFnMatrixIndices);
+
+        // 3. 128B LED 配置块与槽位、防 0 休眠保护
+        var cfg = Hi98LedConfigBlock.DefaultTemplate();
+        cfg.EffectHardwareID = 10;
+        cfg.IsPerKeyCustomMode = false;
+        cfg.WinKeyLocked = true;
+        cfg.SideLightMode = Hi98SideLightMode.Breathing;
+        cfg.SleepTimerSeconds = 0; // 强制钳制到 >= 30s
+        Assert.Equal(30, cfg.SleepTimerSeconds);
+        cfg.SetSlot(new Hi98OnboardEffectSlot(4, 3, 5), 10);
+        var roundtrip = cfg.SlotForEffect(10);
+        Assert.NotNull(roundtrip);
+        Assert.Equal((byte)4, roundtrip!.Brightness);
+        Assert.Equal((byte)3, roundtrip.Speed);
+        Assert.Equal((byte)5, roundtrip.ColorIndex);
+
+        // 4. 2.4G 实时 RGB 量化限制在 <= 9 包，有线限定写入拒绝无线
+        var manyColors = Hi98RgbThemePreset.AllPresets[0].ColorsByMatrix;
+        var livePackets = LeobogProvider.BuildWirelessLiveColorPackets(manyColors, maxReports: 9);
+        Assert.InRange(livePackets.Count, 1, 9);
+
+        var wirelessWriteRes = LeobogProvider.WriteKeymapLayerWired(
+            "leobog:3554-FA09", Hi98KeyLayer.Base,
+            new Dictionary<int, Hi98KeyBindingRecord> { [0] = Hi98KeyBindingRecord.Key(0x29) }, "test");
+        Assert.False(wirelessWriteRes.Success);
+    }
 }

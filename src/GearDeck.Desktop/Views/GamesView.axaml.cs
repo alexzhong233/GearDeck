@@ -1624,7 +1624,7 @@ public partial class GamesView : UserControl
         border.Child = new TextBlock
         {
             Text = "\uE7FC",
-            FontFamily = new FontFamily("Segoe Fluent Icons, " + FontFamily.Default.Name),
+            FontFamily = Controls.UiBuilders.IconFont,
             FontSize = Math.Max(16, size * 0.5),
             HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,

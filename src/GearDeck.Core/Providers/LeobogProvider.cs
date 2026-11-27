@@ -12,7 +12,7 @@ namespace GearDeck.Core.Providers;
 /// - 2.4G：0x3554:0xFA09，蓝牙：0x3554:0xFA07，均使用 20B Report ID 0x13 协议。
 /// 无线模式严格只读；只有有线 258A:010C 允许写入板载配置。
 /// </summary>
-public sealed class LeobogProvider : ITunablePeripheralProvider
+public sealed partial class LeobogProvider : ITunablePeripheralProvider
 {
     public const string ProviderName = "LEOBOG";
     public string Name => ProviderName;
@@ -42,6 +42,70 @@ public sealed class LeobogProvider : ITunablePeripheralProvider
     public IReadOnlyList<PeripheralDevice> Enumerate()
     {
         var results = new List<PeripheralDevice>();
+
+        if (OperatingSystem.IsMacOS())
+        {
+            var macGroups = MacIOKitHid.Enumerate()
+                .Where(IsLeobogMacInterface)
+                .GroupBy(d => (d.VendorId, d.ProductId));
+
+            foreach (var g in macGroups)
+            {
+                try
+                {
+                    var (vid, pid) = g.Key;
+                    bool wired = IsWired(vid, pid);
+                    string transport = wired ? "USB" : pid == 0xFA07 ? "bluetooth" : "2.4g";
+                    string name = wired ? "LEOBOG Hi98C Pro (USB-C)"
+                        : pid == 0xFA07 ? "LEOBOG Hi98C Pro (Bluetooth)"
+                        : "LEOBOG Hi98C Pro (2.4G)";
+
+                    int? battery = null;
+                    BatteryState state = BatteryState.Unknown;
+                    bool permDenied = false;
+
+                    if (wired)
+                    {
+                        battery = null;
+                        state = BatteryState.Charging;
+                    }
+                    else
+                    {
+                        battery = ProbeWirelessBatteryMac(g, out permDenied);
+                        state = battery.HasValue ? BatteryState.Normal : BatteryState.Unknown;
+                    }
+
+                    string? note = wired
+                        ? "USB-C 有线模式：电量显示为充电中（不提供伪造百分比）"
+                        : permDenied
+                            ? "需要 macOS「输入监控」权限以读取 2.4G/蓝牙电量与配置（请在设备总览顶部授权）"
+                            : null;
+
+                    results.Add(new PeripheralDevice
+                    {
+                        Id = $"leobog:{vid:X4}-{pid:X4}",
+                        VendorId = vid,
+                        ProductId = pid,
+                        Name = name,
+                        Kind = DeviceKind.Keyboard,
+                        Provider = ProviderName,
+                        Connected = true,
+                        IsSleeping = !wired && !permDenied && !battery.HasValue,
+                        Transport = transport,
+                        BatteryPercent = battery,
+                        State = state,
+                        Note = note,
+                        LastUpdated = DateTimeOffset.Now,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Diag.Log($"LEOBOG(mac) {g.Key.Item1:X4}:{g.Key.Item2:X4}: {ex.Message}");
+                }
+            }
+            return results;
+        }
+
         var groups = HidSafe.EnumerateDevices()
             .Where(IsLeobogDevice)
             .GroupBy(d => ((ushort)d.VendorID, (ushort)d.ProductID));
@@ -103,6 +167,71 @@ public sealed class LeobogProvider : ITunablePeripheralProvider
         if (!TryParseVidPid(deviceId, out ushort vid, out ushort pid))
         {
             caps.StatusMessage = "无效的 LEOBOG 设备 ID。";
+            return caps;
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            var macList = MacIOKitHid.Enumerate(vid, pid);
+            if (macList.Count == 0)
+            {
+                caps.StatusMessage = "未找到 LEOBOG 设备接口。";
+                return caps;
+            }
+
+            bool macWired = IsWired(vid, pid);
+            caps.IsOnline = true;
+            caps.SupportsSleepTimeout = true;
+            caps.MinSleepSeconds = 30;
+            caps.MaxSleepSeconds = 1800;
+            caps.SupportedSleepSeconds = Enumerable.Range(1, 60).Select(u => u * 30).ToList();
+
+            byte[]? macCfg = null;
+            string? macModel = null;
+            bool permDenied = false;
+
+            if (macWired)
+            {
+                var dev = FindWiredMacInterface(macList);
+                if (dev == null)
+                {
+                    caps.IsOnline = false;
+                    caps.StatusMessage = "未找到支持 520B Feature 0x06 的 LEOBOG 有线配置接口。";
+                    return caps;
+                }
+                using var conn = MacIOKitHid.MacHidConnection.TryOpen(dev, out int openRet);
+                if (conn == null)
+                {
+                    caps.IsOnline = false;
+                    caps.StatusMessage = openRet == MacIOKitHid.kIOReturnNotPermitted
+                        ? "打开 LEOBOG 有线接口被 macOS 输入监控权限拦截，请授权后重启应用。"
+                        : $"无法打开 LEOBOG 有线配置接口 (0x{unchecked((uint)openRet):X})。";
+                    return caps;
+                }
+                macModel = ReadWiredModelMac(conn);
+                macCfg = ReadWiredConfigMac(conn);
+            }
+            else
+            {
+                macCfg = ReadWirelessConfigMac(macList, out permDenied);
+            }
+
+            if (macCfg != null && IsValidConfig(macCfg))
+            {
+                caps.CurrentSleepSeconds = macCfg[SleepOffset] * 30;
+                caps.StatusMessage = BuildConfigSummary(macModel, macCfg, macWired);
+            }
+            else if (permDenied)
+            {
+                caps.StatusMessage = "需要 macOS「输入监控」权限才可读取 LEOBOG Hi98C Pro 电量与板载配置；请在设备总览顶部点击「打开系统设置」授权并重启 GearDeck。";
+            }
+            else
+            {
+                caps.StatusMessage = macWired
+                    ? "已连接 LEOBOG Hi98C Pro 有线接口，但板载配置读取/校验未通过。"
+                    : "LEOBOG Hi98C Pro 无线模式严格只读；板载配置当前不可读取（设备可能休眠）。";
+            }
+
             return caps;
         }
 
@@ -172,6 +301,42 @@ public sealed class LeobogProvider : ITunablePeripheralProvider
         if (!IsWired(vid, pid))
             return new DeviceTuningResult(false,
                 "安全保护：LEOBOG Hi98C Pro 仅允许在 USB-C 有线模式下写入板载配置，无线模式严格只读。");
+
+        if (OperatingSystem.IsMacOS())
+        {
+            var macList = MacIOKitHid.Enumerate(vid, pid);
+            var macDev = FindWiredMacInterface(macList);
+            if (macDev == null)
+                return new DeviceTuningResult(false, "未找到支持 520B Feature 0x06 的 LEOBOG 有线配置接口。");
+
+            using var conn = MacIOKitHid.MacHidConnection.TryOpen(macDev, out int openRet);
+            if (conn == null)
+                return new DeviceTuningResult(false, openRet == MacIOKitHid.kIOReturnNotPermitted
+                    ? "打开有线配置通道需要 macOS 输入监控权限。"
+                    : "无法打开 LEOBOG 有线配置接口。");
+
+            byte[]? macCfg = ReadWiredConfigMac(conn);
+            if (macCfg == null || !IsValidConfig(macCfg))
+                return new DeviceTuningResult(false, "读取板载配置失败或校验不通过，已中止写入。");
+
+            if (update.SleepSeconds is { } secMac)
+                PatchConfigSleepSeconds(macCfg, secMac);
+
+            var macReq = BuildWiredFeatureRequest(CmdWriteConfig, 0, 1, 0, ConfigLength, macCfg);
+            if (!conn.SetFeatureReport(WiredReportId, macReq))
+                return new DeviceTuningResult(false, "写入板载配置失败。");
+
+            Thread.Sleep(400);
+
+            byte[]? macVerify = ReadWiredConfigMac(conn);
+            if (macVerify == null || !IsValidConfig(macVerify))
+                return new DeviceTuningResult(false, "回读板载配置失败，无法确认写入结果。");
+            if (macVerify[SleepOffset] != macCfg[SleepOffset])
+                return new DeviceTuningResult(false, "回读校验失败：休眠时间未正确写入。");
+
+            return new DeviceTuningResult(true, "已写入 LEOBOG Hi98C Pro 板载配置（回读校验通过）。",
+                QueryCapabilities(deviceId));
+        }
 
         var list = HidSafe.EnumerateDevices(vid, pid);
         var dev = FindWiredInterface(list);
@@ -245,9 +410,13 @@ public sealed class LeobogProvider : ITunablePeripheralProvider
 
     internal static byte[] ExtractWirelessPayload(ReadOnlySpan<byte> pkt)
     {
-        // 5 字节头 + 1 字节校验 => 20B 包携带 14B 有效载荷。
-        if (pkt.Length <= 6) return [];
-        return pkt.Slice(5, pkt.Length - 6).ToArray();
+        // 固定 20B 无线帧：前 5B 为包头，byte[4] 低 4 位为有效载荷长度 (0..14)，忽略超出 20B 的缓冲区尾字节。
+        if (pkt.Length < WirelessPacketLength || pkt[0] != WirelessReportId)
+            return [];
+        int len = Math.Min(pkt[4] & 0x0F, 14);
+        if (len <= 0 || pkt.Length < 5 + len)
+            return [];
+        return pkt.Slice(5, len).ToArray();
     }
 
     internal static int? ParseWirelessBatteryPayload(ReadOnlySpan<byte> payload)
@@ -256,70 +425,217 @@ public sealed class LeobogProvider : ITunablePeripheralProvider
     internal static byte[] BuildWirelessConfigReadPacket(int sub)
         => BuildWirelessReadPacket(CmdWirelessConfig, (byte)sub);
 
-    /// <summary>将 0x44 分包返回的有效载荷依次拼接为 128B 板载配置。</summary>
+    /// <summary>按 packetIndex (pkt[3]) 将 0x44 分包拼接为 128B 板载配置。</summary>
     internal static byte[]? AssembleWirelessConfig(IEnumerable<byte[]> packets)
     {
-        var cfg = new byte[ConfigLength];
-        int filled = 0;
+        var byIndex = new SortedDictionary<int, byte[]>();
+        var fallbackSeq = new List<byte[]>();
+        int expectedTotal = 0;
+
         foreach (var pkt in packets)
         {
-            if (pkt == null || !ParseWirelessPacket(pkt)) continue;
-            var payload = ExtractWirelessPayload(pkt);
+            if (pkt == null || !ParseWirelessPacket(pkt, out var payload)) continue;
             if (payload.Length == 0) continue;
-            int n = Math.Min(payload.Length, ConfigLength - filled);
-            Array.Copy(payload, 0, cfg, filled, n);
+
+            int total = pkt[2] & 0x7F;
+            int idx = pkt[3];
+            if (total > 0)
+            {
+                expectedTotal = Math.Max(expectedTotal, total);
+                if (idx < total)
+                    byIndex[idx] = payload;
+            }
+            else
+            {
+                fallbackSeq.Add(payload);
+            }
+        }
+
+        var cfg = new byte[ConfigLength];
+        int filled = 0;
+        IEnumerable<byte[]> ordered = expectedTotal > 0 ? byIndex.Values : fallbackSeq;
+        foreach (var chunk in ordered)
+        {
+            int n = Math.Min(chunk.Length, ConfigLength - filled);
+            if (n <= 0) break;
+            Array.Copy(chunk, 0, cfg, filled, n);
             filled += n;
             if (filled >= ConfigLength) break;
         }
         return filled == ConfigLength && IsValidConfig(cfg) ? cfg : null;
     }
 
+    private static int? ProbeWirelessBatteryMac(IEnumerable<MacHidInterfaceInfo> group, out bool permissionDenied)
+    {
+        permissionDenied = false;
+        var request = BuildWirelessReadPacket(CmdBattery);
+        byte expectedReplyCmd = (byte)(CmdBattery | 0x40);
+
+        foreach (var dev in SelectWirelessMacInterfaces(group))
+        {
+            using var conn = MacIOKitHid.MacHidConnection.TryOpen(dev, out int openRet);
+            if (conn == null)
+            {
+                if (openRet == MacIOKitHid.kIOReturnNotPermitted)
+                    permissionDenied = true;
+                continue;
+            }
+
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                conn.DrainInputReports();
+                if (!conn.WriteOutputReport(WirelessReportId, request))
+                    continue;
+                var reply = conn.ReadInputReport(450, pkt => pkt.Length >= WirelessPacketLength
+                    && pkt[0] == WirelessReportId
+                    && pkt[1] == expectedReplyCmd
+                    && ParseWirelessPacket(pkt));
+                if (reply != null && ParseWirelessPacket(reply, out var payload) && ParseWirelessBatteryPayload(payload) is { } pct)
+                    return pct;
+                Thread.Sleep(25);
+            }
+        }
+        return null;
+    }
+
+    private static byte[]? ReadWirelessConfigMac(IEnumerable<MacHidInterfaceInfo> group, out bool permissionDenied)
+    {
+        permissionDenied = false;
+        var request = BuildWirelessConfigReadPacket(0);
+
+        foreach (var dev in SelectWirelessMacInterfaces(group))
+        {
+            using var conn = MacIOKitHid.MacHidConnection.TryOpen(dev, out int openRet);
+            if (conn == null)
+            {
+                if (openRet == MacIOKitHid.kIOReturnNotPermitted)
+                    permissionDenied = true;
+                continue;
+            }
+
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                conn.DrainInputReports();
+                if (!conn.WriteOutputReport(WirelessReportId, request))
+                    continue;
+
+                var byIndex = new Dictionary<int, byte[]>();
+                int? expectedTotal = null;
+                var collected = conn.CollectInputReports(
+                    1100,
+                    pkt => pkt.Length >= WirelessPacketLength && pkt[0] == WirelessReportId && pkt[1] == CmdWirelessConfig && ParseWirelessPacket(pkt),
+                    pkts =>
+                    {
+                        var last = pkts[^1];
+                        int total = last[2] & 0x7F;
+                        int idx = last[3];
+                        if (total > 0)
+                        {
+                            expectedTotal = total;
+                            byIndex[idx] = last;
+                            return byIndex.Count >= total;
+                        }
+                        return false;
+                    });
+
+                if (AssembleWirelessConfig(collected) is { } cfg)
+                    return cfg;
+                Thread.Sleep(35);
+            }
+        }
+        return null;
+    }
+
     private static int? ProbeWirelessBattery(IEnumerable<HidDevice> group)
     {
         var request = BuildWirelessReadPacket(CmdBattery);
-        foreach (var dev in group)
+        byte expectedReplyCmd = (byte)(CmdBattery | 0x40);
+        var candidates = group
+            .Where(d => HidSafe.PrimaryUsage(d).UsagePage >= 0xFF00 && HidSafe.MaxOutputLen(d) >= 19)
+            .OrderByDescending(d => HidSafe.PrimaryUsage(d) == (0xFF02, 0x0002) ? 1 : 0)
+            .ToList();
+        if (candidates.Count == 0)
+            candidates = group.ToList();
+
+        foreach (var dev in candidates)
         {
             using var ch = HidChannel.TryOpen(dev);
             if (ch == null) continue;
 
-            byte[]? reply = null;
-            if (ch.OutputLength >= WirelessPacketLength && ch.WriteOutput(request))
-                reply = ch.Read(200);
-            if (reply == null && ch.FeatureLength >= WirelessPacketLength && ch.WriteFeature(request))
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                for (int i = 0; i < 4; i++)
+                    if (ch.Read(5) == null) break;
+
+                if (ch.OutputLength >= WirelessPacketLength && ch.WriteOutput(request))
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    while (sw.ElapsedMilliseconds < 450)
+                    {
+                        var reply = ch.Read(100);
+                        if (reply == null) break;
+                        if (reply.Length >= WirelessPacketLength && reply[0] == WirelessReportId && reply[1] == expectedReplyCmd &&
+                            ParseWirelessPacket(reply, out var payload) && ParseWirelessBatteryPayload(payload) is { } pct)
+                            return pct;
+                    }
+                }
+            }
+
+            if (ch.FeatureLength >= WirelessPacketLength && ch.WriteFeature(request))
             {
                 Thread.Sleep(45);
-                reply = ch.ReadFeature(WirelessReportId);
+                var reply = ch.ReadFeature(WirelessReportId);
+                if (reply != null && ParseWirelessPacket(reply, out var payload) && ParseWirelessBatteryPayload(payload) is { } pct)
+                    return pct;
             }
-            if (reply == null || !ParseWirelessPacket(reply, out var payload)) continue;
-            if (ParseWirelessBatteryPayload(payload) is { } pct) return pct;
         }
         return null;
     }
 
     private static byte[]? ReadWirelessConfig(IEnumerable<HidDevice> group)
     {
-        foreach (var dev in group)
+        var request = BuildWirelessConfigReadPacket(0);
+        var candidates = group
+            .Where(d => HidSafe.PrimaryUsage(d).UsagePage >= 0xFF00 && HidSafe.MaxOutputLen(d) >= 19)
+            .OrderByDescending(d => HidSafe.PrimaryUsage(d) == (0xFF02, 0x0002) ? 1 : 0)
+            .ToList();
+        if (candidates.Count == 0)
+            candidates = group.ToList();
+
+        foreach (var dev in candidates)
         {
             using var ch = HidChannel.TryOpen(dev);
             if (ch == null) continue;
 
-            var packets = new List<byte[]>();
-            for (int sub = 0; sub < 16 && packets.Count < 16; sub++)
+            for (int attempt = 0; attempt < 3; attempt++)
             {
-                var request = BuildWirelessConfigReadPacket(sub);
-                byte[]? reply = null;
+                for (int i = 0; i < 4; i++)
+                    if (ch.Read(5) == null) break;
+
                 if (ch.OutputLength >= WirelessPacketLength && ch.WriteOutput(request))
-                    reply = ch.Read(200);
-                if (reply == null && ch.FeatureLength >= WirelessPacketLength && ch.WriteFeature(request))
                 {
-                    Thread.Sleep(45);
-                    reply = ch.ReadFeature(WirelessReportId);
+                    var packets = new Dictionary<int, byte[]>();
+                    int expectedTotal = 0;
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    while (sw.ElapsedMilliseconds < 1100)
+                    {
+                        var reply = ch.Read(120);
+                        if (reply == null) continue;
+                        if (reply.Length < WirelessPacketLength || reply[0] != WirelessReportId || reply[1] != CmdWirelessConfig)
+                            continue;
+                        if (!ParseWirelessPacket(reply)) continue;
+                        int total = reply[2] & 0x7F;
+                        if (total > 0)
+                        {
+                            expectedTotal = total;
+                            packets[reply[3]] = reply;
+                            if (packets.Count >= expectedTotal) break;
+                        }
+                    }
+                    if (AssembleWirelessConfig(packets.Values) is { } cfg)
+                        return cfg;
                 }
-                if (reply == null || !ParseWirelessPacket(reply)) break;
-                if (reply[1] != (CmdWirelessConfig | 0x40) && reply[1] != CmdWirelessConfig) break;
-                packets.Add(reply);
             }
-            if (AssembleWirelessConfig(packets) is { } cfg) return cfg;
         }
         return null;
     }
@@ -395,6 +711,84 @@ public sealed class LeobogProvider : ITunablePeripheralProvider
 
     private static bool IsWired(ushort vid, ushort pid) => vid == 0x258A && pid == 0x010C;
 
+    internal static bool IsLeobogFa09Dongle()
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            var macIfaces = MacIOKitHid.Enumerate(0x3554, 0xFA09);
+            return IsLeobogFa09Dongle(macIfaces);
+        }
+
+        var devs = HidSafe.EnumerateDevices(0x3554, 0xFA09);
+        if (devs.Count == 0) return false;
+        if (devs.Any(x => HidSafe.ProductName(x).Contains("AULA", StringComparison.OrdinalIgnoreCase))) return false;
+        if (devs.Any(x => HidSafe.ProductName(x).Contains("LEOBOG", StringComparison.OrdinalIgnoreCase) || HidSafe.ProductName(x).Contains("HI98", StringComparison.OrdinalIgnoreCase))) return true;
+        if (devs.Any(x => HidSafe.PrimaryUsage(x) == (0x0001, 0x0002))) return false;
+        if (HidSafe.EnumerateDevices(0x258A, 0x010C).Count > 0) return true;
+        return devs.Any(x => HidSafe.PrimaryUsage(x) == (0x0001, 0x0006));
+    }
+
+    internal static bool IsLeobogFa09Dongle(IReadOnlyList<MacHidInterfaceInfo> macIfaces)
+    {
+        if (macIfaces.Count == 0) return false;
+        if (macIfaces.Any(i => i.Product.Contains("AULA", StringComparison.OrdinalIgnoreCase))) return false;
+        if (macIfaces.Any(i => i.Product.Contains("LEOBOG", StringComparison.OrdinalIgnoreCase) || i.Product.Contains("HI98", StringComparison.OrdinalIgnoreCase))) return true;
+        // 无线接收器配置接口的 DeviceUsagePairs 可能包含合成 Mouse/Consumer 集合，需按 PrimaryUsage 区分主鼠标接收器
+        if (macIfaces.Any(i => i.PrimaryUsagePage == 0x0001 && i.PrimaryUsage == 0x0002)) return false;
+        return macIfaces.Any(i => (i.PrimaryUsagePage == 0x0001 && i.PrimaryUsage == 0x0006)
+            || (i.PrimaryUsagePage >= 0xFF00 && i.MaxOutputReportSize >= 19));
+    }
+
+    private static bool IsLeobogMacInterface(MacHidInterfaceInfo d)
+    {
+        string upper = d.Product.ToUpperInvariant();
+        if (d.VendorId == 0x258A && d.ProductId == 0x010C) return true;
+        if (upper.Contains("AULA")) return false;
+        if (upper.Contains("LEOBOG") || upper.Contains("HI98")) return true;
+        if (d.VendorId == 0x3554 && d.ProductId == 0xFA07) return true;
+        if (d.VendorId == 0x3554 && d.ProductId == 0xFA09)
+            return IsLeobogFa09Dongle();
+        return false;
+    }
+
+    private static List<MacHidInterfaceInfo> SelectWirelessMacInterfaces(IEnumerable<MacHidInterfaceInfo> group)
+    {
+        return group
+            .Where(d => (d.PrimaryUsagePage >= 0xFF00 || d.HasUsage(0xFF02, 0x0002)) && d.MaxOutputReportSize >= 19)
+            .OrderByDescending(d => d.PrimaryUsagePage == 0xFF02 && d.PrimaryUsage == 0x0002 ? 1 : 0)
+            .ThenByDescending(d => d.MaxOutputReportSize)
+            .ToList();
+    }
+
+    private static MacHidInterfaceInfo? FindWiredMacInterface(IEnumerable<MacHidInterfaceInfo> devs)
+        => devs.Where(d => d.MaxFeatureReportSize >= WiredReportLength || d.PrimaryUsagePage >= 0xFF00)
+            .OrderByDescending(d => d.MaxFeatureReportSize >= WiredReportLength ? 1 : 0)
+            .ThenByDescending(d => d.PrimaryUsagePage >= 0xFF00 ? 1 : 0)
+            .FirstOrDefault();
+
+    private static string? ReadWiredModelMac(MacIOKitHid.MacHidConnection conn)
+    {
+        var request = BuildWiredFeatureRequest(CmdModel, 0x01, 1, 0, 6);
+        if (!conn.SetFeatureReport(WiredReportId, request)) return null;
+        Thread.Sleep(30);
+        var reply = conn.GetFeatureReport(WiredReportId, WiredReportLength);
+        var payload = reply == null ? null : ExtractWiredReplyPayload(reply, 6, CmdModel);
+        if (payload == null || payload.Length < 6) return null;
+        byte modelId = payload[5];
+        return modelId != 0 ? $"LEOBOG Hi98C Pro (0x{modelId:X2})" : null;
+    }
+
+    private static byte[]? ReadWiredConfigMac(MacIOKitHid.MacHidConnection conn)
+    {
+        var request = BuildWiredFeatureRequest(CmdWiredConfig, 0, 1, 0, ConfigLength);
+        if (!conn.SetFeatureReport(WiredReportId, request)) return null;
+        Thread.Sleep(30);
+        var reply = conn.GetFeatureReport(WiredReportId, WiredReportLength);
+        if (reply == null) return null;
+        var payload = ExtractWiredReplyPayload(reply, ConfigLength, CmdWiredConfig);
+        return payload != null && IsValidConfig(payload) ? payload : null;
+    }
+
     private static bool IsLeobogDevice(HidDevice d)
     {
         string upper = HidSafe.ProductName(d).ToUpperInvariant();
@@ -403,7 +797,7 @@ public sealed class LeobogProvider : ITunablePeripheralProvider
         if (upper.Contains("LEOBOG") || upper.Contains("HI98")) return true;
         if (d.VendorID == 0x3554 && d.ProductID == 0xFA07) return true;
         if (d.VendorID == 0x3554 && d.ProductID == 0xFA09)
-            return HidSafe.EnumerateDevices(0x258A, 0x010C).Count > 0;
+            return IsLeobogFa09Dongle();
         return false;
     }
 
@@ -414,13 +808,45 @@ public sealed class LeobogProvider : ITunablePeripheralProvider
     private static bool IsValidConfig(byte[] cfg)
         => cfg.Length >= ConfigLength && cfg[126] == ConfigTail0 && cfg[127] == ConfigTail1;
 
+    internal static string MapOsMode(byte osMode) => osMode switch
+    {
+        0 => "Windows",
+        1 => "Android",
+        2 => "macOS",
+        _ => $"0x{osMode:X2}",
+    };
+
+    private static string GetEffectName(byte effectId) => effectId switch
+    {
+        0 => "关闭背光",
+        1 => "常亮",
+        2 => "呼吸",
+        3 => "七彩渐变",
+        4 => "行涟漪",
+        5 => "雨滴落雨",
+        6 => "霓虹慢波",
+        7 => "全盘涟漪",
+        8 => "繁星点点",
+        10 => "贪吃蛇",
+        11 => "随波逐流",
+        12 => "单点即灭",
+        13 => "中心波浪",
+        15 => "彩虹轮盘",
+        16 => "瀑布流光",
+        17 => "中心快闪",
+        21 or 32 => "单键自定义",
+        _ => $"0x{effectId:X2}",
+    };
+
     private static string BuildConfigSummary(string? model, byte[] cfg, bool wired)
     {
         string head = string.IsNullOrWhiteSpace(model) ? "LEOBOG Hi98C Pro" : model!;
         string lockText = cfg[WinLockOffset] != 0 ? "锁定" : "未锁定";
-        string osText = cfg[OsModeOffset] == 0 ? "Win" : "Mac";
+        string osText = MapOsMode(cfg[OsModeOffset]);
+        string effectText = GetEffectName(cfg[LedEffectOffset]);
+        string sideText = cfg.Length > 0x12 ? $" · 侧灯 {cfg[0x12]}" : "";
         string mode = wired ? "USB-C 有线（可写）" : "无线只读";
-        return $"{head} 板载配置：休眠 {cfg[SleepOffset] * 30}s · WinLock {lockText} · 系统模式 {osText} · 灯效 0x{cfg[LedEffectOffset]:X2}（{mode}）。";
+        return $"{head} 板载配置：休眠 {cfg[SleepOffset] * 30}s · WinLock {lockText} · 系统模式 {osText} · 灯效 {effectText}{sideText}（{mode}）。";
     }
 
     private static bool TryParseVidPid(string deviceId, out ushort vid, out ushort pid)

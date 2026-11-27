@@ -573,6 +573,8 @@ public sealed class GameProfileAutoService : IDisposable
         if (pid == 0) return false;
         if (!OperatingSystem.IsWindows())
         {
+            if (OperatingSystem.IsMacOS())
+                return MacWorkspaceHelper.IsProcessAlive((int)pid);
             try
             {
                 using var p = Process.GetProcessById((int)pid);
@@ -600,13 +602,12 @@ public sealed class GameProfileAutoService : IDisposable
 
         if (OperatingSystem.IsMacOS())
         {
-            string raw = RunOsascript("tell application \"System Events\" to get name of every application process whose background only is false");
-            foreach (string part in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            foreach (var app in MacWorkspaceHelper.GetRunningApps())
             {
-                string app = part.Trim();
-                string proc = app.EndsWith(".app", StringComparison.OrdinalIgnoreCase) ? app[..^4] : app;
+                string proc = app.LocalizedName;
                 if (string.IsNullOrWhiteSpace(proc) || IgnoredPickerProcesses.Contains(proc)) continue;
-                if (seen.Add(proc)) list.Add(new RunningWindowProcess(proc, app));
+                string label = string.IsNullOrWhiteSpace(app.BundleId) ? proc : $"{proc} ({app.BundleId})";
+                if (seen.Add(proc)) list.Add(new RunningWindowProcess(proc, label));
             }
             return list.OrderBy(x => x.ProcessName, StringComparer.OrdinalIgnoreCase).ToList();
         }
@@ -637,10 +638,12 @@ public sealed class GameProfileAutoService : IDisposable
     {
         if (OperatingSystem.IsMacOS())
         {
-            var (macProc, macTitle) = QueryMacFrontmost();
-            if (string.IsNullOrWhiteSpace(macProc)) return (IntPtr.Zero, 0, "", "", false, false);
-            bool macSelf = IgnoredPickerProcesses.Contains(macProc);
-            return (IntPtr.Zero, 0, macProc, macTitle, false, macSelf);
+            var front = MacWorkspaceHelper.GetFrontmostApp();
+            if (front == null || string.IsNullOrWhiteSpace(front.LocalizedName))
+                return (IntPtr.Zero, 0, "", "", false, false);
+            bool macSelf = front.Pid == Environment.ProcessId || IgnoredPickerProcesses.Contains(front.LocalizedName);
+            string label = string.IsNullOrWhiteSpace(front.BundleId) ? front.LocalizedName : $"{front.LocalizedName} ({front.BundleId})";
+            return (IntPtr.Zero, (uint)Math.Max(0, front.Pid), front.LocalizedName, label, false, macSelf);
         }
 
         if (!OperatingSystem.IsWindows())

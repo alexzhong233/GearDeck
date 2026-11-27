@@ -34,6 +34,10 @@ public static class ExternalConfiguratorGuard
         "OemDrv",
         "LEOBOG",
         "LEOBOG ONE",
+        "LEOBOG Hi98C Pro",
+        "Logi Options+",
+        "Razer Synapse",
+        "G HUB",
     ];
 
     private static readonly string[] BrowserProcessNames =
@@ -129,6 +133,23 @@ public static class ExternalConfiguratorGuard
     private static bool TryDetectForegroundConfigurator(out string? detectedLabel)
     {
         detectedLabel = null;
+        if (OperatingSystem.IsMacOS())
+        {
+            var front = MacWorkspaceHelper.GetFrontmostApp();
+            if (front == null || front.Pid == Environment.ProcessId)
+                return false;
+            string pname = front.LocalizedName;
+            foreach (string official in OfficialProcessNames)
+            {
+                if ((!string.IsNullOrWhiteSpace(pname) && pname.Contains(official, StringComparison.OrdinalIgnoreCase)) ||
+                    (!string.IsNullOrWhiteSpace(front.BundleId) && front.BundleId.Contains(official.Replace(" ", ""), StringComparison.OrdinalIgnoreCase)))
+                {
+                    detectedLabel = string.IsNullOrWhiteSpace(pname) ? front.BundleId : pname;
+                    return true;
+                }
+            }
+            return false;
+        }
         if (!OperatingSystem.IsWindows())
             return false;
         try

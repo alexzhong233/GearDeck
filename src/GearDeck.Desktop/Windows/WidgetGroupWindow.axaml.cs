@@ -16,7 +16,7 @@ namespace GearDeck.Desktop.Windows;
 /// </summary>
 public sealed partial class WidgetGroupWindow : Window
 {
-    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, " + FontFamily.Default.Name);
+    private static readonly FontFamily IconFont = Controls.UiBuilders.IconFont;
     private static WidgetGroupWindow? _open;
 
     public string GroupId { get; }

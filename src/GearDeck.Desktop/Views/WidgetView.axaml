@@ -16,18 +16,35 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="24,18,24,28" Spacing="14">
             <StackPanel Spacing="4">
-                <TextBlock Text="任务栏贴片" FontSize="26" FontWeight="SemiBold" />
-                <TextBlock Classes="meta" Text="配置贴片开关、嵌入/悬浮、对齐与偏移、尺寸字号、分组图标和任务栏监控双指标；macOS 仅显示菜单栏状态说明。" />
+                <TextBlock x:Name="PageTitleText" Text="任务栏贴片" FontSize="26" FontWeight="SemiBold" />
+                <TextBlock x:Name="PageSubtitleText" Classes="meta" Text="配置贴片开关、嵌入/悬浮、对齐与偏移、尺寸字号、分组图标和任务栏监控双指标。" />
             </StackPanel>
 
-            <StackPanel x:Name="MacStatusPanel" IsVisible="False" Spacing="6">
+            <StackPanel x:Name="MacStatusPanel" IsVisible="False" Spacing="14">
                 <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1" CornerRadius="10" Padding="18">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="macOS 菜单栏状态" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Classes="meta" Text="macOS 没有 Windows 任务栏，贴片开关、嵌入/悬浮、对齐、水平偏移、尺寸字号、分组图标与双指标参数均不适用，已在下方隐藏。" />
-                        <TextBlock Classes="meta" Text="外设状态请通过屏幕顶部菜单栏图标与托盘菜单查看；系统监控可在「系统监控」页面或桌面悬浮监控条中查看。" />
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="macOS 菜单栏平铺显示" FontSize="16" FontWeight="SemiBold" />
+                        <ToggleSwitch x:Name="MacTiledSwitch"
+                                      OnContent="平铺显示已启用的外设分组电量（推荐默认）"
+                                      OffContent="仅显示单条摘要" />
+                        <ToggleSwitch x:Name="MacMetricsSwitch"
+                                      OnContent="在菜单栏末尾附加系统监控指标"
+                                      OffContent="菜单栏仅显示外设电量" />
+                        <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                CornerRadius="8" Padding="12,8">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="meta" Text="当前菜单栏实时预览" />
+                                <TextBlock x:Name="MacPreviewText"
+                                           FontFamily="Consolas,Menlo,Monaco,monospace"
+                                           FontSize="13" FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Border>
+                        <WrapPanel>
+                            <Button x:Name="MacOpenMonitorBtn" Content="打开桌面悬浮监控条" Margin="0,0,8,4" />
+                            <Button x:Name="MacGoMonitorPageBtn" Content="前往「系统监控」 →" Margin="0,0,8,4" />
+                        </WrapPanel>
                     </StackPanel>
                 </Border>
             </StackPanel>
@@ -82,20 +99,6 @@
                 <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                         BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                         BorderThickness="1" CornerRadius="10" Padding="18">
-                    <StackPanel Spacing="10">
-                        <TextBlock Text="分组与图标" FontSize="16" FontWeight="SemiBold" />
-                        <StackPanel x:Name="GroupHost" Spacing="10" />
-                        <TextBlock Text="新建自定义组" FontWeight="SemiBold" />
-                        <TextBox x:Name="GroupNameBox" Watermark="例如：FPS 鼠标" />
-                        <TextBlock Classes="meta" Text="选择设备" />
-                        <StackPanel x:Name="DeviceCheckHost" Spacing="4" />
-                        <Button x:Name="CreateGroupBtn" Content="创建组" HorizontalAlignment="Left" />
-                    </StackPanel>
-                </Border>
-
-                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1" CornerRadius="10" Padding="18">
                     <StackPanel Spacing="12">
                         <TextBlock Text="任务栏监控双指标" FontSize="16" FontWeight="SemiBold" />
                         <ToggleSwitch x:Name="MonitorSwitch" OnContent="在任务栏贴片中显示系统监控" OffContent="仅显示外设电量" />
@@ -107,9 +110,23 @@
                         <Button x:Name="GoMonitorBtn" Content="前往「系统监控」配置更多指标 →" HorizontalAlignment="Left" />
                     </StackPanel>
                 </Border>
-
-                <TextBlock x:Name="HintText" Classes="meta" />
             </StackPanel>
+
+            <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="分组与图标（控制菜单栏 / 任务栏显示项）" FontSize="16" FontWeight="SemiBold" />
+                    <StackPanel x:Name="GroupHost" Spacing="10" />
+                    <TextBlock Text="新建自定义组" FontWeight="SemiBold" />
+                    <TextBox x:Name="GroupNameBox" Watermark="例如：FPS 鼠标" />
+                    <TextBlock Classes="meta" Text="选择设备" />
+                    <StackPanel x:Name="DeviceCheckHost" Spacing="4" />
+                    <Button x:Name="CreateGroupBtn" Content="创建组" HorizontalAlignment="Left" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="HintText" Classes="meta" />
         </StackPanel>
     </ScrollViewer>
 </UserControl>

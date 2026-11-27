@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using GearDeck.Core.Hid;
 using GearDeck.Core.Models;
 using GearDeck.Core.Services;
 using GearDeck.Desktop.Controls;
@@ -86,7 +87,37 @@ public partial class DevicesView : UserControl
             StatusText.Text = $"共 {devices.Count} 台 · {yieldReason}（点击上方按钮可立即刷新收回控制）";
         else
             StatusText.Text = $"共检测到 {devices.Count} 台设备 · 最近更新 {DateTime.Now:HH:mm:ss}";
+
+        UpdateMacPermissionBanner();
     }
+
+    private void UpdateMacPermissionBanner()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            MacPermissionBanner.IsVisible = false;
+            return;
+        }
+        var access = MacIOKitHid.CheckInputMonitoringAccess();
+        bool show = access != MacHidAccessState.Granted || MacIOKitHid.HasPermissionDeniedDevices;
+        MacPermissionBanner.IsVisible = show;
+        if (!show) return;
+
+        var blocked = MacIOKitHid.BlockedDevices;
+        MacPermissionText.Text = blocked.Count > 0
+            ? $"当前设备受限：{string.Join("、", blocked)}。授权 GearDeck 访问 HID 后请重新打开应用以读取电量与配置。"
+            : "授权 macOS 输入监控后，才能读取与配置无线键盘（如 LEOBOG HI98）等 HID 外设。授权后建议重启 GearDeck。";
+    }
+
+    private void OnRequestMacPermissionClick(object? sender, RoutedEventArgs e)
+    {
+        MacIOKitHid.RequestInputMonitoringAccess();
+        UpdateMacPermissionBanner();
+        App.RequestRefresh();
+    }
+
+    private void OnOpenMacPermissionSettingsClick(object? sender, RoutedEventArgs e)
+        => MacIOKitHid.OpenInputMonitoringSettings();
 
     private static Control BuildEmptyCard() => new Border
     {
@@ -189,7 +220,7 @@ public partial class DevicesView : UserControl
 
         var pinBtn = new Button
         {
-            Content = "固定贴片",
+            Content = OperatingSystem.IsMacOS() ? "固定到菜单栏" : "固定贴片",
             Padding = new Thickness(10, 5, 10, 5),
             Margin = new Thickness(0, 0, 8, 8),
         };
@@ -270,7 +301,7 @@ public partial class DevicesView : UserControl
         secondary.Children.Add(imageBtn);
         var pinBtn = new Button
         {
-            Content = "固定贴片",
+            Content = OperatingSystem.IsMacOS() ? "固定到菜单栏" : "固定贴片",
             Padding = new Thickness(8, 4, 8, 4),
             Margin = new Thickness(0, 0, 6, 6),
         };
@@ -354,7 +385,9 @@ public partial class DevicesView : UserControl
         App.Settings.Current.WidgetVisible = true;
         App.Settings.Save();
         App.RefreshWidget();
-        StatusText.Text = $"已将「{d.Name}」固定到任务栏对应分组";
+        StatusText.Text = OperatingSystem.IsMacOS()
+            ? $"已将「{d.Name}」固定到菜单栏对应分组"
+            : $"已将「{d.Name}」固定到任务栏对应分组";
     }
 
     private void OnRefreshClick(object? sender, RoutedEventArgs e)

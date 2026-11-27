@@ -19,7 +19,7 @@ namespace GearDeck.Desktop.Views;
 /// </summary>
 public partial class WidgetView : UserControl
 {
-    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, " + FontFamily.Default.Name);
+    private static readonly FontFamily IconFont = Controls.UiBuilders.IconFont;
     private static IBrush ResolveBrush(string key, IBrush fallback)
         => Application.Current?.TryFindResource(key, Application.Current.ActualThemeVariant, out var r) == true && r is IBrush b
             ? b
@@ -36,6 +36,12 @@ public partial class WidgetView : UserControl
         bool isWindows = OperatingSystem.IsWindows();
         WindowsWidgetPanel.IsVisible = isWindows;
         MacStatusPanel.IsVisible = !isWindows;
+        if (!isWindows)
+        {
+            PageTitleText.Text = "菜单栏状态";
+            PageSubtitleText.Text = "配置 macOS 顶部菜单栏平铺展示、外设分组与图标、以及系统监控摘要。";
+        }
+        UpdateMacPreview();
 
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -129,6 +135,23 @@ public partial class WidgetView : UserControl
         BottomMetricBox.SelectionChanged += OnTaskbarMetricChanged;
         GoMonitorBtn.Click += (_, _) => MainWindow.Instance?.OpenMonitorPage();
         CreateGroupBtn.Click += OnCreateGroup;
+
+        MacTiledSwitch.IsCheckedChanged += (_, _) =>
+        {
+            if (_binding) return;
+            App.Settings.Current.MacStatusBarTiled = MacTiledSwitch.IsChecked == true;
+            SaveAndRefresh();
+            UpdateMacPreview();
+        };
+        MacMetricsSwitch.IsCheckedChanged += (_, _) =>
+        {
+            if (_binding) return;
+            App.Settings.Current.MacStatusBarShowMetrics = MacMetricsSwitch.IsChecked == true;
+            SaveAndRefresh();
+            UpdateMacPreview();
+        };
+        MacOpenMonitorBtn.Click += (_, _) => MainWindow.Instance?.ShowMonitorFlyout();
+        MacGoMonitorPageBtn.Click += (_, _) => MainWindow.Instance?.OpenMonitorPage();
     }
 
     private void LoadSettings()
@@ -141,6 +164,8 @@ public partial class WidgetView : UserControl
             var s = App.Settings.Current;
             VisibleSwitch.IsChecked = s.WidgetVisible;
             EmbedSwitch.IsChecked = s.WidgetEmbedded;
+            MacTiledSwitch.IsChecked = s.MacStatusBarTiled;
+            MacMetricsSwitch.IsChecked = s.MacStatusBarShowMetrics;
             AlignCombo.SelectedIndex = s.WidgetAlignment == "left" ? 0 : 1;
             OffsetSlider.Value = Math.Clamp(s.WidgetOffsetX, -1200, 1200);
             OffsetBox.Value = s.WidgetOffsetX;
@@ -218,6 +243,7 @@ public partial class WidgetView : UserControl
             DeviceCheckHost.Children.Clear();
             foreach (var d in App.LastDevices)
                 DeviceCheckHost.Children.Add(new CheckBox { Content = d.Name, Tag = d.Id });
+            UpdateMacPreview();
         }
         finally { _binding = previous; }
     }
@@ -294,7 +320,7 @@ public partial class WidgetView : UserControl
             Margin = new Thickness(10, 0, 0, 0),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
-        visible.IsCheckedChanged += (_, _) => { cfg.Visible = visible.IsChecked == true; SaveAndRefresh(); };
+        visible.IsCheckedChanged += (_, _) => { cfg.Visible = visible.IsChecked == true; SaveAndRefresh(); UpdateMacPreview(); };
         Grid.SetColumn(visible, 1);
         top.Children.Add(visible);
 
@@ -540,6 +566,17 @@ public partial class WidgetView : UserControl
                 .FirstOrDefault(m => m.Id == App.Settings.Current.MonitorBottomMetric)?.ShortLabel
                ?? App.Settings.Current.MonitorBottomMetric);
         MonitorStatusText.Text = $"已启用：任务栏显示「{top} / {bottom}」，鼠标移至监控区域自动弹出详细悬浮窗。";
+    }
+
+    private void UpdateMacPreview()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        try
+        {
+            var snap = App.Settings.Current.MacStatusBarShowMetrics ? DesktopMetricsEngine.Sample() : null;
+            MacPreviewText.Text = MacStatusBarFormatter.BuildTitle(App.LastDevices ?? [], App.Settings.Current, snap);
+        }
+        catch { }
     }
 
     private static void SaveAndRefresh()

@@ -3,7 +3,9 @@ using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform;
+using Avalonia.Threading;
 using GearDeck.Core;
+using GearDeck.Core.Models;
 
 namespace GearDeck.Desktop.Services;
 
@@ -50,6 +52,8 @@ public sealed class TrayHostService : IDisposable
     private readonly Action _onRefreshDevices;
     private readonly Action _onExit;
     private readonly Action? _onSystemResume;
+    private readonly Action<string>? _onOpenDevice;
+    private readonly Action? _onOpenWidget;
 
     private readonly ManualResetEventSlim _ready = new();
     private Thread? _thread;
@@ -61,6 +65,7 @@ public sealed class TrayHostService : IDisposable
     private volatile bool _disposed;
     private volatile bool _trayAdded;
     private TrayIcon? _avaloniaTray;
+    private MacStatusBarService? _macStatusBar;
 
     public TrayHostService(
         Action onOpenMain,
@@ -69,7 +74,9 @@ public sealed class TrayHostService : IDisposable
         Action onToggleWidget,
         Action onRefreshDevices,
         Action onExit,
-        Action? onSystemResume = null)
+        Action? onSystemResume = null,
+        Action<string>? onOpenDevice = null,
+        Action? onOpenWidget = null)
     {
         _onOpenMain = onOpenMain;
         _onOpenGames = onOpenGames;
@@ -78,6 +85,22 @@ public sealed class TrayHostService : IDisposable
         _onRefreshDevices = onRefreshDevices;
         _onExit = onExit;
         _onSystemResume = onSystemResume;
+        _onOpenDevice = onOpenDevice;
+        _onOpenWidget = onOpenWidget;
+
+        if (OperatingSystem.IsMacOS())
+        {
+            _macStatusBar = new MacStatusBarService(
+                _onOpenMain,
+                id => (_onOpenDevice ?? (_ => _onOpenMain()))(id),
+                _onOpenGames,
+                _onOpenMacros,
+                _onOpenWidget ?? _onOpenMain,
+                _onRefreshDevices,
+                _onExit,
+                _onSystemResume);
+            return;
+        }
 
         if (!OperatingSystem.IsWindows())
         {
@@ -95,13 +118,34 @@ public sealed class TrayHostService : IDisposable
         _ready.Wait(1500);
     }
 
+    public void UpdateDevices(IReadOnlyList<PeripheralDevice> devices, SystemMetricsSnapshot? metrics = null)
+    {
+        if (_disposed) return;
+        _macStatusBar?.UpdateDevices(devices, metrics);
+    }
+
+    public void RefreshStatusBar()
+    {
+        if (_disposed) return;
+        _macStatusBar?.Refresh();
+    }
+
     public void UpdateTooltip(string tip)
     {
         if (_disposed) return;
+        if (_macStatusBar != null)
+        {
+            _macStatusBar.UpdateTooltip(tip);
+            return;
+        }
         if (_avaloniaTray != null)
         {
-            try { _avaloniaTray.ToolTipText = tip; }
-            catch (Exception ex) { Diag.Log($"托盘提示更新失败: {ex.Message}"); }
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_disposed || _avaloniaTray == null) return;
+                try { _avaloniaTray.ToolTipText = tip; }
+                catch (Exception ex) { Diag.Log($"托盘提示更新失败: {ex.Message}"); }
+            });
             return;
         }
         if (_hwnd == IntPtr.Zero) return;
@@ -114,11 +158,19 @@ public sealed class TrayHostService : IDisposable
     public void ShowBalloon(string title, string body)
     {
         if (_disposed) return;
+        if (_macStatusBar != null)
+        {
+            _macStatusBar.UpdateTooltip(Truncate($"{title} · {body}", 120));
+            return;
+        }
         if (_avaloniaTray != null)
         {
-            // Avalonia 的 TrayIcon 无原生气泡 API，退化为临时更新提示文本。
-            try { _avaloniaTray.ToolTipText = Truncate($"{title} · {body}", 120); }
-            catch { }
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_disposed || _avaloniaTray == null) return;
+                try { _avaloniaTray.ToolTipText = Truncate($"{title} · {body}", 120); }
+                catch { }
+            });
             return;
         }
         if (_hwnd == IntPtr.Zero) return;
@@ -417,6 +469,12 @@ public sealed class TrayHostService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        if (_macStatusBar != null)
+        {
+            try { _macStatusBar.Dispose(); } catch { }
+            _macStatusBar = null;
+            return;
+        }
         if (_avaloniaTray != null)
         {
             try

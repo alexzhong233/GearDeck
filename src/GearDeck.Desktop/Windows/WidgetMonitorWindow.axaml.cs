@@ -14,7 +14,7 @@ namespace GearDeck.Desktop.Windows;
 /// </summary>
 public sealed partial class WidgetMonitorWindow : Window
 {
-    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, " + FontFamily.Default.Name);
+    private static readonly FontFamily IconFont = Controls.UiBuilders.IconFont;
     private readonly List<(string Id, TextBlock Value, ProgressBar? Bar)> _rows = [];
     private readonly DispatcherTimer _sampleTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 

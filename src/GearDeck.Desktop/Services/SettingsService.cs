@@ -146,6 +146,11 @@ public sealed class AppSettings
 
     public string UpdateRepoSlug { get; set; } = "alexzhong233/GearDeck";
 
+    // ── macOS 菜单栏状态（默认平铺显示） ────────────────────────────────────────
+    public bool MacStatusBarTiled { get; set; } = true;
+
+    public bool MacStatusBarShowMetrics { get; set; }
+
     // ── 托盘常驻与开机自启 ─────────────────────────────────────────────────
     public bool CloseToTray { get; set; } = true;
 

@@ -14,16 +14,35 @@
             <Panel x:Name="ViewSwitchSlot" Grid.Column="1" VerticalAlignment="Center" />
         </Grid>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12" Margin="0,16,0,0">
-            <Button x:Name="RefreshButton" Click="OnRefreshClick">
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, $default" FontSize="16"
-                               VerticalAlignment="Center" />
-                    <TextBlock Text="立即刷新所有外设" />
-                </StackPanel>
-            </Button>
-            <TextBlock x:Name="StatusText" VerticalAlignment="Center"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        <StackPanel Grid.Row="1" Spacing="10" Margin="0,16,0,0">
+            <Border x:Name="MacPermissionBanner" IsVisible="False"
+                    Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="14,10">
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="macOS 需要「输入监控」权限" FontWeight="SemiBold" FontSize="13" />
+                        <TextBlock x:Name="MacPermissionText" TextWrapping="Wrap" FontSize="12"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0">
+                        <Button x:Name="MacRequestPermBtn" Content="请求授权" Click="OnRequestMacPermissionClick" />
+                        <Button x:Name="MacOpenPermSettingsBtn" Content="打开系统设置" Click="OnOpenMacPermissionSettingsClick" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Spacing="12">
+                <Button x:Name="RefreshButton" Click="OnRefreshClick">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="&#xE72C;" FontFamily="{StaticResource AppIconFontFamily}" FontSize="16"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="立即刷新所有外设" />
+                    </StackPanel>
+                </Button>
+                <TextBlock x:Name="StatusText" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
         </StackPanel>
 
         <ScrollViewer Grid.Row="2" Margin="0,12,0,0" HorizontalScrollBarVisibility="Disabled"

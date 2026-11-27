@@ -9,13 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version override (e.g. 2.0.0-beta.1)'
+        description: 'Release version override (e.g. 2.0.0)'
         required: false
       prerelease:
         description: 'Publish as pre-release (Beta)'
         required: false
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: write
@@ -243,14 +243,60 @@ jobs:
         with:
           path: dist
 
+      - name: Merge macOS URLs & SHA256 into latest.json and prepare release metadata
+        id: meta
+        env:
+          TAG: ${{ needs.build-windows.outputs.tag }}
+          REPO: ${{ github.repository }}
+          IS_PRE: ${{ needs.build-windows.outputs.prerelease }}
+        run: |
+          python3 - << 'PYEOF'
+          import glob, hashlib, json, os
+
+          tag = os.environ["TAG"]
+          repo = os.environ["REPO"]
+          is_pre = os.environ.get("IS_PRE", "false") == "true"
+
+          latest_files = glob.glob("dist/**/latest.json", recursive=True)
+          arm_files = sorted(glob.glob("dist/**/*-osx-arm64.dmg", recursive=True)) + sorted(glob.glob("dist/**/*-osx-arm64.zip", recursive=True))
+          x64_files = sorted(glob.glob("dist/**/*-osx-x64.dmg", recursive=True)) + sorted(glob.glob("dist/**/*-osx-x64.zip", recursive=True))
+
+          def sha256_file(path):
+              h = hashlib.sha256()
+              with open(path, "rb") as f:
+                  for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                      h.update(chunk)
+              return h.hexdigest().upper()
+
+          for lf in latest_files:
+              with open(lf, "r", encoding="utf-8") as f:
+                  data = json.load(f)
+              if arm_files:
+                  name = os.path.basename(arm_files[0])
+                  data["macArm64AssetName"] = name
+                  data["macArm64Url"] = f"https://github.com/{repo}/releases/download/{tag}/{name}"
+                  data["macArm64Sha256"] = sha256_file(arm_files[0])
+              if x64_files:
+                  name = os.path.basename(x64_files[0])
+                  data["macX64AssetName"] = name
+                  data["macX64Url"] = f"https://github.com/{repo}/releases/download/{tag}/{name}"
+                  data["macX64Sha256"] = sha256_file(x64_files[0])
+              with open(lf, "w", encoding="utf-8") as f:
+                  json.dump(data, f, indent=4, ensure_ascii=False)
+
+          rel_title = f"GearDeck {tag} (Beta)" if is_pre else f"GearDeck {tag}"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"release_name={rel_title}\n")
+          PYEOF
+
       - name: Write release notes
         env:
           TAG: ${{ needs.build-windows.outputs.tag }}
         run: |
           cat <<'EOF' | sed 's/^          //' > release-notes.md
-          ## GearDeck 跨平台预览版 (Windows + macOS Beta)
+          ## GearDeck ${{ needs.build-windows.outputs.tag }} · 跨平台外设控制与监控中心 (Windows + macOS)
 
-          > 本版本基于 **Avalonia + FluentAvaloniaUI** 完成双端重构，保留外设调参、灵敏度换算、游戏配置自动切换、鼠标宏、系统监控与 Windows 任务栏贴片。
+          > 基于 **Avalonia 11 + FluentAvaloniaUI** 完成双端原生体验升级，覆盖多品牌键鼠 HID 调校、LEOBOG Hi98C Pro 完整可视化驱动、灵敏度换算、游戏自动切配置、鼠标宏与系统监控。
 
           ### 下载说明
           - **Windows (x64 · 免安装运行库)**：
@@ -258,16 +304,17 @@ jobs:
             - `GearDeck-v*-win-x64.zip`：绿色免安装压缩包
           - **macOS (Apple Silicon M 系列请选 `osx-arm64`，Intel 请选 `osx-x64`)**：
             - `GearDeck-v*-osx-*.dmg` / `.zip`（内置完整 `GearDeck.app`）
-            - **macOS 首次打开提示“已损坏/无法验证开发者”时**（因测试版未经过 Apple 公证），请先拖入 `/Applications` 后在终端执行：
+            - **macOS 首次打开提示“已损坏/无法验证开发者”时**（因开源个人包未经 Apple 公证），请先拖入 `/Applications` 后在终端执行：
               ```bash
               xattr -cr /Applications/GearDeck.app
               ```
-            - 如需读取键盘/鼠标 HID 与监听前台应用，请在「系统设置 → 隐私与安全性」授予输入监控与辅助功能权限。
+            - 如需读取键盘/鼠标 HID 与监听前台应用，请在「系统设置 → 隐私与安全性」授予 **输入监控（Input Monitoring）** 与 **辅助功能（Accessibility）** 权限。
 
           ### 本版亮点
-          - **全新跨平台桌面端 (`GearDeck.Desktop`)**：Win11 Mica / macOS AcrylicBlur 毛玻璃质感，兼容原有 `settings.json`
-          - **新增硬件支持**：名龙星球 `MLOONG MX301 PRO / PRO V2 / PRO X` 与 `LEOBOG Hi98C Pro`（USB-C / 2.4G / BT）
-          - **轮询频率可调**：HID 设备轮询默认 `15s`（`5~300s`），前台游戏检测默认 `1000ms`（`250~5000ms`）
+          - **跨平台桌面端 (`GearDeck.Desktop`)**：Win11 Mica / macOS AcrylicBlur 毛玻璃质感，兼容原有 `settings.json`
+          - **macOS 原生菜单栏状态平铺 & 硬件监控**：支持平铺展示多台外设电量与 12 项系统指标，点击弹窗快速调参，自动检测 `NSWorkspace` 前台应用切换游戏配置
+          - **LEOBOG Hi98C Pro 四页签专业管理控制台**：支持无线 `0x41` 读取键位、101 键交互式画布、5 层查看与 Mac 一键预设、17 种板载 RGB 与单键涂色预览（`0x08/0x88`）、有线防锁死安全写闪存及 JSON EEPROM 备份恢复
+          - **新增与完善协议**：名龙星球 `MLOONG MX301 PRO / PRO V2 / PRO X`、`LEOBOG Hi98C Pro` 三模识别与 macOS IOKit 原生直通；修复 macOS 无障碍遍历与异步防抖误写入问题
           EOF
           ls -la dist/*
 
@@ -275,7 +322,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: GearDeck ${{ github.ref_name }} (Beta)
+          name: ${{ steps.meta.outputs.release_name }}
           prerelease: ${{ needs.build-windows.outputs.prerelease == 'true' }}
           body_path: release-notes.md
           files: |

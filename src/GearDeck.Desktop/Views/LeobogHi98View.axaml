@@ -1,0 +1,332 @@
+<UserControl
+    x:Class="GearDeck.Desktop.Views.LeobogHi98View"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:FluentAvalonia.UI.Controls"
+    x:CompileBindings="False">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.subtle">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+        <Style Selector="Button.pill">
+            <Setter Property="Padding" Value="9,5" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        <Style Selector="Button.tab">
+            <Setter Property="Padding" Value="15,7" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="Button.accent">
+            <Setter Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
+        </Style>
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="14" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid x:Name="RootGrid" RowDefinitions="Auto,Auto,Auto,*" Margin="20,14,20,18">
+
+        <!-- 顶部：返回 / 标题 / 连接 / 电量 / 写保护 / 同步 / 写入改键 -->
+        <Border Grid.Row="0" Classes="card" Padding="12,10">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,Auto" VerticalAlignment="Center">
+                <Button x:Name="BackBtn" Grid.Column="0" Classes="pill" Content="‹ 设备总览"
+                        ToolTip.Tip="返回设备总览" VerticalAlignment="Center" />
+
+                <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Spacing="1">
+                    <TextBlock x:Name="TitleText" Text="LEOBOG Hi98 驱动控制台" FontSize="17" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="SubtitleText" Classes="subtle" Text="LEOBOG Hi98C Pro · 101 键三模" />
+                </StackPanel>
+
+                <Border x:Name="TransportBadge" Grid.Column="2" CornerRadius="10" Padding="8,3" Margin="10,0,0,0"
+                        VerticalAlignment="Center">
+                    <TextBlock x:Name="TransportText" Text="未连接" FontSize="12" FontWeight="SemiBold" />
+                </Border>
+
+                <Button x:Name="BatteryButton" Grid.Column="3" Classes="pill" Margin="8,0,0,0"
+                        VerticalAlignment="Center"
+                        ToolTip.Tip="点击刷新无线电量；2.4G 休眠时轻按键盘唤醒后再刷新">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <ProgressBar x:Name="BatteryBar" Width="52" Height="8"
+                                     Maximum="100" Minimum="0" Value="0" />
+                        <TextBlock x:Name="BatteryText" Text="电量 --" FontSize="12" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <Border x:Name="WriteProtectBadge" Grid.Column="4" CornerRadius="10" Padding="8,3" Margin="8,0,0,0"
+                        VerticalAlignment="Center">
+                    <TextBlock x:Name="WriteProtectText" Text="无线只读保护" FontSize="12" />
+                </Border>
+
+                <TextBlock x:Name="ShortStatusText" Grid.Column="5" Classes="subtle" Margin="12,0"
+                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+
+                <Button x:Name="SyncBtn" Grid.Column="6" Classes="pill" Content="从键盘同步"
+                        VerticalAlignment="Center" />
+                <Button x:Name="CommitKeymapBtn" Grid.Column="7" Classes="pill accent" Margin="8,0,0,0"
+                        Content="写入改键 (0)" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+        <ui:InfoBar Grid.Row="1" x:Name="StatusInfoBar" IsOpen="False" IsClosable="True" Margin="0,10,0,0" />
+
+        <!-- 四个页签 -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="6" Margin="0,10,0,6">
+            <Button x:Name="TabKeymapBtn" Classes="tab accent" Content="按键映射" />
+            <Button x:Name="TabRgbBtn" Classes="tab" Content="RGB 灯光" />
+            <Button x:Name="TabSettingsBtn" Classes="tab" Content="设置与备份" />
+            <Button x:Name="TabDiagnosticsBtn" Classes="tab" Content="诊断与日志" />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="14" Margin="0,0,10,24">
+
+                <!-- ========== 页签 1：按键映射 ========== -->
+                <StackPanel x:Name="PanelKeymap" Spacing="12">
+                    <Border Classes="card">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="映射层（Base / Fn1 / Fn2 可写 · Mac 预设为 Fn+E 固件只读）"
+                                           FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock x:Name="PendingCountText" Grid.Column="1" Classes="subtle"
+                                           VerticalAlignment="Center" Text="待写入 0 处" />
+                            </Grid>
+                            <WrapPanel x:Name="LayerButtonsPanel" />
+                            <TextBlock x:Name="LayerHintText" Classes="subtle" />
+                            <Border x:Name="MacBanner" IsVisible="False" CornerRadius="8" Padding="10"
+                                    Background="#1EFFA500">
+                                <StackPanel Spacing="7">
+                                    <TextBlock Text="键盘当前处于 Fn+E Mac 固定预设模式：固件锁定只读键位表，自定义改键不会生效。"
+                                               Foreground="#FFFFC266" TextWrapping="Wrap" FontSize="12" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button x:Name="StageMacBtn" Classes="pill" Content="暂存 Mac 键位到可编程层" />
+                                        <Button x:Name="EnableMacEditableBtn" Classes="pill accent"
+                                                Content="一键启用 Mac 可改键模式" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                            <Border x:Name="ReadOnlyBanner" IsVisible="False" CornerRadius="8" Padding="10"
+                                    Background="#1937A5FF">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Text="只读参考页：该层为固件内置预设，硬件不支持直接写入。如需保留 Mac 键位并自定义，请复制到可编程层。"
+                                               Foreground="#FF8CC4FF" TextWrapping="Wrap" FontSize="12" />
+                                    <Button x:Name="CopyToWritableBtn" Classes="pill" Content="复制到可编程层去改键" />
+                                </StackPanel>
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="Mac 快捷预设：" VerticalAlignment="Center" Classes="subtle" />
+                                <Button x:Name="PresetModifiersBtn" Classes="pill" Content="标准 ⌥/⌘ 修饰键" />
+                                <Button x:Name="PresetSwapModifiersBtn" Classes="pill" Content="互换 ⌥/⌘ 修饰键" />
+                                <Button x:Name="PresetStdFunctionBtn" Classes="pill" Content="F1-F12 直出功能键" />
+                                <Button x:Name="PresetMediaFnBtn" Classes="pill" Content="恢复 F1-F12 多媒体键" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card" Padding="8">
+                        <Viewbox Stretch="Uniform" MaxHeight="250">
+                            <Canvas x:Name="KeymapCanvas" Width="670" Height="208" Background="#FF141821" />
+                        </Viewbox>
+                    </Border>
+
+                    <Grid ColumnDefinitions="320,*">
+                        <Border Grid.Column="0" Classes="card">
+                            <StackPanel Spacing="9">
+                                <TextBlock Text="选中键位检查器" FontSize="15" FontWeight="SemiBold" />
+                                <TextBlock x:Name="SelectedKeyText" FontSize="17" FontWeight="Bold" Text="未选择键位" />
+                                <TextBlock x:Name="BindingText" FontSize="13" Text="-" />
+                                <TextBlock x:Name="HexText" Classes="subtle" Text="-" />
+                                <TextBlock x:Name="MatrixText" Classes="subtle" Text="-" />
+                                <TextBlock x:Name="FnWarningText" Classes="subtle" IsVisible="False"
+                                           Foreground="#FFFFC266"
+                                           Text="这是默认层的物理 Fn 切层键；写入时安全门禁要求全盘至少保留一个 Fn 键。" />
+                                <Button x:Name="RevertKeyBtn" Classes="pill" Content="恢复该键出厂默认" />
+
+                                <TextBlock Text="自定义修饰键 + 主键组合" FontSize="13" FontWeight="SemiBold"
+                                           Margin="0,6,0,0" />
+                                <WrapPanel>
+                                    <CheckBox x:Name="CtrlModChk" Content="⌃Ctrl" MinWidth="0" Margin="0,0,10,0" />
+                                    <CheckBox x:Name="ShiftModChk" Content="⇧Shift" MinWidth="0" Margin="0,0,10,0" />
+                                    <CheckBox x:Name="OptModChk" Content="⌥Opt" MinWidth="0" Margin="0,0,10,0" />
+                                    <CheckBox x:Name="CmdModChk" Content="⌘Cmd" MinWidth="0" />
+                                </WrapPanel>
+                                <ComboBox x:Name="ComboKeyCombo" HorizontalAlignment="Stretch" />
+                                <Button x:Name="ApplyComboBtn" Classes="accent" Content="应用组合键到选中键位" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Classes="card" Margin="12,0,0,0">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="功能键码目录（点击分配给选中键位）" FontSize="14"
+                                           FontWeight="SemiBold" />
+                                <TextBox x:Name="SearchBox" Watermark="搜索按键、macOS 快捷键、媒体键或灯效指令..." />
+                                <WrapPanel x:Name="CategoryPanel" />
+                                <ScrollViewer Height="300" VerticalScrollBarVisibility="Auto">
+                                    <WrapPanel x:Name="KeycodeOptionsPanel" />
+                                </ScrollViewer>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+
+                <!-- ========== 页签 2：RGB 灯光 ========== -->
+                <StackPanel x:Name="PanelRgb" Spacing="12" IsVisible="False">
+                    <Border Classes="card">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="板载硬件灯效（17 种）" FontSize="15" FontWeight="SemiBold" />
+                            <WrapPanel x:Name="EffectButtonsPanel" />
+                            <TextBlock x:Name="EffectDescText" Classes="subtle" />
+                            <Grid ColumnDefinitions="*,*,*">
+                                <StackPanel Grid.Column="0" Spacing="8">
+                                    <TextBlock x:Name="BrightnessValueText" Text="亮度：4 / 9" FontSize="12" />
+                                    <Slider x:Name="BrightnessSlider" Maximum="9" Minimum="0" Value="4" />
+                                    <TextBlock x:Name="SpeedValueText" Text="速度：2 / 4" FontSize="12" />
+                                    <Slider x:Name="SpeedSlider" Maximum="4" Minimum="0" Value="2" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="8" Margin="16,0,0,0">
+                                    <TextBlock Text="灯效颜色（0-6 调色板 / 7 七彩）" Classes="subtle" />
+                                    <WrapPanel x:Name="PalettePanel" />
+                                    <Button x:Name="RainbowBtn" Classes="pill" Content="七彩混光循环 (ColorIndex = 7)" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Spacing="8" Margin="16,0,0,0">
+                                    <TextBlock Text="有线烧录" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="RgbHintText" Classes="subtle" />
+                                    <Button x:Name="SaveOnboardBtn" Classes="accent" Content="有线保存灯效至闪存" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                        <StackPanel Spacing="9">
+                            <TextBlock Text="单键调色画布（点击或拖拽键帽涂色）" FontSize="15" FontWeight="SemiBold" />
+                            <Viewbox Stretch="Uniform" MaxHeight="240">
+                                <Canvas x:Name="RgbCanvas" Width="670" Height="208" Background="#FF141821" />
+                            </Viewbox>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="画笔：" VerticalAlignment="Center" Classes="subtle" />
+                                <TextBox x:Name="BrushHexBox" Width="118" Text="#00E5FF" />
+                                <StackPanel x:Name="SwatchPanel" Orientation="Horizontal" Spacing="5" />
+                            </StackPanel>
+                            <TextBlock Text="区域填充" Classes="subtle" />
+                            <WrapPanel x:Name="ZonePanel" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="FillAllBtn" Classes="pill" Content="全盘填充" />
+                                <Button x:Name="ClearAllBtn" Classes="pill" Content="全部熄灭" />
+                                <Button x:Name="LivePreviewBtn" Classes="pill" Content="开启 20FPS 实时预览" />
+                                <Button x:Name="BurnStaticBtn" Classes="pill accent" Content="有线烧录静态配色" />
+                                <TextBlock x:Name="LiveStatusText" Classes="subtle" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- ========== 页签 3：设置与备份 ========== -->
+                <StackPanel x:Name="PanelSettings" Spacing="12" IsVisible="False">
+                    <Border Classes="card">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="硬件参数（需 USB-C 有线保存至板载闪存）" FontSize="15"
+                                       FontWeight="SemiBold" />
+                            <Grid ColumnDefinitions="*,*,*">
+                                <StackPanel Grid.Column="0" Spacing="5">
+                                    <TextBlock Text="无线休眠超时（60-1200 秒，禁写 0）" FontSize="12" />
+                                    <ComboBox x:Name="SleepCombo" HorizontalAlignment="Stretch" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="5" Margin="14,0,0,0">
+                                    <TextBlock Text="系统兼容布局模式（Fn+Q/W/E）" FontSize="12" />
+                                    <ComboBox x:Name="OsModeCombo" HorizontalAlignment="Stretch" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Spacing="5" Margin="14,0,0,0">
+                                    <TextBlock Text="侧边灯带模式（0-4）" FontSize="12" />
+                                    <ComboBox x:Name="SideLightCombo" HorizontalAlignment="Stretch" />
+                                </StackPanel>
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                                <ToggleSwitch x:Name="WinLockSwitch" OnContent="Win / ⌘ 已锁定"
+                                              OffContent="Win / ⌘ 未锁定" MinWidth="0" />
+                                <Button x:Name="SaveHardwareBtn" Classes="accent" Content="有线保存硬件参数" />
+                            </StackPanel>
+                            <TextBlock x:Name="HardwareNoteText" Classes="subtle" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="EEPROM JSON 快照备份 / 导入 / 恢复 / 紧急修复" FontSize="15"
+                                       FontWeight="SemiBold" />
+                            <WrapPanel>
+                                <Button x:Name="ImportBackupBtn" Classes="pill" Content="导入快照 JSON..."
+                                        Margin="0,0,8,0" />
+                                <Button x:Name="OpenBackupFolderBtn" Classes="pill" Content="打开备份目录"
+                                        Margin="0,0,8,0" />
+                                <Button x:Name="RestoreFnBtn" Classes="pill" Content="紧急恢复 Fn 键"
+                                        Margin="0,0,8,0" />
+                                <Button x:Name="RefreshBackupsBtn" Classes="pill" Content="刷新列表" />
+                            </WrapPanel>
+                            <TextBlock x:Name="BackupEmptyText" Classes="subtle"
+                                       Text="尚无自动备份快照。每次 USB-C 有线写入前会自动留存回滚快照。" />
+                            <StackPanel x:Name="BackupList" Spacing="6" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- ========== 页签 4：诊断与日志 ========== -->
+                <StackPanel x:Name="PanelDiagnostics" Spacing="12" IsVisible="False">
+                    <Border Classes="card">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="macOS 输入监控状态 / 矩阵校准" FontSize="15" FontWeight="SemiBold" />
+                            <TextBlock x:Name="InputMonitorText" Classes="subtle" />
+                            <TextBlock x:Name="CalibrationText" Classes="subtle" />
+                            <WrapPanel>
+                                <Button x:Name="OpenPermissionBtn" Classes="pill" Content="输入监控设置"
+                                        Margin="0,0,8,0" />
+                                <Button x:Name="RetryPermissionBtn" Classes="pill" Content="重试并同步"
+                                        Margin="0,0,8,0" />
+                                <Button x:Name="RescanBtn" Classes="pill" Content="重新扫描 HID 接口" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="InspectInterfaces 接口表" FontSize="15" FontWeight="SemiBold" />
+                            <Grid ColumnDefinitions="130,90,150,150,*">
+                                <TextBlock Grid.Column="0" Text="VID:PID" FontSize="11" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="通道" FontSize="11" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="2" Text="Usage" FontSize="11" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="3" Text="Report In/Out/Feat" FontSize="11"
+                                           FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="4" Text="产品 / 打开状态" FontSize="11"
+                                           FontWeight="SemiBold" />
+                            </Grid>
+                            <StackPanel x:Name="InterfaceList" Spacing="4" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card">
+                        <StackPanel Spacing="8">
+                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                <TextBlock Text="实时通信日志" FontSize="15" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" />
+                                <Button x:Name="CopyLogsBtn" Grid.Column="1" Classes="pill" Content="复制全部" />
+                                <Button x:Name="ClearLogsBtn" Grid.Column="2" Classes="pill" Content="清空" />
+                            </Grid>
+                            <TextBox x:Name="LogBox" Height="180" AcceptsReturn="True" IsReadOnly="True"
+                                     FontFamily="Menlo, Consolas, Monospace" FontSize="11"
+                                     TextWrapping="Wrap" VerticalContentAlignment="Top" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

@@ -66,7 +66,10 @@ public class UpdateClientTests
         Assert.True(UpdateClient.CompareVersions("v1.0.0", "1.1.0") < 0);
         Assert.Equal(0, UpdateClient.CompareVersions("v1.0.1", "1.0.1.0"));
         Assert.True(UpdateClient.CompareVersions("1.0.2", "1.0.1") > 0);
-        Assert.Equal(0, UpdateClient.CompareVersions("1.0.1+abc123", "v1.0.1-beta"));
+        Assert.Equal(0, UpdateClient.CompareVersions("1.0.1+abc123", "1.0.1"));
+        Assert.True(UpdateClient.CompareVersions("v1.0.1-beta", "1.0.1+abc123") < 0);
+        Assert.True(UpdateClient.CompareVersions("2.0.0-beta.1", "2.0.0-beta.2") < 0);
+        Assert.True(UpdateClient.CompareVersions("2.0.0-beta.2", "2.0.0") < 0);
     }
 
     [Fact]
@@ -174,5 +177,44 @@ public class UpdateClientTests
         Assert.Equal("1.0.1", outcome.LatestVersion);
         Assert.Contains(handler.RequestedUrls, u => u.StartsWith("https://broken-mirror.example/"));
         Assert.Contains(handler.RequestedUrls, u => u.StartsWith("https://github.com/alexzhong233/GearDeck/releases/latest/download/latest.json"));
+    }
+
+    [Fact]
+    public void ParseGitHubReleaseApiJson_ExtractsMacDmgAndZipAlongsideWindowsAssets()
+    {
+        const string json = """
+        {
+          "tag_name": "v1.0.2",
+          "html_url": "https://github.com/alexzhong233/GearDeck/releases/tag/v1.0.2",
+          "published_at": "2026-11-27T10:00:00Z",
+          "body": "Release v1.0.2",
+          "assets": [
+            {
+              "name": "GearDeck-v1.0.2-win-x64.zip",
+              "browser_download_url": "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.2/GearDeck-v1.0.2-win-x64.zip",
+              "size": 34000000
+            },
+            {
+              "name": "GearDeck-v1.0.2-osx-arm64.dmg",
+              "browser_download_url": "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.2/GearDeck-v1.0.2-osx-arm64.dmg",
+              "size": 45000000,
+              "digest": "sha256:aa11bb22"
+            },
+            {
+              "name": "GearDeck-v1.0.2-osx-x64.zip",
+              "browser_download_url": "https://github.com/alexzhong233/GearDeck/releases/download/v1.0.2/GearDeck-v1.0.2-osx-x64.zip",
+              "size": 46000000
+            }
+          ]
+        }
+        """;
+
+        var info = UpdateClient.ParseGitHubReleaseApiJson(json, "https://ghfast.top/");
+        Assert.NotNull(info);
+        Assert.Equal("GearDeck-v1.0.2-osx-arm64.dmg", info!.MacArm64AssetName);
+        Assert.Equal("AA11BB22", info.MacArm64Sha256);
+        Assert.StartsWith("https://ghfast.top/https://github.com/", info.MacArm64Url);
+        Assert.Equal("GearDeck-v1.0.2-osx-x64.zip", info.MacX64AssetName);
+        Assert.EndsWith("win-x64.zip", info.RawDownloadUrl);
     }
 }

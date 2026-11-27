@@ -176,31 +176,47 @@ public sealed class AppUpdateService
         }
     }
 
-    /// <summary>macOS 不执行 PowerShell 自替换：下载并校验安装包后在访达中显示；无可用包时直接打开发布页。</summary>
+    /// <summary>macOS 不执行 PowerShell 自替换：按 CPU 架构挑选 osx-arm64/x64 安装包（.dmg/.zip）下载并校验后在访达中显示；无可用包时直接打开发布页。</summary>
     private static async Task DownloadAndRevealOnMacAsync(
         ReleaseUpdateInfo release,
         IProgress<(double Percent, string Status)>? progress,
         CancellationToken ct)
     {
-        string preferredUrl = !string.IsNullOrWhiteSpace(release.DownloadUrl)
-            ? release.DownloadUrl
-            : release.InstallerUrl;
-        string fallbackUrl = !string.IsNullOrWhiteSpace(release.RawDownloadUrl)
-            ? release.RawDownloadUrl
-            : release.RawInstallerUrl;
-        string expectedSha = !string.IsNullOrWhiteSpace(release.FullSha256)
-            ? release.FullSha256
-            : release.InstallerSha256;
+        bool isArm64 = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
+            == System.Runtime.InteropServices.Architecture.Arm64;
+
+        string preferredUrl = isArm64
+            ? (!string.IsNullOrWhiteSpace(release.MacArm64Url) ? release.MacArm64Url : release.MacX64Url)
+            : (!string.IsNullOrWhiteSpace(release.MacX64Url) ? release.MacX64Url : release.MacArm64Url);
+        string fallbackUrl = isArm64
+            ? (!string.IsNullOrWhiteSpace(release.RawMacArm64Url) ? release.RawMacArm64Url : release.RawMacX64Url)
+            : (!string.IsNullOrWhiteSpace(release.RawMacX64Url) ? release.RawMacX64Url : release.RawMacArm64Url);
+        string expectedSha = isArm64
+            ? (!string.IsNullOrWhiteSpace(release.MacArm64Url) ? release.MacArm64Sha256 : release.MacX64Sha256)
+            : (!string.IsNullOrWhiteSpace(release.MacX64Url) ? release.MacX64Sha256 : release.MacArm64Sha256);
+        string assetName = isArm64
+            ? (!string.IsNullOrWhiteSpace(release.MacArm64AssetName) ? release.MacArm64AssetName : release.MacX64AssetName)
+            : (!string.IsNullOrWhiteSpace(release.MacX64AssetName) ? release.MacX64AssetName : release.MacArm64AssetName);
 
         if (string.IsNullOrWhiteSpace(preferredUrl))
         {
-            progress?.Report((100, "当前版本没有可用的安装包，正在打开发布页面..."));
+            progress?.Report((100, "当前版本没有可用的 macOS 安装包，正在打开发布页面..."));
             if (!string.IsNullOrWhiteSpace(release.HtmlUrl))
                 TryMacOpen(release.HtmlUrl);
             return;
         }
 
-        string assetPath = Path.Combine(UpdatesDir, $"GearDeck-{release.Tag}-mac");
+        string ext = Path.GetExtension(assetName);
+        if (string.IsNullOrWhiteSpace(ext))
+        {
+            ext = fallbackUrl.Contains(".dmg", StringComparison.OrdinalIgnoreCase) ? ".dmg" : ".zip";
+        }
+        string fileName = !string.IsNullOrWhiteSpace(assetName) ? assetName : $"GearDeck-{release.Tag}-mac{ext}";
+        string downloads = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+        string destDir = Directory.Exists(downloads) ? downloads : UpdatesDir;
+        string assetPath = Path.Combine(destDir, fileName);
+
         await DownloadAndVerifyAssetWithFallbackAsync(
             preferredUrl, fallbackUrl, assetPath, expectedSha, progress, ct);
 

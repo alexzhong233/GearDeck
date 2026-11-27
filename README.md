@@ -52,9 +52,9 @@
 | --- | --- | --- |
 | 外设 HID 发现与调参（17 个 Provider） | ✅ 完整支持 | ✅ IOHID + `ioreg` 蓝牙电量 |
 | 19 款 FPS 灵敏度换算 & 诊断日志 | ✅ 完整支持 | ✅ 完整支持 |
-| 前台应用 / 游戏识别自动切配置 | ✅ Win32 + 全屏独占判定 | ✅ `osascript` + `/Applications` 扫描 |
-| 状态栏驻留 & 实时电量展示 | ✅ Win32 托盘 + 独立任务栏贴片 | ✅ 原生菜单栏 `TrayIcon` 摘要 |
-| 系统监控面板 & 独立透明悬浮条 | ✅ 12 项全支持 | ✅ CPU/内存/网络/磁盘/开机时长 |
+| 前台应用 / 游戏识别自动切配置 | ✅ Win32 + 全屏独占判定 | ✅ `NSWorkspace` 原生进程检测 + `/Applications` & Steam 扫描 |
+| 状态栏驻留 & 实时电量展示 | ✅ Win32 托盘 + 独立任务栏贴片 | ✅ 原生菜单栏平铺 / 分组图标 + 系统监控摘要 |
+| 系统监控面板 & 独立透明悬浮条 | ✅ 12 项全支持 | ✅ CPU/内存/GPU/网络/磁盘/开机时长 |
 | 开机自启 | ✅ HKCU Run（带唤醒状态恢复） | ✅ `~/Library/LaunchAgents` plist |
 | 全局软件宏回放触发 | ✅ `SetWindowsHookEx` + `SendInput` | ⚠️ 支持宏编辑管理，钩子受辅助功能边界限制 |
 
@@ -72,7 +72,7 @@
 | 怒喵 Angry Miao | Airoha RACE (`0E8D:0703` DPI/回报率/`0.7–2.0mm` LOD/性能开关) | ✅ 已验证 |
 | 狼蛛 AULA / Incott | `0xFFA8` SSHS 2.0 磁轴/微动与 `0x09` 320B 硬件宏 | ✅ 已验证 |
 | 名龙星球 MLOONG | `MX301 PRO / PRO V2 / MX300 / MX301 / MX302`（原生 64B 协议）与 `MX301 PRO X`（Compx `0x08`） | ✅ 已验证 |
-| LEOBOG | `Hi98C Pro` USB-C 有线（520B `0x06`）+ 2.4G/蓝牙只读电量（`0x13`）与安全写入防护 | ✅ 已验证 |
+| LEOBOG | `Hi98C Pro` 四页签全功能控制台：无线 `0x41` 键位查看 + `0x83/0x03/0x04/0x06` 有线安全改键与单键 RGB / 备份恢复 | ✅ 已验证 |
 | ROG / 索尼 Sony | ROG Aura/OMNI + Sony INZONE Buds（左耳/右耳/充电盒三段电量） | ✅ 已验证 |
 | 飞智 Flydigi | 八爪鱼 5 / 6 Pro / 黑武士 5 Pro / CD2 底座（含力反馈扳机预设） | ✅ 已验证 |
 | 海盗船 / 赛睿 / HyperX | Corsair Bragi & Legacy / SteelSeries / HyperX 电池与基础配置 | ✅ 已实现 |

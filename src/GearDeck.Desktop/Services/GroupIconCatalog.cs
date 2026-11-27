@@ -10,19 +10,19 @@ public static class GroupIconCatalog
     [
         new("\uE962", "鼠标"),
         new("\uE765", "键盘"),
-        new("\uE7F5", "耳机"),
+        new("\uE95B", "耳机"),
         new("\uEC4F", "耳麦"),
         new("\uE7FC", "手柄"),
         new("\uE7C8", "准星"),
         new("\uE945", "闪电"),
-        new("\uE704", "无线"),
-        new("\uE836", "蓝牙"),
-        new("\uE950", "芯片"),
+        new("\uE701", "无线"),
+        new("\uE702", "蓝牙"),
+        new("\uE9F5", "芯片"),
         new("\uE83F", "电池"),
         new("\uE734", "星标"),
         new("\uE720", "麦克风"),
-        new("\uE7F6", "音箱"),
-        new("\uE977", "主机"),
+        new("\uE8D6", "音箱"),
+        new("\uE975", "主机"),
         new("\uEC4A", "仪表"),
     ];
 
@@ -31,12 +31,12 @@ public static class GroupIconCatalog
         return groupId switch
         {
             "builtin:keyboard" => "\uE765",
-            "builtin:headset" => "\uE7F5",
+            "builtin:headset" => "\uE95B",
             "builtin:controller" => "\uE7FC",
             _ => members.FirstOrDefault()?.Kind switch
             {
                 DeviceKind.Keyboard => "\uE765",
-                DeviceKind.Headset => "\uE7F5",
+                DeviceKind.Headset => "\uE95B",
                 DeviceKind.Controller => "\uE7FC",
                 _ => "\uE962",
             },

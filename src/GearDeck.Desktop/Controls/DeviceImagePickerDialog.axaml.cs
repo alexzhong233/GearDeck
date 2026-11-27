@@ -17,7 +17,7 @@ namespace GearDeck.Desktop.Controls;
 /// </summary>
 public partial class DeviceImagePickerDialog : Window
 {
-    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, " + FontFamily.Default.Name);
+    private static readonly FontFamily IconFont = UiBuilders.IconFont;
 
     private readonly PeripheralDevice _device;
     private readonly HashSet<string> _recommendedIds = new(StringComparer.OrdinalIgnoreCase);

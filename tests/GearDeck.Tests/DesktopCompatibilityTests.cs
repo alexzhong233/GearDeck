@@ -102,4 +102,79 @@ public class DesktopCompatibilityTests
         };
         Assert.Equal("\uE765", GroupIconCatalog.ResolveDefaultGlyph("custom:kb", [keyboardDev]));
     }
+
+    [Fact]
+    public void GroupIconCatalog_UsesOnlyFluentAvaloniaPresentGlyphs()
+    {
+        var missingGlyphs = new HashSet<string>
+        {
+            "\uE7F5", "\uE95F", "\uE950", "\uE964", "\uE704", "\uE836", "\uE977", "\uE7F6"
+        };
+        foreach (var preset in GroupIconCatalog.Presets)
+            Assert.DoesNotContain(preset.Glyph, missingGlyphs);
+        foreach (var metric in DesktopMetricsEngine.AllMetrics)
+            Assert.DoesNotContain(metric.Glyph, missingGlyphs);
+    }
+
+    [Fact]
+    public void DesktopMetricsEngine_ParsesBraceWrappedMacLoadAvg()
+    {
+        double pct = DesktopMetricsEngine.ParseMacLoadAvgPercent("{ 4.00 5.45 6.80 }", 8);
+        Assert.Equal(50.0, pct, precision: 2);
+        Assert.Equal(0.0, DesktopMetricsEngine.ParseMacLoadAvgPercent("invalid", 8));
+    }
+
+    [Fact]
+    public void MacStatusBarFormatter_BuildsFlatTiledAndCompactTitlesWithoutFakingBattery()
+    {
+        var mouse = new PeripheralDevice
+        {
+            Id = "mloong:A8A5-2255",
+            Name = "MLOONG MX301 PRO",
+            Kind = DeviceKind.Mouse,
+            Provider = "MLOONG",
+            Connected = true,
+            BatteryPercent = 63,
+            State = BatteryState.Normal,
+        };
+        var kbd = new PeripheralDevice
+        {
+            Id = "leobog:3554-FA09",
+            Name = "LEOBOG Hi98C Pro (2.4G)",
+            Kind = DeviceKind.Keyboard,
+            Provider = "LEOBOG",
+            Connected = true,
+            BatteryPercent = null,
+            State = BatteryState.Unknown,
+        };
+
+        var settings = new AppSettings
+        {
+            MacStatusBarTiled = true,
+            TaskbarGroups =
+            [
+                new TaskbarGroupConfig { GroupId = "builtin:mouse", Visible = true },
+                new TaskbarGroupConfig { GroupId = "builtin:keyboard", Visible = true },
+            ],
+        };
+
+        string tiled = MacStatusBarFormatter.BuildTitle([mouse, kbd], settings);
+        Assert.Contains("63%", tiled);
+        Assert.Contains("—", tiled); // Unobserved keyboard shows placeholder, never a fake %
+
+        settings.MacStatusBarTiled = false;
+        string compact = MacStatusBarFormatter.BuildTitle([mouse, kbd], settings);
+        Assert.Equal("GD 63%", compact);
+    }
+
+    [Fact]
+    public void MacAccessibilityGuard_ReplacesFluentAvaloniaItemsRepeaterPeerSafely()
+    {
+        var repeater = new FluentAvalonia.UI.Controls.ItemsRepeater();
+        MacAccessibilityGuard.InstallSafePeer(repeater);
+        var peer = Avalonia.Automation.Peers.ControlAutomationPeer.CreatePeerForElement(repeater);
+        Assert.IsType<MacAccessibilityGuard.SafeItemsRepeaterAutomationPeer>(peer);
+        var children = peer.GetChildren();
+        Assert.NotNull(children);
+    }
 }

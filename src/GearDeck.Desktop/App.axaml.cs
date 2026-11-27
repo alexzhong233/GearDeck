@@ -25,6 +25,7 @@ public partial class App : Application
 
     private MainWindow? _mainWindow;
     private static Mutex? _singleInstance;
+    private static FileStream? _macLockStream;
     private static EventWaitHandle? _activateEvent;
     private static DispatcherTimer? _commandTimer;
     private static long _lastCommandSeq;
@@ -56,6 +57,13 @@ public partial class App : Application
     {
         try { Environment.CurrentDirectory = AppContext.BaseDirectory; } catch { }
 
+        Dispatcher.UIThread.UnhandledException += (_, e) =>
+        {
+            Diag.LogCrash("UIThread.UnhandledException", e.Exception);
+            e.Handled = true;
+        };
+        MacAccessibilityGuard.Initialize();
+
         if (OperatingSystem.IsWindows())
         {
             _singleInstance = new Mutex(true, @"Local\GearDeck.SingleInstance", out bool created);
@@ -68,6 +76,16 @@ public partial class App : Application
                 return;
             }
             _activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventName);
+        }
+        else if (OperatingSystem.IsMacOS())
+        {
+            if (!TryAcquireMacSingleInstanceLock())
+            {
+                if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime d)
+                    d.Shutdown(0);
+                Environment.Exit(0);
+                return;
+            }
         }
 
         _startedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -125,7 +143,25 @@ public partial class App : Application
             onToggleWidget: () => UiPost(ToggleWidget),
             onRefreshDevices: RequestRefresh,
             onExit: () => UiPost(ExitCore),
-            onSystemResume: ScheduleResumeRefresh);
+            onSystemResume: ScheduleResumeRefresh,
+            onOpenDevice: id => UiPost(() => { ShowMainWindowCore(); _mainWindow?.OpenDevice(id); }),
+            onOpenWidget: () => UiPost(() => { ShowMainWindowCore(); _mainWindow?.OpenWidgetPage(); }));
+
+        if (OperatingSystem.IsMacOS())
+        {
+            try
+            {
+                if (this.TryGetFeature(typeof(IActivatableLifetime)) is IActivatableLifetime activatable)
+                {
+                    activatable.Activated += (_, args) =>
+                    {
+                        if (args.Kind == ActivationKind.Reopen)
+                            UiPost(ShowMainWindowCore);
+                    };
+                }
+            }
+            catch { }
+        }
 
         GameAuto = new GameProfileAutoService();
         GameAuto.Start();
@@ -393,6 +429,25 @@ public partial class App : Application
         });
     }
 
+    private static bool TryAcquireMacSingleInstanceLock()
+    {
+        try
+        {
+            Directory.CreateDirectory(StateDir);
+            string lockPath = Path.Combine(StateDir, ".geardeck.lock");
+            _macLockStream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            byte[] pidBytes = System.Text.Encoding.UTF8.GetBytes(Environment.ProcessId.ToString());
+            _macLockStream.SetLength(0);
+            _macLockStream.Write(pidBytes, 0, pidBytes.Length);
+            _macLockStream.Flush();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static void UpdateTrayTooltip(IReadOnlyList<PeripheralDevice> devices)
     {
         const string fallback = "GearDeck · 外设调节与游戏配置";
@@ -432,6 +487,7 @@ public partial class App : Application
         NativeNotificationService.CheckAndNotifyLowBattery(devices);
         _ = DeviceImageService.EnsureAutoCloudImagesAsync(devices);
         UpdateTrayTooltip(devices);
+        Tray?.UpdateDevices(devices);
         if (OperatingSystem.IsWindows() && Settings.Current.WidgetVisible)
             WidgetProcess.Refresh();
     }
@@ -440,6 +496,11 @@ public partial class App : Application
 
     public static void RefreshWidget()
     {
+        if (OperatingSystem.IsMacOS())
+        {
+            Tray?.RefreshStatusBar();
+            return;
+        }
         if (!OperatingSystem.IsWindows()) return;
         if (Settings.Current.WidgetVisible) WidgetProcess.Refresh();
         else WidgetProcess.Stop();
@@ -529,6 +590,7 @@ public partial class App : Application
         try { Settings?.Save(); } catch { }
         try { _singleInstance?.ReleaseMutex(); } catch { }
         try { _singleInstance?.Dispose(); } catch { }
+        try { _macLockStream?.Dispose(); _macLockStream = null; } catch { }
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             desktop.Shutdown();

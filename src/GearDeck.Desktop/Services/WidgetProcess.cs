@@ -118,7 +118,7 @@ public static class WidgetProcess
                     {
                         DeviceKind.Mouse => "\uE962",
                         DeviceKind.Keyboard => "\uE765",
-                        DeviceKind.Headset => "\uE95F",
+                        DeviceKind.Headset => "\uE95B",
                         _ => "\uE7FC",
                     };
 

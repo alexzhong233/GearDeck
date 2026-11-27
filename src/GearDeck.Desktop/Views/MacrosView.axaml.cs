@@ -67,6 +67,11 @@ public partial class MacrosView : UserControl
     {
         GlobalEnableSwitch.IsCheckedChanged += OnGlobalEnableChanged;
         RestartAdminBtn.Click += OnRestartAsAdmin;
+        OpenMacAccessibilityBtn.Click += (_, _) =>
+        {
+            MacroExecutionService.OpenMacAccessibilitySettings();
+            UpdatePlatformBanners();
+        };
 
         NewMacroBtn.Click += OnNewMacro;
         CopyMacroBtn.Click += OnCopyMacro;
@@ -141,8 +146,20 @@ public partial class MacrosView : UserControl
         bool supported = App.MacroRunner?.IsPlaybackSupported ?? false;
         AdminBanner.IsVisible = windows && !IsRunnerElevated;
         MacOsBanner.IsVisible = !windows || !supported;
-        MacOsNoticeText.Text = MacroExecutionService.MacOsPlaybackNotice
-            + "。当前为仅配置管理模式：可新建、编辑、导入导出宏，但不会在本地执行按键回放。";
+        if (!windows)
+        {
+            bool trusted = MacroExecutionService.IsMacAccessibilityTrusted();
+            MacOsNoticeText.Text = trusted
+                ? "已获得 macOS「辅助功能」权限（仅开放本地宏创建、编辑、导入导出与板载录入；macOS 暂不启用全局软件回放）。"
+                : MacroExecutionService.MacOsPlaybackNotice + "。当前未授予「辅助功能」权限，可点击下方按钮在系统设置中授权。";
+            OpenMacAccessibilityBtn.IsVisible = !trusted;
+        }
+        else
+        {
+            MacOsNoticeText.Text = MacroExecutionService.MacOsPlaybackNotice
+                + "。当前为仅配置管理模式：可新建、编辑、导入导出宏，但不会在本地执行按键回放。";
+            OpenMacAccessibilityBtn.IsVisible = false;
+        }
     }
 
     private void UpdateGlobalUi()

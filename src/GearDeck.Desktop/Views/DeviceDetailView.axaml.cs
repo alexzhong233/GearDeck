@@ -62,10 +62,13 @@ public partial class DeviceDetailView : UserControl
     private double _rightRtExtreme;
     private bool _leftTriggered;
     private bool _rightTriggered;
+    private bool _macLeftPointerPressed;
+    private bool _macRightPointerPressed;
 
     private bool _wakeOnMove = true;
     private int _autoWakeAttempts;
     private long _nextAutoWakeTick;
+    private long _suppressPostBindUntilTick;
 
     public DeviceDetailView() : this(string.Empty) { }
 
@@ -76,6 +79,9 @@ public partial class DeviceDetailView : UserControl
 
         _debounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
         _debounceTimer.Tick += (_, _) => FlushDebouncedUpdate();
+
+        if (OperatingSystem.IsMacOS())
+            PinTaskbarBtn.Content = "固定到菜单栏";
 
         WireEvents();
     }
@@ -113,6 +119,8 @@ public partial class DeviceDetailView : UserControl
         ExternalConfiguratorGuard.StateChanged -= OnGuardStateChanged;
         RootShellGrid.PointerMoved -= OnPagePointerMoved;
         _debounceTimer.Stop();
+        _debouncedPending = null;
+        _queuedUpdate = null;
         _analogPressTimer?.Stop();
         base.OnDetachedFromVisualTree(e);
     }
@@ -150,6 +158,13 @@ public partial class DeviceDetailView : UserControl
         AnalogHapOffBtn.Click += (_, _) => SetAnalogHapticsEnabled(false);
         AnalogHapOnBtn.Click += (_, _) => SetAnalogHapticsEnabled(true);
         ApplyAnalogBtn.Click += (_, _) => CommitAnalogSwitchUpdate(immediate: true);
+
+        AnalogPressTestPad.PointerPressed += OnAnalogPressDown;
+        AnalogPressTestPad.PointerCaptureLost += (_, _) =>
+        {
+            _macLeftPointerPressed = false;
+            _macRightPointerPressed = false;
+        };
 
         AsymLiftSlider.ValueChanged += OnAsymSliderChanged;
         AsymLandSlider.ValueChanged += OnAsymSliderChanged;
@@ -433,11 +448,11 @@ public partial class DeviceDetailView : UserControl
             App.Settings.Current.WidgetVisible = true;
             App.Settings.Save();
             App.RefreshWidget();
-            ShowStatus("已固定到任务栏对应分组。", InfoBarSeverity.Success);
+            ShowStatus(OperatingSystem.IsMacOS() ? "已固定到菜单栏对应分组。" : "已固定到任务栏对应分组。", InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {
-            ShowStatus($"固定到任务栏失败：{ex.Message}", InfoBarSeverity.Error);
+            ShowStatus(OperatingSystem.IsMacOS() ? $"固定到菜单栏失败：{ex.Message}" : $"固定到任务栏失败：{ex.Message}", InfoBarSeverity.Error);
         }
     }
 
@@ -489,9 +504,12 @@ public partial class DeviceDetailView : UserControl
     private void OnDeviceLowBatThresholdChanged()
     {
         if (_binding || string.IsNullOrWhiteSpace(_deviceId)) return;
+        if (Environment.TickCount64 < _suppressPostBindUntilTick) return;
         double? raw = DeviceLowBatThresholdBox.Value;
         if (raw == null || double.IsNaN(raw.Value)) return;
-        SaveDeviceLowBatteryPolicy(Math.Clamp((int)Math.Round(raw.Value), 5, 80));
+        int clamped = Math.Clamp((int)Math.Round(raw.Value), 5, 80);
+        if (clamped == App.Settings.GetEffectiveLowBatteryThreshold(_deviceId)) return;
+        SaveDeviceLowBatteryPolicy(clamped);
     }
 
     private void OnDeviceLowBatReset(object? sender, RoutedEventArgs e)
@@ -518,12 +536,14 @@ public partial class DeviceDetailView : UserControl
         try
         {
             var caps = await App.Devices.QueryCapabilitiesAsync(_deviceId);
+            if (!IsLoaded) return;
             BindCapabilities(caps);
         }
         catch (Exception ex)
         {
             Diag.Log($"LoadCapabilitiesAsync 异常: {ex.Message}");
-            ShowStatus($"读取硬件参数失败: {ex.Message}", InfoBarSeverity.Error);
+            if (IsLoaded)
+                ShowStatus($"读取硬件参数失败: {ex.Message}", InfoBarSeverity.Error);
         }
         finally
         {
@@ -549,6 +569,8 @@ public partial class DeviceDetailView : UserControl
     private void BindCapabilities(DeviceTuningCapabilities caps)
     {
         _caps = caps;
+        _debounceTimer.Stop();
+        _debouncedPending = null;
         _binding = true;
         try
         {
@@ -774,6 +796,7 @@ public partial class DeviceDetailView : UserControl
         finally
         {
             _binding = false;
+            _suppressPostBindUntilTick = Environment.TickCount64 + 350;
         }
     }
 
@@ -781,19 +804,22 @@ public partial class DeviceDetailView : UserControl
     private static void SafeSetSlider(Slider s, double min, double max, double step, double val)
     {
         if (min > max) (min, max) = (max, min);
-        s.Maximum = Math.Max(s.Maximum, max);
-        s.Minimum = min;
-        s.Maximum = max;
-        s.SmallChange = Math.Max(0.05, step);
-        s.Value = Math.Clamp(val, min, max);
+        double clamped = Math.Clamp(val, min, max);
+        double safeStep = Math.Max(0.05, step);
+        if (s.Maximum < max) s.Maximum = max;
+        if (Math.Abs(s.Minimum - min) > 0.0001) s.Minimum = min;
+        if (Math.Abs(s.Maximum - max) > 0.0001) s.Maximum = max;
+        if (Math.Abs(s.SmallChange - safeStep) > 0.0001) s.SmallChange = safeStep;
+        if (double.IsNaN(s.Value) || Math.Abs(s.Value - clamped) > 0.0001) s.Value = clamped;
     }
 
     private static void SafeSetNumberBox(NumberBox b, double min, double max, double step, double val)
     {
         if (min > max) (min, max) = (max, min);
-        b.Maximum = max;
-        b.Minimum = min;
-        b.Value = Math.Clamp(val, min, max);
+        double clamped = Math.Clamp(val, min, max);
+        if (Math.Abs(b.Maximum - max) > 0.0001) b.Maximum = max;
+        if (Math.Abs(b.Minimum - min) > 0.0001) b.Minimum = min;
+        if (double.IsNaN(b.Value) || Math.Abs(b.Value - clamped) > 0.0001) b.Value = clamped;
         _ = step;
     }
 
@@ -905,7 +931,7 @@ public partial class DeviceDetailView : UserControl
 
     private void OnDpiXSliderChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
-        if (_binding) return;
+        if (_binding || Environment.TickCount64 < _suppressPostBindUntilTick) return;
         _binding = true;
         DpiXBox.Value = e.NewValue;
         if (SyncXySwitch.IsChecked == true)
@@ -921,9 +947,9 @@ public partial class DeviceDetailView : UserControl
     private void OnDpiXBoxChanged()
     {
         double raw = DpiXBox.Value;
-        if (_binding || double.IsNaN(raw)) return;
-        int minDpi = Math.Max(10, _caps?.MinDpi ?? 50);
-        int maxDpi = Math.Max(minDpi + 50, _caps?.MaxDpi ?? 45000);
+        if (_binding || _caps == null || double.IsNaN(raw) || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        int minDpi = Math.Max(10, _caps.MinDpi);
+        int maxDpi = Math.Max(minDpi + 50, _caps.MaxDpi);
         double clamped = Math.Clamp(raw, minDpi, maxDpi);
         _binding = true;
         DpiXSlider.Value = clamped;
@@ -939,7 +965,7 @@ public partial class DeviceDetailView : UserControl
 
     private void OnDpiYSliderChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
-        if (_binding) return;
+        if (_binding || Environment.TickCount64 < _suppressPostBindUntilTick) return;
         _binding = true;
         DpiYBox.Value = e.NewValue;
         _binding = false;
@@ -950,9 +976,9 @@ public partial class DeviceDetailView : UserControl
     private void OnDpiYBoxChanged()
     {
         double raw = DpiYBox.Value;
-        if (_binding || double.IsNaN(raw)) return;
-        int minDpi = Math.Max(10, _caps?.MinDpi ?? 50);
-        int maxDpi = Math.Max(minDpi + 50, _caps?.MaxDpi ?? 45000);
+        if (_binding || _caps == null || double.IsNaN(raw) || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        int minDpi = Math.Max(10, _caps.MinDpi);
+        int maxDpi = Math.Max(minDpi + 50, _caps.MaxDpi);
         _binding = true;
         DpiYSlider.Value = Math.Clamp(raw, minDpi, maxDpi);
         _binding = false;
@@ -1026,16 +1052,20 @@ public partial class DeviceDetailView : UserControl
 
     private DeviceTuningUpdate? BuildDpiUpdateFromUi()
     {
-        int minDpi = Math.Max(10, _caps?.MinDpi ?? 50);
-        int maxDpi = Math.Max(minDpi + 50, _caps?.MaxDpi ?? 45000);
-        int step = Math.Max(1, _caps?.DpiStep ?? 50);
+        if (_caps == null) return null;
+        int minDpi = Math.Max(10, _caps.MinDpi);
+        int maxDpi = Math.Max(minDpi + 50, _caps.MaxDpi);
+        int step = Math.Max(1, _caps.DpiStep);
 
         double rawX = DpiXBox.Value is { } bx && double.IsFinite(bx) ? bx : DpiXSlider.Value;
         int x = SnapDpi((int)Math.Round(rawX), minDpi, maxDpi, step);
-        int y = (_caps?.SupportsIndependentXY == true && SyncXySwitch.IsChecked != true)
+        int y = (_caps.SupportsIndependentXY && SyncXySwitch.IsChecked != true)
             ? SnapDpi((int)Math.Round(DpiYBox.Value is { } by && double.IsFinite(by) ? by : DpiYSlider.Value),
                 minDpi, maxDpi, step)
             : x;
+
+        if (x == _caps.CurrentDpiX && y == _caps.CurrentDpiY)
+            return null;
 
         var update = new DeviceTuningUpdate { Dpi = (x, y) };
         if (_caps is { SupportsDpiStagesWrite: true, DpiStages.Count: > 0 })
@@ -1064,36 +1094,51 @@ public partial class DeviceDetailView : UserControl
     // ── 开关 ─────────────────────────────────────────────────────────────────────
     private void OnHostModeToggled(object? sender, RoutedEventArgs e)
     {
-        if (_binding || _caps == null || !_caps.SupportsHostModeSwitch) return;
-        _ = ApplyUpdateAsync(new DeviceTuningUpdate { SetHostMode = HostModeSwitch.IsChecked == true });
+        if (_binding || _caps == null || !_caps.SupportsHostModeSwitch || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        bool target = HostModeSwitch.IsChecked == true;
+        if (target == _caps.IsHostMode) return;
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { SetHostMode = target });
     }
 
     private void OnMotionSyncToggled(object? sender, RoutedEventArgs e)
     {
-        if (_binding || _caps == null || !_caps.SupportsMotionSync) return;
-        _ = ApplyUpdateAsync(new DeviceTuningUpdate { MotionSync = MotionSyncSwitch.IsChecked == true });
+        if (_binding || _caps == null || !_caps.SupportsMotionSync || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        bool target = MotionSyncSwitch.IsChecked == true;
+        if (target == _caps.MotionSync) return;
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { MotionSync = target });
     }
 
     private void OnAngleSnapToggled(object? sender, RoutedEventArgs e)
     {
-        if (_binding || _caps == null || !_caps.SupportsAngleSnapping) return;
-        _ = ApplyUpdateAsync(new DeviceTuningUpdate { AngleSnapping = AngleSnapSwitch.IsChecked == true });
+        if (_binding || _caps == null || !_caps.SupportsAngleSnapping || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        bool target = AngleSnapSwitch.IsChecked == true;
+        if (target == _caps.AngleSnapping) return;
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { AngleSnapping = target });
     }
 
     private void OnRippleToggled(object? sender, RoutedEventArgs e)
     {
-        if (_binding || _caps == null || !_caps.SupportsRippleControl) return;
-        _ = ApplyUpdateAsync(new DeviceTuningUpdate { RippleControl = RippleSwitch.IsChecked == true });
+        if (_binding || _caps == null || !_caps.SupportsRippleControl || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        bool target = RippleSwitch.IsChecked == true;
+        if (target == _caps.RippleControl) return;
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { RippleControl = target });
     }
 
     private void OnLongRangeToggled(object? sender, RoutedEventArgs e)
     {
-        if (_binding || _caps == null) return;
+        if (_binding || _caps == null || Environment.TickCount64 < _suppressPostBindUntilTick) return;
         bool on = LongRangeSwitch.IsChecked == true;
         if (_caps.SupportsLongRangeMode)
+        {
+            if (on == _caps.LongRangeMode) return;
             _ = ApplyUpdateAsync(new DeviceTuningUpdate { LongRangeMode = on });
+        }
         else if (_turboModeCode.HasValue)
-            _ = ApplyUpdateAsync(new DeviceTuningUpdate { PerformanceMode = on ? _turboModeCode.Value : 0 });
+        {
+            int targetMode = on ? _turboModeCode.Value : 0;
+            if (targetMode == _caps.CurrentPerformanceMode) return;
+            _ = ApplyUpdateAsync(new DeviceTuningUpdate { PerformanceMode = targetMode });
+        }
     }
 
     // ── 高级：LOD / 防抖 / 角度 / 休眠 / 灯光 ──────────────────────────────────────
@@ -1136,12 +1181,13 @@ public partial class DeviceDetailView : UserControl
 
     private void OnLodSliderChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
-        if (_binding || _lodOptions.Count == 0) return;
+        if (_binding || _lodOptions.Count == 0 || Environment.TickCount64 < _suppressPostBindUntilTick) return;
         int idx = _lodUsesDirectMm
             ? Math.Clamp((int)Math.Round((e.NewValue - _lodMinMm) / 0.1), 0, _lodOptions.Count - 1)
             : Math.Clamp((int)Math.Round(e.NewValue), 0, _lodOptions.Count - 1);
         var opt = _lodOptions[idx];
         LodSliderValueText.Text = FormatLodLabel(opt);
+        if (_caps != null && opt.Code == _caps.CurrentLod) return;
         ScheduleDebouncedUpdate(new DeviceTuningUpdate { LodCode = opt.Code });
     }
 
@@ -1184,16 +1230,22 @@ public partial class DeviceDetailView : UserControl
     private void OnApplyAsymLod(object? sender, RoutedEventArgs e)
     {
         if (_binding || _caps == null || !_caps.SupportsAsymmetricLod) return;
+        if (sender == AsymLodSwitch && Environment.TickCount64 < _suppressPostBindUntilTick) return;
         int lift = Math.Clamp((int)Math.Round(AsymLiftSlider.Value * 10), 2, 26);
         int land = Math.Clamp((int)Math.Round(AsymLandSlider.Value * 10), 1, lift - 1);
-        _ = ApplyUpdateAsync(new DeviceTuningUpdate { AsymmetricLod = (AsymLodSwitch.IsChecked == true, lift, land) });
+        bool enabled = AsymLodSwitch.IsChecked == true;
+        if (sender == AsymLodSwitch && enabled == _caps.AsymmetricLodEnabled && lift == _caps.AsymmetricLiftOff && land == _caps.AsymmetricLanding)
+            return;
+        _ = ApplyUpdateAsync(new DeviceTuningUpdate { AsymmetricLod = (enabled, lift, land) });
     }
 
     private void OnDebounceSliderChanged(object? sender, RangeBaseValueChangedEventArgs e)
     {
         int ms = (int)Math.Round(e.NewValue);
         DebounceValueText.Text = $"{ms} ms";
-        if (!_binding) ScheduleDebouncedUpdate(new DeviceTuningUpdate { DebounceMs = ms });
+        if (_binding || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        if (_caps != null && ms == _caps.CurrentDebounceMs) return;
+        ScheduleDebouncedUpdate(new DeviceTuningUpdate { DebounceMs = ms });
     }
 
     private void OnDebounceSliderReleased(object? sender, PointerReleasedEventArgs e) => FlushDebouncedUpdate();
@@ -1202,7 +1254,9 @@ public partial class DeviceDetailView : UserControl
     {
         int deg = (int)Math.Round(e.NewValue);
         AngleValueText.Text = $"{deg}°";
-        if (!_binding) ScheduleDebouncedUpdate(new DeviceTuningUpdate { AngleTuningDeg = deg });
+        if (_binding || Environment.TickCount64 < _suppressPostBindUntilTick) return;
+        if (_caps != null && deg == _caps.AngleTuningDeg) return;
+        ScheduleDebouncedUpdate(new DeviceTuningUpdate { AngleTuningDeg = deg });
     }
 
     private void OnAngleSliderReleased(object? sender, PointerReleasedEventArgs e) => FlushDebouncedUpdate();
@@ -1334,7 +1388,7 @@ public partial class DeviceDetailView : UserControl
                 Text = "暂无快速预设 · 可在此保存当前 DPI / 回报率 / RT 为一键切换预设",
                 FontSize = 11,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = (Brush)Application.Current!.Resources["TextFillColorSecondaryBrush"]!,
+                Foreground = ResolveThemeBrush("TextFillColorSecondaryBrush", Color.FromArgb(180, 150, 150, 150)),
             });
             return;
         }
@@ -1353,8 +1407,8 @@ public partial class DeviceDetailView : UserControl
 
             var chip = new Border
             {
-                Background = (Brush)Application.Current!.Resources["SubtleFillColorSecondaryBrush"]!,
-                BorderBrush = (Brush)Application.Current!.Resources["CardStrokeColorDefaultBrush"]!,
+                Background = ResolveThemeBrush("SubtleFillColorSecondaryBrush", Color.FromArgb(24, 128, 128, 128)),
+                BorderBrush = ResolveThemeBrush("CardStrokeColorDefaultBrush", Color.FromArgb(40, 128, 128, 128)),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(8, 4, 6, 4),
@@ -1482,7 +1536,7 @@ public partial class DeviceDetailView : UserControl
                 {
                     Text = $"{FormatBindingLabel(slot.CurrentAction)}（主键防误触锁定）",
                     VerticalAlignment = VerticalAlignment.Center,
-                    Foreground = (Brush)Application.Current!.Resources["TextFillColorSecondaryBrush"]!,
+                    Foreground = ResolveThemeBrush("TextFillColorSecondaryBrush", Color.FromArgb(180, 150, 150, 150)),
                 };
                 Grid.SetColumn(ro, 1);
                 row.Children.Add(ro);
@@ -1569,7 +1623,7 @@ public partial class DeviceDetailView : UserControl
                 Text = $"已绑：{trigger} → 宏「{macroName}」",
                 FontSize = 12,
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = (Brush)Application.Current!.Resources["AccentTextFillColorPrimaryBrush"]!,
+                Foreground = ResolveThemeBrush("AccentTextFillColorPrimaryBrush", Color.FromRgb(0, 120, 215)),
             });
             var unbind = new Button { Content = "解绑", Classes = { "pill" } };
             string k = kv.Key;
@@ -1812,7 +1866,7 @@ public partial class DeviceDetailView : UserControl
             Text = label,
             FontSize = 12,
             VerticalAlignment = VerticalAlignment.Center,
-            Foreground = (Brush)Application.Current!.Resources["TextFillColorSecondaryBrush"]!,
+            Foreground = ResolveThemeBrush("TextFillColorSecondaryBrush", Color.FromArgb(180, 150, 150, 150)),
         });
 
         var segGrid = new Grid { VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
@@ -1834,7 +1888,7 @@ public partial class DeviceDetailView : UserControl
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
             MinWidth = 116,
-            Foreground = (Brush)Application.Current!.Resources["TextFillColorSecondaryBrush"]!,
+            Foreground = ResolveThemeBrush("TextFillColorSecondaryBrush", Color.FromArgb(180, 150, 150, 150)),
         };
         Grid.SetColumn(summaryBlock, 2);
         row.Children.Add(summaryBlock);
@@ -1862,7 +1916,21 @@ public partial class DeviceDetailView : UserControl
             _analogPressTimer.Start();
     }
 
-    private void OnAnalogPressSample(object? sender, PointerReleasedEventArgs e) => UpdateAnalogLiveSample();
+    private void OnAnalogPressDown(object? sender, PointerPressedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(AnalogPressTestPad);
+        if (point.Properties.IsLeftButtonPressed) _macLeftPointerPressed = true;
+        if (point.Properties.IsRightButtonPressed) _macRightPointerPressed = true;
+        UpdateAnalogLiveSample();
+    }
+
+    private void OnAnalogPressSample(object? sender, PointerReleasedEventArgs e)
+    {
+        var props = e.GetCurrentPoint(AnalogPressTestPad).Properties;
+        _macLeftPointerPressed = props.IsLeftButtonPressed;
+        _macRightPointerPressed = props.IsRightButtonPressed;
+        UpdateAnalogLiveSample();
+    }
 
     private void UpdateAnalogLiveSample()
     {
@@ -1873,8 +1941,12 @@ public partial class DeviceDetailView : UserControl
             bool swapped = OperatingSystem.IsWindows() && GetSystemMetrics(23) != 0;
             int vkLeft = swapped ? 0x02 : 0x01;
             int vkRight = swapped ? 0x01 : 0x02;
-            bool leftPressed = OperatingSystem.IsWindows() && (GetAsyncKeyState(vkLeft) & 0x8000) != 0;
-            bool rightPressed = OperatingSystem.IsWindows() && (GetAsyncKeyState(vkRight) & 0x8000) != 0;
+            bool leftPressed = OperatingSystem.IsWindows()
+                ? (GetAsyncKeyState(vkLeft) & 0x8000) != 0
+                : _macLeftPointerPressed;
+            bool rightPressed = OperatingSystem.IsWindows()
+                ? (GetAsyncKeyState(vkRight) & 0x8000) != 0
+                : _macRightPointerPressed;
 
             StepAnalogSide(leftPressed, _leftAnalog, _leftBarSegments.Length,
                 ref _leftTravel, ref _leftRtExtreme, ref _leftTriggered);
@@ -2117,9 +2189,18 @@ public partial class DeviceDetailView : UserControl
             _ = ApplyUpdateAsync(pending);
     }
 
+    private static IBrush ResolveThemeBrush(string key, Color fallback)
+    {
+        if (Application.Current is { } app &&
+            app.TryFindResource(key, app.ActualThemeVariant, out var res) &&
+            res is IBrush brush)
+            return brush;
+        return new SolidColorBrush(fallback);
+    }
+
     private async Task ApplyUpdateAsync(DeviceTuningUpdate update)
     {
-        if (string.IsNullOrWhiteSpace(_deviceId)) return;
+        if (string.IsNullOrWhiteSpace(_deviceId) || !IsLoaded) return;
         if (_busy)
         {
             _queuedUpdate = _queuedUpdate == null ? update : MergeUpdates(_queuedUpdate, update);
@@ -2132,6 +2213,7 @@ public partial class DeviceDetailView : UserControl
             while (next != null)
             {
                 var res = await App.Devices.ApplySettingsAsync(_deviceId, next);
+                if (!IsLoaded) return;
                 if (res.Capabilities != null)
                     BindCapabilities(res.Capabilities);
                 ShowStatus(res.Message, res.Success ? InfoBarSeverity.Success : InfoBarSeverity.Error);
@@ -2141,7 +2223,8 @@ public partial class DeviceDetailView : UserControl
         }
         catch (Exception ex)
         {
-            ShowStatus($"写入硬件参数失败：{ex.Message}", InfoBarSeverity.Error);
+            if (IsLoaded)
+                ShowStatus($"写入硬件参数失败：{ex.Message}", InfoBarSeverity.Error);
         }
         finally
         {

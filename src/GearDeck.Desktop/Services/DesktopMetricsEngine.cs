@@ -36,9 +36,9 @@ public static class DesktopMetricsEngine
 {
     public static IReadOnlyList<MetricDefinition> AllMetrics { get; } =
     [
-        new("CPU", "CPU 占用", "CPU 使用率", "\uE950", true),
+        new("CPU", "CPU 占用", "CPU 使用率", "\uE9F5", true),
         new("CPU_FREQ", "CPU 频率", "CPU 实时频率", "\uE945", false),
-        new("RAM", "内存占用", "内存使用率", "\uE964", true),
+        new("RAM", "内存占用", "内存使用率", "\uE7F1", true),
         new("MEM_USED", "已用内存", "已用物理内存", "\uE7F8", true),
         new("GPU", "GPU 占用", "GPU 核心占用", "\uE7F4", true),
         new("GPU_TEMP", "GPU 温度", "GPU 核心温度", "\uE9CA", false),
@@ -62,6 +62,11 @@ public static class DesktopMetricsEngine
     private static long _lastSampleMs;
 
     private static ulong _lastIdle, _lastKernel, _lastUser;
+    private static ulong _lastMacCpuUser, _lastMacCpuSys, _lastMacCpuIdle, _lastMacCpuNice;
+    private static bool _hasMacCpuBaseline;
+    private static long _lastMacGpuSampleMs;
+    private static double? _cachedMacGpuPct;
+    private static double? _cachedMacVramUsedGb;
     private static long _lastNetRx, _lastNetTx;
     private static long _lastNetTick;
     private static double _baseCpuGhz;
@@ -133,11 +138,14 @@ public static class DesktopMetricsEngine
                         : _baseCpuGhz;
                 }
             }
-            else
+            else if (OperatingSystem.IsMacOS())
             {
-                string hz = RunCommand("/usr/sbin/sysctl", ["-n", "hw.cpufrequency"]);
-                if (ParseDouble(hz) is { } frequency && frequency > 0)
-                    cpuFreqGhz = Math.Round(frequency / 1000000000.0, 2);
+                if (RuntimeInformation.ProcessArchitecture != Architecture.Arm64)
+                {
+                    string hz = RunCommand("/usr/sbin/sysctl", ["-n", "hw.cpufrequency"]);
+                    if (ParseDouble(hz) is { } frequency && frequency > 0)
+                        cpuFreqGhz = Math.Round(frequency / 1000000000.0, 2);
+                }
             }
 
             double? gpuPct = null;
@@ -156,6 +164,10 @@ public static class DesktopMetricsEngine
                     vramUsedGb = mem.Used / Gb;
                     vramTotalGb = mem.Total / Gb;
                 }
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                (gpuPct, vramUsedGb) = SampleMacGpuThrottled(now);
             }
 
             if (gpuPct == null && pdhGpuPct is { } pg)
@@ -279,13 +291,80 @@ public static class DesktopMetricsEngine
 
     private static double SampleMacCpu()
     {
-        // sysctl vm.loadavg 返回 1/5/15 分钟负载；按逻辑核心数折算为近似占用率。
+        if (OperatingSystem.IsMacOS() && TrySampleMacHostCpu(out double nativePct))
+            return nativePct;
+
         string load = RunCommand("/usr/sbin/sysctl", ["-n", "vm.loadavg"]);
-        string[] parts = load.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return ParseMacLoadAvgPercent(load, Environment.ProcessorCount);
+    }
+
+    public static double ParseMacLoadAvgPercent(string loadOutput, int processorCount)
+    {
+        if (string.IsNullOrWhiteSpace(loadOutput)) return 0;
+        string cleaned = loadOutput.Replace("{", " ").Replace("}", " ");
+        string[] parts = cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length == 0 || ParseDouble(parts[0]) is not { } oneMin)
             return 0;
-        int cores = Math.Max(1, Environment.ProcessorCount);
+        int cores = Math.Max(1, processorCount);
         return Math.Clamp(oneMin / cores * 100.0, 0, 100);
+    }
+
+    private static bool TrySampleMacHostCpu(out double percent)
+    {
+        percent = 0;
+        try
+        {
+            var info = new uint[4];
+            int count = 4; // HOST_CPU_LOAD_INFO_COUNT
+            if (host_statistics(mach_host_self(), 3 /* HOST_CPU_LOAD_INFO */, info, ref count) != 0)
+                return false;
+
+            ulong user = info[0], sys = info[1], idle = info[2], nice = info[3];
+            if (_hasMacCpuBaseline)
+            {
+                ulong dUser = user >= _lastMacCpuUser ? user - _lastMacCpuUser : 0;
+                ulong dSys = sys >= _lastMacCpuSys ? sys - _lastMacCpuSys : 0;
+                ulong dIdle = idle >= _lastMacCpuIdle ? idle - _lastMacCpuIdle : 0;
+                ulong dNice = nice >= _lastMacCpuNice ? nice - _lastMacCpuNice : 0;
+                ulong total = dUser + dSys + dIdle + dNice;
+                if (total > 0)
+                    percent = Math.Clamp(100.0 * (dUser + dSys + dNice) / total, 0, 100);
+            }
+            _lastMacCpuUser = user;
+            _lastMacCpuSys = sys;
+            _lastMacCpuIdle = idle;
+            _lastMacCpuNice = nice;
+            _hasMacCpuBaseline = true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static (double? GpuPct, double? VramUsedGb) SampleMacGpuThrottled(long nowMs)
+    {
+        if (_lastMacGpuSampleMs != 0 && nowMs - _lastMacGpuSampleMs < 2000)
+            return (_cachedMacGpuPct, _cachedMacVramUsedGb);
+        _lastMacGpuSampleMs = nowMs;
+
+        try
+        {
+            string outText = RunCommand("/usr/sbin/ioreg", ["-r", "-d", "1", "-w", "0", "-c", "IOAccelerator"]);
+            if (!string.IsNullOrWhiteSpace(outText))
+            {
+                var utilMatch = Regex.Match(outText, @"""Device Utilization %""\s*=\s*(\d+)");
+                if (utilMatch.Success && double.TryParse(utilMatch.Groups[1].Value, out double u))
+                    _cachedMacGpuPct = Math.Clamp(u, 0, 100);
+
+                var memMatch = Regex.Match(outText, @"""In use system memory""\s*=\s*(\d+)");
+                if (memMatch.Success && double.TryParse(memMatch.Groups[1].Value, out double bytes) && bytes > 0)
+                    _cachedMacVramUsedGb = bytes / Gb;
+            }
+        }
+        catch { }
+        return (_cachedMacGpuPct, _cachedMacVramUsedGb);
     }
 
     private static (double RamPct, double UsedGb, double TotalGb) SampleMemory()
@@ -416,7 +495,8 @@ public static class DesktopMetricsEngine
             double total = di.TotalSize;
             double free = di.AvailableFreeSpace;
             double usedPct = total > 0 ? Math.Clamp((total - free) * 100.0 / total, 0, 100) : 0;
-            return (root.TrimEnd('\\', '/'), usedPct, free / Gb);
+            string label = root == "/" ? "/" : root.TrimEnd('\\', '/');
+            return (string.IsNullOrEmpty(label) ? "/" : label, usedPct, free / Gb);
         }
         catch
         {
@@ -663,4 +743,6 @@ public static class DesktopMetricsEngine
     [DllImport("pdh.dll")] private static extern uint PdhCollectQueryData(IntPtr query);
     [DllImport("pdh.dll")] private static extern uint PdhGetFormattedCounterValue(IntPtr counter, uint format, out uint type, out PdhFmtCounterValue value);
     [DllImport("pdh.dll", CharSet = CharSet.Unicode)] private static extern uint PdhGetFormattedCounterArrayW(IntPtr counter, uint format, ref uint bufferSize, ref uint itemCount, IntPtr itemBuffer);
+    [DllImport("/usr/lib/libSystem.B.dylib")] private static extern uint mach_host_self();
+    [DllImport("/usr/lib/libSystem.B.dylib")] private static extern int host_statistics(uint hostPriv, int flavor, [Out] uint[] hostInfoOut, ref int hostInfoOutCnt);
 }

@@ -16,7 +16,7 @@ namespace GearDeck.Desktop.Views;
 /// </summary>
 public partial class MonitorView : UserControl
 {
-    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, " + FontFamily.Default.Name);
+    private static readonly FontFamily IconFont = Controls.UiBuilders.IconFont;
     private static IBrush ResolveBrush(string key, IBrush fallback)
         => Application.Current?.TryFindResource(key, Application.Current.ActualThemeVariant, out var r) == true && r is IBrush b
             ? b

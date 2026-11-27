@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
+using Avalonia.Automation.Peers;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -41,6 +42,12 @@ public partial class MainWindow : AppWindow
 
         Title = $"GearDeck v{AppUpdateService.CurrentVersion}";
         TitleBarText.Text = Title;
+        if (OperatingSystem.IsMacOS())
+        {
+            TitleBarLeftPanel.Margin = new Thickness(78, 0, 0, 0);
+            RightCaptionColumn.Width = 12;
+            WidgetNav.Content = "菜单栏状态";
+        }
         try
         {
             TitleBar.ExtendsContentIntoTitleBar = true;
@@ -67,7 +74,12 @@ public partial class MainWindow : AppWindow
         UpdateDebugVisibility();
         UpdateVersionBadge();
         Navigate("devices");
+        MacAccessibilityGuard.PatchVisualSubtree(this);
+        Opened += (_, _) => MacAccessibilityGuard.PatchVisualSubtree(this);
     }
+
+    protected override AutomationPeer OnCreateAutomationPeer()
+        => new MacAccessibilityGuard.SafeWindowAutomationPeer(this);
 
     public static void ShowOrActivate()
     {
@@ -194,7 +206,12 @@ public partial class MainWindow : AppWindow
         try
         {
             _suppressNavHandler = true;
-            PageHost.Content = GetOrCreatePage(key, deviceId);
+            bool sameActiveDevice = key == "device"
+                && !string.IsNullOrWhiteSpace(deviceId)
+                && string.Equals(_activeDeviceId, deviceId, StringComparison.OrdinalIgnoreCase)
+                && PageHost.Content is DeviceDetailView or LeobogHi98View;
+            if (!sameActiveDevice)
+                PageHost.Content = GetOrCreatePage(key, deviceId);
             if (PageHost.Content is DevicesView devices)
                 devices.SetKindFilter(KeyToKind(key));
 
@@ -283,7 +300,7 @@ public partial class MainWindow : AppWindow
         }
         if (tag.StartsWith("device:", StringComparison.Ordinal))
         {
-            OpenDevice(tag[7..]);
+            Navigate("device", tag[7..]);
             return;
         }
         Navigate(tag);
@@ -292,7 +309,11 @@ public partial class MainWindow : AppWindow
     private UserControl GetOrCreatePage(string key, string? deviceId = null)
     {
         if (key == "device" && !string.IsNullOrWhiteSpace(deviceId))
+        {
+            if (deviceId.StartsWith("leobog:", StringComparison.OrdinalIgnoreCase))
+                return new LeobogHi98View(deviceId);
             return new DeviceDetailView(deviceId);
+        }
 
         string cacheKey = key == "device" ? "devices" : key;
         if (_pages.TryGetValue(cacheKey, out var existing))
@@ -322,7 +343,9 @@ public partial class MainWindow : AppWindow
             new("游戏与配置切换", "本机游戏库 / 全屏与退出策略", "page:games"),
             new("跨游戏灵敏度换算", "16 款热门 FPS · FOV / DPI / 分辨率转换", "page:sensitivity"),
             new("鼠标宏中心", "外置宏录制与多设备绑定", "page:macros"),
-            new("任务栏贴片", "贴片位置 / 样式 / 分组图标", "page:widget"),
+            new(OperatingSystem.IsMacOS() ? "菜单栏状态" : "任务栏贴片",
+                OperatingSystem.IsMacOS() ? "菜单栏平铺 / 分组图标 / 监控摘要" : "贴片位置 / 样式 / 分组图标",
+                "page:widget"),
             new("系统监控", "CPU / GPU / 内存 / 网速监测", "page:monitor"),
             new("设置", "版本更新 / 镜像 / 托盘 / 低电量阈值", "page:settings"),
         };
@@ -376,24 +399,55 @@ public partial class MainWindow : AppWindow
 
     private void RebuildDeviceMenus(IReadOnlyList<PeripheralDevice> devices)
     {
-        Fill(MouseNav, devices.Where(d => d.Kind == DeviceKind.Mouse));
-        Fill(KeyboardNav, devices.Where(d => d.Kind == DeviceKind.Keyboard));
-        Fill(HeadsetNav, devices.Where(d => d.Kind == DeviceKind.Headset));
-        Fill(ControllerNav, devices.Where(d => d.Kind == DeviceKind.Controller));
+        bool prevSuppress = _suppressNavHandler;
+        _suppressNavHandler = true;
+        try
+        {
+            Fill(MouseNav, devices.Where(d => d.Kind == DeviceKind.Mouse));
+            Fill(KeyboardNav, devices.Where(d => d.Kind == DeviceKind.Keyboard));
+            Fill(HeadsetNav, devices.Where(d => d.Kind == DeviceKind.Headset));
+            Fill(ControllerNav, devices.Where(d => d.Kind == DeviceKind.Controller));
 
-        MouseNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Mouse);
-        KeyboardNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Keyboard);
-        HeadsetNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Headset);
-        ControllerNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Controller);
+            MouseNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Mouse);
+            KeyboardNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Keyboard);
+            HeadsetNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Headset);
+            ControllerNav.IsExpanded = devices.Any(d => d.Kind == DeviceKind.Controller);
 
-        if (!string.IsNullOrWhiteSpace(_activeDeviceId) && PageHost.Content is DeviceDetailView)
-            UpdateNavSelection("device", _activeDeviceId);
+            if (!string.IsNullOrWhiteSpace(_activeDeviceId) && PageHost.Content is DeviceDetailView or LeobogHi98View)
+                UpdateNavSelection("device", _activeDeviceId);
+            MacAccessibilityGuard.PatchVisualSubtree(RootNavigation);
+        }
+        finally
+        {
+            _suppressNavHandler = prevSuppress;
+        }
     }
 
     private static void Fill(NavigationViewItem parent, IEnumerable<PeripheralDevice> devices)
     {
+        var ordered = devices.OrderBy(d => d.Name).ToList();
+        var existing = parent.MenuItems.OfType<NavigationViewItem>().ToList();
+
+        if (ordered.Count > 0 && existing.Count == ordered.Count
+            && existing.Zip(ordered).All(pair =>
+                string.Equals(pair.First.Tag as string, $"device:{pair.Second.Id}", StringComparison.OrdinalIgnoreCase)))
+        {
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                var d = ordered[i];
+                string battery = d.BatteryPercent is { } p ? $" · {p}%" : (d.IsSleeping ? " · 休眠" : "");
+                string text = $"{d.Name}{battery}";
+                if (!string.Equals(existing[i].Content as string, text, StringComparison.Ordinal))
+                    existing[i].Content = text;
+            }
+            return;
+        }
+
+        if (ordered.Count == 0 && existing.Count == 1 && !existing[0].IsEnabled)
+            return;
+
         parent.MenuItems.Clear();
-        foreach (var d in devices.OrderBy(d => d.Name))
+        foreach (var d in ordered)
         {
             string battery = d.BatteryPercent is { } p ? $" · {p}%" : (d.IsSleeping ? " · 休眠" : "");
             parent.MenuItems.Add(new NavigationViewItem

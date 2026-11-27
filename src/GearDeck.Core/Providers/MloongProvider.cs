@@ -35,7 +35,81 @@ public sealed class MloongProvider : ITunablePeripheralProvider
         var results = new List<PeripheralDevice>();
         var groups = HidSafe.EnumerateDevices()
             .Where(IsMloongDevice)
-            .GroupBy(d => ((ushort)d.VendorID, (ushort)d.ProductID));
+            .GroupBy(d => ((ushort)d.VendorID, (ushort)d.ProductID))
+            .ToList();
+
+        if (OperatingSystem.IsMacOS())
+        {
+            foreach (var g in MacIOKitHid.Enumerate()
+                         .Where(IsMloongMacInterface)
+                         .GroupBy(d => (d.VendorId, d.ProductId)))
+            {
+                try
+                {
+                    var (vid, pid) = g.Key;
+                    bool compxFamily = IsCompxPid(pid);
+                    bool wireless = vid == VidWireless;
+                    string? rawName = g.Select(x => x.Product).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+                    string cleanName = CleanName(rawName) ?? FallbackName(pid, wireless);
+
+                    (byte Level, bool Charging)? hit = null;
+                    foreach (var iface in SelectMacInterfaces(g, compxFamily))
+                    {
+                        using var conn = MacIOKitHid.MacHidConnection.TryOpen(iface, out _);
+                        if (conn == null) continue;
+                        if (!compxFamily)
+                        {
+                            var reply = ExchangeMx301Mac(conn, BuildMx301BatteryQuery(), 650);
+                            if (ParseMx301BatteryReply(reply, out byte level, out bool charging))
+                            {
+                                hit = (level, charging);
+                                break;
+                            }
+                        }
+                    }
+
+                    if (hit == null && compxFamily)
+                    {
+                        var hidGroup = groups.FirstOrDefault(x => x.Key == (vid, pid));
+                        if (hidGroup != null)
+                        {
+                            foreach (var iface in SelectInterfaces(hidGroup, compxFamily: true))
+                            {
+                                using var ch = HidChannel.TryOpen(iface);
+                                if (ch == null) continue;
+                                hit = Compx08Protocol.QueryBattery(ch, CompxReportId, 650);
+                                if (hit != null) break;
+                            }
+                        }
+                    }
+
+                    results.Add(new PeripheralDevice
+                    {
+                        Id = $"mloong:{vid:X4}-{pid:X4}",
+                        VendorId = vid,
+                        ProductId = pid,
+                        Name = cleanName,
+                        Kind = DeviceKind.Mouse,
+                        Provider = ProviderName,
+                        Connected = true,
+                        IsSleeping = hit == null && wireless,
+                        Transport = wireless ? "2.4G" : "USB",
+                        BatteryPercent = hit?.Level,
+                        State = hit is { Charging: true } ? BatteryState.Charging
+                              : hit == null ? BatteryState.Unknown : BatteryState.Normal,
+                        Note = hit == null
+                            ? (wireless ? "MLOONG 接收器已连接（鼠标休眠中，晃动唤醒）" : "未读到真实电量，不显示估算值")
+                            : null,
+                        LastUpdated = DateTimeOffset.Now,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Diag.Log($"MLOONG(mac) {g.Key.Item1:X4}:{g.Key.Item2:X4}: {ex.Message}");
+                }
+            }
+            return results;
+        }
 
         foreach (var g in groups)
         {
@@ -103,6 +177,27 @@ public sealed class MloongProvider : ITunablePeripheralProvider
             return caps;
         }
 
+        bool compxFamily = IsCompxPid(pid);
+        if (OperatingSystem.IsMacOS() && !compxFamily)
+        {
+            var macIfaces = MacIOKitHid.Enumerate(vid, pid);
+            if (macIfaces.Count == 0)
+            {
+                caps.StatusMessage = "未找到 MLOONG 设备控制接口。";
+                return caps;
+            }
+            foreach (var iface in SelectMacInterfaces(macIfaces, compxFamily: false))
+            {
+                using var conn = MacIOKitHid.MacHidConnection.TryOpen(iface, out _);
+                if (conn == null) continue;
+                var macCfg = ReadNativeConfigMac(conn, out _);
+                if (macCfg != null)
+                    return BuildNativeCapabilities(deviceId, macCfg);
+            }
+            caps.StatusMessage = "MLOONG 鼠标未响应 MX301 配置读取，请唤醒后重试。";
+            return caps;
+        }
+
         var list = HidSafe.EnumerateDevices(vid, pid);
         if (list.Count == 0)
         {
@@ -110,7 +205,6 @@ public sealed class MloongProvider : ITunablePeripheralProvider
             return caps;
         }
 
-        bool compxFamily = IsCompxPid(pid);
         string? rawName = list.Select(HidSafe.ProductName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
         bool wireless = vid == VidWireless;
 
@@ -163,6 +257,31 @@ public sealed class MloongProvider : ITunablePeripheralProvider
             return new DeviceTuningResult(false, "MLOONG MX301 PRO X 未响应写入（可能休眠）。");
         }
 
+        if (OperatingSystem.IsMacOS() && !compxFamily)
+        {
+            var macIfaces = MacIOKitHid.Enumerate(vid, pid);
+            foreach (var iface in SelectMacInterfaces(macIfaces, compxFamily: false))
+            {
+                using var conn = MacIOKitHid.MacHidConnection.TryOpen(iface, out _);
+                if (conn == null) continue;
+
+                // 必须先读到当前配置再构造写入包，禁止用全零缓存覆盖未知字节。
+                var macCfg = ReadNativeConfigMac(conn, out byte[]? current);
+                if (macCfg == null || current == null) continue;
+                ApplyUpdate(macCfg, update);
+
+                var packet = BuildMx301ConfigWrite(current, macCfg);
+                if (!conn.WriteOutputReport(0, packet)) continue;
+                Thread.Sleep(50);
+
+                var verified = ReadNativeConfigMac(conn, out _);
+                if (verified == null || !ConfigMatches(macCfg, verified))
+                    return new DeviceTuningResult(false, "MLOONG 写入后回读校验失败，未确认配置已保存。");
+
+                return new DeviceTuningResult(true, "已写入 MLOONG 硬件并回读校验。", BuildNativeCapabilities(deviceId, verified));
+            }
+        }
+
         foreach (var iface in SelectInterfaces(list, compxFamily: false))
         {
             using var ch = HidChannel.TryOpen(iface);
@@ -204,7 +323,7 @@ public sealed class MloongProvider : ITunablePeripheralProvider
         level = 0;
         charging = false;
         if (reply == null || reply.Length < 10) return false;
-        if (reply[0] != 0x55 || reply[1] != 0x30) return false;
+        if (reply[0] is not (0x55 or 0xAA) || reply[1] != 0x30) return false;
         if (reply[8] > 100) return false;
 
         level = reply[8];
@@ -226,7 +345,7 @@ public sealed class MloongProvider : ITunablePeripheralProvider
     internal static Mx301Config? ParseMx301ConfigReply(byte[]? reply)
     {
         if (reply == null || reply.Length < 55) return null;
-        if (reply[0] != 0x55 || reply[1] != 0x0E) return null;
+        if (reply[0] is not (0x55 or 0xAA) || reply[1] != 0x0E) return null;
 
         int rateCode = reply[10];
         int dpiCount = reply[11];
@@ -244,7 +363,7 @@ public sealed class MloongProvider : ITunablePeripheralProvider
             DebounceMs = reply[51],
             SleepMin = reply[52],
             HighSpeed = reply[53] != 0,
-            WakeupFlag = reply[54] != 0,
+            WakeupRaw = reply[54],
         };
         for (int i = 0; i < 6; i++)
             cfg.DpiStages[i] = reply[13 + i * 2] | (reply[14 + i * 2] << 8);
@@ -280,7 +399,7 @@ public sealed class MloongProvider : ITunablePeripheralProvider
         packet[51] = config.DebounceMs;
         packet[52] = config.SleepMin;
         packet[53] = (byte)(config.HighSpeed ? 1 : 0);
-        packet[54] = (byte)(config.WakeupFlag ? 1 : 0);
+        packet[54] = config.WakeupRaw;
         return packet;
     }
 
@@ -322,7 +441,12 @@ public sealed class MloongProvider : ITunablePeripheralProvider
         public byte DebounceMs { get; set; }
         public byte SleepMin { get; set; }
         public bool HighSpeed { get; set; }
-        public bool WakeupFlag { get; set; }
+        public byte WakeupRaw { get; set; }
+        public bool WakeupFlag
+        {
+            get => WakeupRaw != 0;
+            set => WakeupRaw = value ? (byte)1 : (byte)0;
+        }
     }
 
     // =========================================================================
@@ -335,13 +459,27 @@ public sealed class MloongProvider : ITunablePeripheralProvider
         return rawReply != null ? ParseMx301ConfigReply(rawReply) : null;
     }
 
+    private static Mx301Config? ReadNativeConfigMac(MacIOKitHid.MacHidConnection conn, out byte[]? rawReply)
+    {
+        rawReply = ExchangeMx301Mac(conn, BuildMx301ConfigQuery(), 900);
+        return rawReply != null ? ParseMx301ConfigReply(rawReply) : null;
+    }
+
+    private static byte[]? ExchangeMx301Mac(MacIOKitHid.MacHidConnection conn, byte[] request, int timeoutMs)
+    {
+        byte cmd = request[1];
+        var reply = conn.ExchangeOutput(0, request, timeoutMs,
+            r => r != null && r.Length >= 10 && r[0] is 0x55 or 0xAA && r[1] == cmd);
+        return NormalizeMx301Reply(reply);
+    }
+
     private static byte[]? ExchangeMx301(HidChannel ch, byte[] request, int timeoutMs)
     {
         for (int i = 0; i < 3; i++)
             if (ch.Read(5) == null) break;
 
         byte cmd = request[1];
-        bool valid(byte[]? r) => r != null && r.Length >= 10 && r[0] == 0x55 && r[1] == cmd;
+        bool valid(byte[]? r) => r != null && r.Length >= 10 && r[0] is 0x55 or 0xAA && r[1] == cmd;
 
         if (ch.OutputLength >= 64)
         {
@@ -499,6 +637,27 @@ public sealed class MloongProvider : ITunablePeripheralProvider
             d.ProductID is PidMx301Native or PidMx301ProXWired or PidMx301ProXWireless)
             return true;
         return HidSafe.ProductName(d).Contains("MLOONG", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsMloongMacInterface(MacHidInterfaceInfo d)
+    {
+        if ((d.VendorId is VidWired or VidWireless) &&
+            d.ProductId is PidMx301Native or PidMx301ProXWired or PidMx301ProXWireless)
+            return true;
+        return d.Product.Contains("MLOONG", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<MacHidInterfaceInfo> SelectMacInterfaces(IEnumerable<MacHidInterfaceInfo> group, bool compxFamily)
+    {
+        int minLen = compxFamily ? 17 : 64;
+        var candidates = group
+            .Where(d => d.MaxOutputReportSize >= minLen || d.MaxFeatureReportSize >= minLen)
+            .ToList();
+        var exact = candidates
+            .Where(d => compxFamily ? d.PrimaryUsagePage == 0xFF02 && d.PrimaryUsage == 0x02 : d.PrimaryUsagePage == 0xFF01 && d.PrimaryUsage == 0x10)
+            .OrderByDescending(d => d.MaxOutputReportSize)
+            .ToList();
+        return exact.Count > 0 ? exact : candidates.OrderByDescending(d => d.MaxOutputReportSize).ToList();
     }
 
     private static bool IsCompxPid(ushort pid) => pid is PidMx301ProXWired or PidMx301ProXWireless;

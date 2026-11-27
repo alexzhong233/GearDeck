@@ -80,7 +80,15 @@ public sealed record ReleaseUpdateInfo(
     string RawInstallerUrl = "",
     string InstallerUrl = "",
     string InstallerSha256 = "",
-    long InstallerSize = 0);
+    long InstallerSize = 0,
+    string RawMacArm64Url = "",
+    string MacArm64Url = "",
+    string MacArm64Sha256 = "",
+    string MacArm64AssetName = "",
+    string RawMacX64Url = "",
+    string MacX64Url = "",
+    string MacX64Sha256 = "",
+    string MacX64AssetName = "");
 
 public sealed record UpdateCheckOutcome(
     bool Success,
@@ -104,22 +112,69 @@ public static class UpdateClient
             return "0.0.0";
 
         string s = version.Trim().TrimStart('v', 'V');
-        int suffixIdx = s.IndexOfAny(['-', '+']);
-        if (suffixIdx > 0)
-            s = s[..suffixIdx];
+        int metaIdx = s.IndexOf('+');
+        if (metaIdx > 0)
+            s = s[..metaIdx];
         return s.Trim();
     }
 
     public static int CompareVersions(string? current, string? candidate)
     {
-        int[] a = ParseParts(NormalizeVersionString(current));
-        int[] b = ParseParts(NormalizeVersionString(candidate));
+        SplitVersion(NormalizeVersionString(current), out string curCore, out string curPre);
+        SplitVersion(NormalizeVersionString(candidate), out string candCore, out string candPre);
+
+        int[] a = ParseParts(curCore);
+        int[] b = ParseParts(candCore);
         for (int i = 0; i < 4; i++)
         {
             if (a[i] != b[i])
                 return a[i].CompareTo(b[i]);
         }
-        return 0;
+
+        if (string.IsNullOrEmpty(curPre) && string.IsNullOrEmpty(candPre))
+            return 0;
+        if (string.IsNullOrEmpty(curPre))
+            return 1; // 正式版 > 预发布版
+        if (string.IsNullOrEmpty(candPre))
+            return -1; // 预发布版 < 正式版
+
+        string[] curIds = curPre.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string[] candIds = candPre.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        int minLen = Math.Min(curIds.Length, candIds.Length);
+        for (int i = 0; i < minLen; i++)
+        {
+            bool curIsNum = int.TryParse(curIds[i], out int curNum);
+            bool candIsNum = int.TryParse(candIds[i], out int candNum);
+            if (curIsNum && candIsNum)
+            {
+                if (curNum != candNum) return curNum.CompareTo(candNum);
+            }
+            else if (curIsNum != candIsNum)
+            {
+                return curIsNum ? -1 : 1; // SemVer: 数字标识符 < 非数字标识符
+            }
+            else
+            {
+                int cmp = string.Compare(curIds[i], candIds[i], StringComparison.OrdinalIgnoreCase);
+                if (cmp != 0) return cmp;
+            }
+        }
+        return curIds.Length.CompareTo(candIds.Length);
+    }
+
+    private static void SplitVersion(string normalized, out string core, out string prerelease)
+    {
+        int dashIdx = normalized.IndexOf('-');
+        if (dashIdx > 0)
+        {
+            core = normalized[..dashIdx].Trim();
+            prerelease = normalized[(dashIdx + 1)..].Trim();
+        }
+        else
+        {
+            core = normalized;
+            prerelease = string.Empty;
+        }
     }
 
     private static int[] ParseParts(string normalized)
@@ -157,9 +212,13 @@ public static class UpdateClient
         string rawDownload = GetStringCI(root, "downloadUrl");
         string rawPatch = GetStringCI(root, "patchUrl");
         string rawInstaller = GetStringCI(root, "installerUrl");
+        string rawMacArm = GetStringCI(root, "macArm64Url");
+        string rawMacX64 = GetStringCI(root, "macX64Url");
         if (string.IsNullOrWhiteSpace(rawDownload) &&
             string.IsNullOrWhiteSpace(rawPatch) &&
-            string.IsNullOrWhiteSpace(rawInstaller))
+            string.IsNullOrWhiteSpace(rawInstaller) &&
+            string.IsNullOrWhiteSpace(rawMacArm) &&
+            string.IsNullOrWhiteSpace(rawMacX64))
             return null;
 
         return new ReleaseUpdateInfo(
@@ -179,7 +238,15 @@ public static class UpdateClient
             RawInstallerUrl: rawInstaller,
             InstallerUrl: GitHubMirrorHelper.RewriteUrl(rawInstaller, customMirror),
             InstallerSha256: GetStringCI(root, "installerSha256").ToUpperInvariant(),
-            InstallerSize: GetInt64CI(root, "installerSize"));
+            InstallerSize: GetInt64CI(root, "installerSize"),
+            RawMacArm64Url: rawMacArm,
+            MacArm64Url: GitHubMirrorHelper.RewriteUrl(rawMacArm, customMirror),
+            MacArm64Sha256: GetStringCI(root, "macArm64Sha256").ToUpperInvariant(),
+            MacArm64AssetName: GetStringCI(root, "macArm64AssetName"),
+            RawMacX64Url: rawMacX64,
+            MacX64Url: GitHubMirrorHelper.RewriteUrl(rawMacX64, customMirror),
+            MacX64Sha256: GetStringCI(root, "macX64Sha256").ToUpperInvariant(),
+            MacX64AssetName: GetStringCI(root, "macX64AssetName"));
     }
 
     public static ReleaseUpdateInfo? ParseGitHubReleaseApiJson(string json, string? customMirror)
@@ -210,6 +277,12 @@ public static class UpdateClient
         string rawInstaller = "";
         long installerSize = 0;
         string installerSha = "";
+        string rawMacArm = "";
+        string macArmSha = "";
+        string macArmName = "";
+        string rawMacX64 = "";
+        string macX64Sha = "";
+        string macX64Name = "";
 
         if (TryGetPropertyCI(root, "assets", out var assetsEl) && assetsEl.ValueKind == JsonValueKind.Array)
         {
@@ -222,6 +295,25 @@ public static class UpdateClient
 
                 if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url))
                     continue;
+
+                bool isMacPkg = name.Contains("osx-", StringComparison.OrdinalIgnoreCase)
+                             || name.Contains("macos", StringComparison.OrdinalIgnoreCase)
+                             || name.EndsWith(".dmg", StringComparison.OrdinalIgnoreCase);
+
+                if (isMacPkg && (name.EndsWith(".dmg", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (name.Contains("x64", StringComparison.OrdinalIgnoreCase) && !name.Contains("arm64", StringComparison.OrdinalIgnoreCase))
+                    {
+                        bool prefer = string.IsNullOrEmpty(rawMacX64) || name.EndsWith(".dmg", StringComparison.OrdinalIgnoreCase);
+                        if (prefer) { rawMacX64 = url; macX64Sha = sha; macX64Name = name; }
+                    }
+                    else
+                    {
+                        bool prefer = string.IsNullOrEmpty(rawMacArm) || name.EndsWith(".dmg", StringComparison.OrdinalIgnoreCase);
+                        if (prefer) { rawMacArm = url; macArmSha = sha; macArmName = name; }
+                    }
+                    continue;
+                }
 
                 if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
                 {
@@ -248,7 +340,9 @@ public static class UpdateClient
 
         if (string.IsNullOrWhiteSpace(rawDownload) &&
             string.IsNullOrWhiteSpace(rawPatch) &&
-            string.IsNullOrWhiteSpace(rawInstaller))
+            string.IsNullOrWhiteSpace(rawInstaller) &&
+            string.IsNullOrWhiteSpace(rawMacArm) &&
+            string.IsNullOrWhiteSpace(rawMacX64))
             return null;
 
         return new ReleaseUpdateInfo(
@@ -268,7 +362,15 @@ public static class UpdateClient
             RawInstallerUrl: rawInstaller,
             InstallerUrl: GitHubMirrorHelper.RewriteUrl(rawInstaller, customMirror),
             InstallerSha256: installerSha,
-            InstallerSize: installerSize);
+            InstallerSize: installerSize,
+            RawMacArm64Url: rawMacArm,
+            MacArm64Url: GitHubMirrorHelper.RewriteUrl(rawMacArm, customMirror),
+            MacArm64Sha256: macArmSha,
+            MacArm64AssetName: macArmName,
+            RawMacX64Url: rawMacX64,
+            MacX64Url: GitHubMirrorHelper.RewriteUrl(rawMacX64, customMirror),
+            MacX64Sha256: macX64Sha,
+            MacX64AssetName: macX64Name);
     }
 
     public static async Task<UpdateCheckOutcome> CheckForUpdateAsync(

@@ -12,8 +12,8 @@ namespace GearDeck.Desktop.Controls;
 /// </summary>
 public static class UiBuilders
 {
-    // Segoe Fluent Icons 不可用时退回应用默认字体（Avalonia 字体回退链）。
-    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, " + FontFamily.Default.Name);
+    // 优先使用跨平台内嵌 FluentAvalonia Symbols，其次 Windows Segoe Fluent Icons。
+    public static readonly FontFamily IconFont = new("avares://FluentAvalonia/Fonts#Symbols, Segoe Fluent Icons, $default");
 
     public static StackPanel CreateViewModeSwitcher(bool isCard, Action<bool> onChanged)
     {
@@ -152,7 +152,7 @@ public static class UiBuilders
     public static string FallbackGlyph(DeviceKind kind) => kind switch
     {
         DeviceKind.Keyboard => "\uE765",
-        DeviceKind.Headset => "\uE7F5",
+        DeviceKind.Headset => "\uE95B",
         DeviceKind.Controller => "\uE7FC",
         _ => "\uE962",
     };

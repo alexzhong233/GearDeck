@@ -96,6 +96,28 @@ public sealed class MacroExecutionService : IDisposable
         ("Middle", "鼠标中键 (滚轮按下 Middle)"),
     ];
 
+    public static bool IsMacAccessibilityTrusted()
+    {
+        if (!OperatingSystem.IsMacOS()) return false;
+        try { return AXIsProcessTrusted(); }
+        catch { return false; }
+    }
+
+    public static void OpenMacAccessibilitySettings()
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo("open")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                ArgumentList = { "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" },
+            });
+        }
+        catch { }
+    }
+
     public static bool IsProcessElevated()
     {
         if (!OperatingSystem.IsWindows()) return false;
@@ -765,4 +787,8 @@ public sealed class MacroExecutionService : IDisposable
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [DllImport("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    private static extern bool AXIsProcessTrusted();
 }
