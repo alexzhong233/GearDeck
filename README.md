@@ -7,22 +7,6 @@
 
 ---
 
-## v2.2.0 核心更新亮点
-
-- **开源协议生态扩充（22 个 Provider）**：
-  - 新增 **Endgame Gear**（EggWe / OP1we / XM2w）、**Ninjutso**（Sora 4K/V2）、**Finalmouse**（ULX）、**Rapoo 雷柏**、**Audeze Maxwell**、**Sony PULSE 3D**、**SteelSeries Arctis Nova 5/5X & 7+** 等开源协议解析。
-  - 新增 **Sinowealth（中颖 8051）** 鼠标、**Logitech G600 MMO** 与 **Redragon M908/M711** 原生调参及板载配置支持。
-- **软件宏中心 & 板载硬件宏矩阵**：
-  - 宏中心升级为列表与隔离草稿二级编辑器，支持 Windows 全局低级键鼠钩子录制、**滚轮上下（`0xF5`/`0xF6`）动作录制回放**、独立动作间隔行编排与总开关真实卸载后台钩子。
-  - 宏中心常驻软件宏反作弊风险提示与一键全局关闭指引；设备页严格区分 **「绑定软件宏」** 与 **「写入硬件宏」**，写入硬件宏前弹窗提示 Flash/EEPROM 风险并建议优先使用官方驱动。
-  - 基于开源协议新增 **VIA/QMK/Vial（含 Ploopy 等）** 动态宏、**罗技 HID++ 2.0 `0x8100` 经典布局（带严格 CRC-CCITT 校验）**、**Sinowealth `0x30`** 与 **Redragon `0xF3`** 板载硬件宏写入。
-- **极致轻量化与功耗优化**：
-  - `GearDeck.Widget` 保持纯 Win32 + SkiaSharp + `PerMonitorV2` 渲染并合并共享系统监控引擎，常驻总内存压降至约 30+ MB、稳态 CPU 接近 0%，默认不写盘诊断日志。
-- **界面与交互打磨**：
-  - 优化灵敏度换算页（紧凑基准游戏/FOV 与 3 卡直观展示）、任务栏贴片页（合并预设位置与带微调步进按钮的水平微调）、游戏页（按需打开页面时异步扫描游戏库，且无需点开页面即可后台热切换）与设置页（3×3 对称卡片、独立 Debug 写盘警示卡与更准确的未保存校验）。
-
----
-
 ## 快速安装与使用
 
 ### Windows（x64 · 免装 .NET 运行时）
@@ -40,7 +24,24 @@
 3. **权限授予**：如需读写 USB/蓝牙键鼠 HID 参数或自动识别前台窗口，请在「系统设置 → 隐私与安全性」中按需勾选 **输入监控（Input Monitoring）** 与 **辅助功能（Accessibility）**。
 
 ---
+## 已接入品牌与硬件宏矩阵
 
+| 品牌 / 品类 | 协议与支持特性 | 板载硬件宏写入 | 状态 |
+| --- | --- | --- | --- |
+| 狼蛛 AULA / Incott | `0xFFA8` SSHS 2.0 磁轴/微动与 `0x09`（含 DPI/回报率/LOD/映射） | ✅ `Incott 0x09`（10 组 320B） | ✅ 已验证 |
+| VIA / QMK / Vial 设备 | `0xFF60:0x0061` Raw HID（键盘、磁轴键盘与 Ploopy 等 VIA 鼠标） | ✅ 标准动态宏（`0x0C`~`0x0F`） | ✅ 已验证 |
+| 罗技 Logitech | HID++ 2.0（`0x1004/0x1000`、`0x2202`、`0x8061`、`0x8100`、HITS `0x1B0C`）与 G600 专有协议 | ✅ 经典 `0x8100` 布局（CRC-CCITT 校验） | ✅ 已实现 |
+| Sinowealth（中颖 8051） | `0x258A` 白名单游戏鼠（Glorious Model O/D 有线、Delux M800DB 等） | ✅ `0x30` 协议 + 按键宏绑定 | ✅ 已实现 |
+| Redragon 红龙 | `0x04D9` 白名单（M908 Impact / M711 Cobra，5 档板载切换） | ✅ 15 组 256B `0xF3` 宏直写 | ✅ 已实现 |
+| 雷蛇 Razer | 91B Feature（class `07`/`02`，按键重映射严格 `tid=0x10`、非对称 LOD） | ⚙️ 仅支持软件宏 & 单键重映射 | ✅ 已验证 |
+| 万灵 / 兰族 / Endgame / Ninjutso / Finalmouse / 雷柏 | CompX 65B / EggWe / Ninjutso / Finalmouse / Rapoo 原生协议 | ⚙️ 仅支持软件宏 | ✅ 已验证 |
+| ATK / VXE / VGN | Compx `0x08` + BITMOUSE 64B `0x72`（接收器型号持久化） | ⚙️ 仅支持软件宏 | ✅ 已验证 |
+| 迈从 MCHOSE / 怒喵 Angry Miao | MCHOSE V2/V3 与 Airoha RACE（`0E8D:0703`） | ⚙️ 仅支持软件宏 | ✅ 已实现 |
+| 名龙星球 MLOONG / LEOBOG | MLOONG 64B & `0x08`；LEOBOG `Hi98C Pro` 有线/无线调参与改键 | ⚙️ 仅支持软件宏 | ✅ 已验证 |
+| ROG / 索尼 Sony / Audeze / SteelSeries / 飞智 / 海盗船 / HyperX | Aura/OMNI、INZONE Buds & PULSE 3D、Maxwell、Nova 5/7+、八爪鱼/黑武士、Bragi | — | ✅ 已验证 |
+| 手柄与蓝牙通用设备 | Windows XInput / DualSense / Switch Pro + Win32 SetupAPI & macOS `ioreg` 电量 | — | ✅ 已实现 |
+
+---
 ## 核心功能
 
 - **多品牌外设原生协议接管**
@@ -75,24 +76,7 @@
 
 ---
 
-## 已接入品牌与硬件宏矩阵
 
-| 品牌 / 品类 | 协议与支持特性 | 板载硬件宏写入 | 状态 |
-| --- | --- | --- | --- |
-| 狼蛛 AULA / Incott | `0xFFA8` SSHS 2.0 磁轴/微动与 `0x09`（含 DPI/回报率/LOD/映射） | ✅ `Incott 0x09`（10 组 320B） | ✅ 已验证 |
-| VIA / QMK / Vial 设备 | `0xFF60:0x0061` Raw HID（键盘、磁轴键盘与 Ploopy 等 VIA 鼠标） | ✅ 标准动态宏（`0x0C`~`0x0F`） | ✅ 已验证 |
-| 罗技 Logitech | HID++ 2.0（`0x1004/0x1000`、`0x2202`、`0x8061`、`0x8100`、HITS `0x1B0C`）与 G600 专有协议 | ✅ 经典 `0x8100` 布局（CRC-CCITT 校验） | ✅ 已实现 |
-| Sinowealth（中颖 8051） | `0x258A` 白名单游戏鼠（Glorious Model O/D 有线、Delux M800DB 等） | ✅ `0x30` 协议 + 按键宏绑定 | ✅ 已实现 |
-| Redragon 红龙 | `0x04D9` 白名单（M908 Impact / M711 Cobra，5 档板载切换） | ✅ 15 组 256B `0xF3` 宏直写 | ✅ 已实现 |
-| 雷蛇 Razer | 91B Feature（class `07`/`02`，按键重映射严格 `tid=0x10`、非对称 LOD） | ⚙️ 仅支持软件宏 & 单键重映射 | ✅ 已验证 |
-| 万灵 / 兰族 / Endgame / Ninjutso / Finalmouse / 雷柏 | CompX 65B / EggWe / Ninjutso / Finalmouse / Rapoo 原生协议 | ⚙️ 仅支持软件宏 | ✅ 已验证 |
-| ATK / VXE / VGN | Compx `0x08` + BITMOUSE 64B `0x72`（接收器型号持久化） | ⚙️ 仅支持软件宏 | ✅ 已验证 |
-| 迈从 MCHOSE / 怒喵 Angry Miao | MCHOSE V2/V3 与 Airoha RACE（`0E8D:0703`） | ⚙️ 仅支持软件宏 | ✅ 已实现 |
-| 名龙星球 MLOONG / LEOBOG | MLOONG 64B & `0x08`；LEOBOG `Hi98C Pro` 有线/无线调参与改键 | ⚙️ 仅支持软件宏 | ✅ 已验证 |
-| ROG / 索尼 Sony / Audeze / SteelSeries / 飞智 / 海盗船 / HyperX | Aura/OMNI、INZONE Buds & PULSE 3D、Maxwell、Nova 5/7+、八爪鱼/黑武士、Bragi | — | ✅ 已验证 |
-| 手柄与蓝牙通用设备 | Windows XInput / DualSense / Switch Pro + Win32 SetupAPI & macOS `ioreg` 电量 | — | ✅ 已实现 |
-
----
 
 ## 本地构建与验证
 
