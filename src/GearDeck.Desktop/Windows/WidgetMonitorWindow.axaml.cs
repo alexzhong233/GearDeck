@@ -27,6 +27,7 @@ public sealed partial class WidgetMonitorWindow : Window
 
     private readonly List<(string Id, TextBlock Value, ProgressBar? Bar)> _rows = [];
     private readonly DispatcherTimer _sampleTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private MetricScope _scope = MetricScope.All;
     private DispatcherTimer? _hoverTimer;
     private PixelRect? _anchor;
     private long _openedTick;
@@ -236,13 +237,27 @@ public sealed partial class WidgetMonitorWindow : Window
         SettingsBtn.Foreground = _secondaryBrush;
     }
 
+    public static void RefreshSelectionIfOpen()
+    {
+        if (_open is not { IsClosed: false } win)
+            return;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (win.IsClosed) return;
+            win.BuildRows();
+            win.RefreshValues();
+            win.AdjustFlyoutHeight();
+        });
+    }
+
     private void BuildRows()
     {
         var selected = App.Settings.Current.MonitorFlyoutMetrics;
         var ids = selected != null && selected.Count > 0
             ? selected.ToList()
             : DesktopMetricsEngine.DefaultFlyoutMetricIds.ToList();
-        var snap = DesktopMetricsEngine.Sample();
+        _scope = SystemMetricsEngine.FromMetricIds(ids.ToArray());
+        var snap = DesktopMetricsEngine.Sample(_scope);
 
         MetricHost.Children.Clear();
         _rows.Clear();
@@ -463,7 +478,7 @@ public sealed partial class WidgetMonitorWindow : Window
     private void RefreshValues()
     {
         if (IsClosed) return;
-        var snap = DesktopMetricsEngine.Sample();
+        var snap = DesktopMetricsEngine.Sample(_scope);
         foreach (var (id, text, bar) in _rows)
         {
             text.Text = DesktopMetricsEngine.FormatDetailed(id, snap);

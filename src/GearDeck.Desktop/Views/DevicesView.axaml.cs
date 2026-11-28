@@ -336,7 +336,7 @@ public partial class DevicesView : UserControl
             Spacing = 4,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
-        var imageBtn = CreateUtilityIconButton("\uEB9F", "更换设备图");
+        var imageBtn = CreateUtilityIconButton("\uE8B9", "更换设备图");
         imageBtn.Tag = d;
         imageBtn.Click += OnImageClick;
         var pinBtn = CreateUtilityIconButton("\uE718", OperatingSystem.IsMacOS() ? "固定到菜单栏" : "固定到任务栏");

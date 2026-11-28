@@ -99,7 +99,23 @@ public static class DeviceImageService
         new("cloud_apex6", "飞智八爪鱼 6 Pro (Flydigi Apex 6 Pro)", "Flydigi", "usb:37d7:2502;apex 6;八爪鱼 6", "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex6-pro.png", false),
         new("cloud_apex4", "飞智八爪鱼 4 (Flydigi Apex 4)", "Flydigi", "usb:04b4:2412;apex 4;八爪鱼 4", "https://cdn.jsdelivr.net/gh/ReynArts/ApexSenseBridge@main/assets/controller-apex4.png", false),
         new("cloud_wooting_kb", "Wooting / Keychron Custom Keyboard (Piper)", "Keyboard", "usb:31e3:;usb:3434:;wooting;keychron;nuphy;drunkdeer", $"{PiperSvgBaseUrl}logitech-g-pro-keyboard.svg", true),
+        new("cloud_mloong_mx301", "MLOONG MX301 PRO", "MLOONG", "usb:a8a5:2255;mloong;mx301;mx-301", "https://hub.mloongplanet.com/old/mx-301.webp", false),
+        new("cloud_leobog_hi98", "LEOBOG Hi98 / Hi98C Pro", "LEOBOG", "usb:3554:fa09;leobog;hi98;hi98c", "https://cdn.shopify.com/s/files/1/0607/1563/0808/files/Leobog-Hi98-hi98c-pro-Wireless-aluminum-trimode-Mechanical-Keyboard-assembled-blue-buy_7c0463f4-af7f-4b5c-8609-63b1f22c1252.png?v=1761868124", false),
     ];
+
+    private static readonly HashSet<string> LegacyDeprecatedBuiltInRuleIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "wlmouse_beast_g",
+        "aula_sc380",
+        "wlmouse_family",
+        "atk_family",
+        "vxe_family",
+        "razer_family",
+        "logitech_family",
+        "flydigi_cd2_kw",
+        "fallback_headset_sony",
+        "fallback_kb_75",
+    };
 
     public static IReadOnlyList<PresetImageEntry> EnsureBuiltInPresets()
     {
@@ -218,7 +234,9 @@ public static class DeviceImageService
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
                 var customUserRules = local.Rules
-                    .Where(r => !string.IsNullOrWhiteSpace(r.Id) && !bundledIds.Contains(r.Id))
+                    .Where(r => !string.IsNullOrWhiteSpace(r.Id)
+                             && !bundledIds.Contains(r.Id)
+                             && !LegacyDeprecatedBuiltInRuleIds.Contains(r.Id))
                     .ToList();
 
                 var upgraded = new DeviceImageManifest

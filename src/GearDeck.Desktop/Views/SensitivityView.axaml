@@ -96,9 +96,17 @@
                                     Background="{DynamicResource SubtleFillColorSecondaryBrush}">
                                 <TextBlock x:Name="BaseTagBadgeText" Classes="label" />
                             </Border>
-                            <Button x:Name="SwapGamesBtn" Grid.Column="2" Classes="tool" Content="⇄ 互换"
-                                    Margin="6,0,0,0" Padding="8,4" VerticalAlignment="Center"
-                                    ToolTip.Tip="互换基准游戏与目标游戏" />
+                            <Button x:Name="SwapGamesBtn" Grid.Column="2" Classes="tool"
+                                    Margin="6,0,0,0" Padding="8,3" MinHeight="26"
+                                    VerticalAlignment="Center"
+                                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                    ToolTip.Tip="互换基准游戏与目标游戏">
+                                <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <TextBlock Text="&#xE8AB;" FontFamily="{StaticResource AppIconFontFamily}"
+                                               FontSize="12" VerticalAlignment="Center" />
+                                    <TextBlock Text="互换" FontSize="12" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
                         </Grid>
 
                         <WrapPanel>

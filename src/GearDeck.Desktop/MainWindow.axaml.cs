@@ -8,7 +8,9 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Transformation;
+using Avalonia.Platform;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using FluentAvalonia.UI.Controls;
 using FluentAvalonia.UI.Windowing;
 using GearDeck.Core.Models;
@@ -55,14 +57,24 @@ public partial class MainWindow : AppWindow
         TitleBarText.Text = Title;
         if (OperatingSystem.IsMacOS())
         {
+            ExtendClientAreaToDecorationsHint = true;
+            ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.PreferSystemChrome | ExtendClientAreaChromeHints.OSXThickTitleBar;
+            ExtendClientAreaTitleBarHeightHint = 40;
+            RootLayoutGrid.RowDefinitions[0].Height = new GridLength(40);
+            AppTitleBar.Height = 40;
+            AppTitleBar.Background = Brushes.Transparent;
+            AppTitleBar.PointerPressed += OnMacTitleBarPointerPressed;
             TitleBarLeftPanel.Margin = new Thickness(78, 0, 0, 0);
             RightCaptionColumn.Width = 12;
             WidgetNav.Content = "菜单栏状态";
         }
         try
         {
-            TitleBar.ExtendsContentIntoTitleBar = true;
-            TitleBar.Height = 48;
+            if (OperatingSystem.IsWindows())
+            {
+                TitleBar.ExtendsContentIntoTitleBar = true;
+                TitleBar.Height = 48;
+            }
             string pngPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "app.png");
             string icoPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "app.ico");
             string? iconPath = System.IO.File.Exists(pngPath) ? pngPath : (System.IO.File.Exists(icoPath) ? icoPath : null);
@@ -107,6 +119,25 @@ public partial class MainWindow : AppWindow
 
     protected override AutomationPeer OnCreateAutomationPeer()
         => new MacAccessibilityGuard.SafeWindowAutomationPeer(this);
+
+    private void OnMacTitleBarPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+        for (var v = e.Source as Visual; v != null; v = v.GetVisualParent())
+        {
+            if (v is Avalonia.Controls.Button or Avalonia.Controls.TextBox or Avalonia.Controls.AutoCompleteBox)
+                return;
+            if (ReferenceEquals(v, AppTitleBar))
+                break;
+        }
+        if (e.ClickCount >= 2)
+        {
+            WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+            return;
+        }
+        BeginMoveDrag(e);
+    }
 
     private void OnSoftwareThemeChanged(object? sender, EventArgs e) => ApplySoftwareThemeBackground();
 

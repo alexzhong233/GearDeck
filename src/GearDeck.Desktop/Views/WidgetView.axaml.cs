@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -9,6 +10,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using FluentAvalonia.UI.Controls;
 using GearDeck.Core.Models;
 using GearDeck.Desktop.Controls;
@@ -32,6 +34,10 @@ public partial class WidgetView : UserControl
     private bool _pickingIcon;
     private bool _isCardMode;
     private UniformGrid? _groupGrid;
+    private CheckBox? _monitorCheckBox;
+    private Avalonia.Media.Imaging.Bitmap? _macPreviewBitmap;
+    private int _previewSeq;
+    private bool _promptingMonitorUncheck;
 
     public WidgetView()
     {
@@ -61,6 +67,8 @@ public partial class WidgetView : UserControl
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         App.WidgetPositionChanged += OnExternalPositionChanged;
+        App.MonitorEnabledChanged += OnExternalMonitorEnabledChanged;
+        ActualThemeVariantChanged += OnThemeVariantChanged;
         if (App.Devices != null)
             App.Devices.DevicesUpdated += OnDevicesUpdated;
         LoadSettings();
@@ -69,9 +77,32 @@ public partial class WidgetView : UserControl
     private void OnUnloaded(object? sender, RoutedEventArgs e)
     {
         App.WidgetPositionChanged -= OnExternalPositionChanged;
+        App.MonitorEnabledChanged -= OnExternalMonitorEnabledChanged;
+        ActualThemeVariantChanged -= OnThemeVariantChanged;
         if (App.Devices != null)
             App.Devices.DevicesUpdated -= OnDevicesUpdated;
+        _previewSeq++;
+        MacPreviewImage.IsVisible = false;
+        ReplaceMacPreviewBitmap(null);
     }
+
+    private void OnThemeVariantChanged(object? sender, EventArgs e) => UpdateMacPreview();
+
+    private void OnExternalMonitorEnabledChanged(bool _)
+        => App.UiPost(() =>
+        {
+            bool previous = _binding;
+            _binding = true;
+            try
+            {
+                var s = App.Settings.Current;
+                if (_monitorCheckBox != null)
+                    _monitorCheckBox.IsChecked = s.MonitorCollectionEnabled && s.MonitorEnabled;
+                MacOpenMonitorBtn.IsEnabled = s.MonitorCollectionEnabled;
+                UpdateMacPreview();
+            }
+            finally { _binding = previous; }
+        });
 
     private void OnDevicesUpdated(IReadOnlyList<PeripheralDevice> _)
         => App.UiPost(() =>
@@ -155,17 +186,8 @@ public partial class WidgetView : UserControl
             if (_binding) return;
             App.Settings.Current.MacStatusBarTiled = MacTiledSwitch.IsChecked == true;
             SaveAndRefresh();
-            UpdateMacPreview();
-        };
-        MacMetricsSwitch.IsCheckedChanged += (_, _) =>
-        {
-            if (_binding) return;
-            App.Settings.Current.MacStatusBarShowMetrics = MacMetricsSwitch.IsChecked == true;
-            SaveAndRefresh();
-            UpdateMacPreview();
         };
         MacOpenMonitorBtn.Click += (_, _) => MainWindow.Instance?.ShowMonitorFlyout();
-        MacGoMonitorPageBtn.Click += (_, _) => MainWindow.Instance?.OpenMonitorPage();
     }
 
     private void LoadSettings()
@@ -180,7 +202,7 @@ public partial class WidgetView : UserControl
             EmbedSwitch.IsChecked = s.WidgetEmbedded;
             FlyoutHoverSwitch.IsChecked = s.WidgetFlyoutOnHover;
             MacTiledSwitch.IsChecked = s.MacStatusBarTiled;
-            MacMetricsSwitch.IsChecked = s.MacStatusBarShowMetrics;
+            MacOpenMonitorBtn.IsEnabled = s.MonitorCollectionEnabled;
             OffsetSlider.Value = Math.Clamp(s.WidgetOffsetX, -1200, 1200);
             OffsetBox.Value = s.WidgetOffsetX;
             HeightBox.Value = s.WidgetHeight;
@@ -277,12 +299,13 @@ public partial class WidgetView : UserControl
 
             var groups = App.Settings.Current.TaskbarGroups;
             for (int i = 0; i < groups.Count; i++)
-                container.Children.Add(_isCardMode
-                    ? BuildGroupCard(groups[i], i, groups.Count)
-                    : BuildGroupRow(groups[i], i, groups.Count));
-
-            if (OperatingSystem.IsWindows())
-                container.Children.Add(_isCardMode ? BuildMonitorCard() : BuildMonitorRow());
+            {
+                var cfg = groups[i];
+                bool isMonitor = string.Equals(cfg.GroupId, "builtin:monitor", StringComparison.OrdinalIgnoreCase);
+                container.Children.Add(isMonitor
+                    ? (_isCardMode ? BuildMonitorCard(cfg, i, groups.Count) : BuildMonitorRow(cfg, i, groups.Count))
+                    : (_isCardMode ? BuildGroupCard(cfg, i, groups.Count) : BuildGroupRow(cfg, i, groups.Count)));
+            }
 
             GroupHost.Children.Clear();
             GroupHost.Children.Add(container);
@@ -708,7 +731,7 @@ public partial class WidgetView : UserControl
         return border;
     }
 
-    private Control BuildMonitorCard()
+    private Control BuildMonitorCard(TaskbarGroupConfig cfg, int index, int total)
     {
         var border = new Border
         {
@@ -729,14 +752,14 @@ public partial class WidgetView : UserControl
 
         top.Children.Add(CreateMonitorBadge());
 
-        var toggle = CreateMonitorToggle();
+        var toggle = CreateMonitorToggle(cfg);
         toggle.Margin = new Thickness(10, 0, 0, 0);
         Grid.SetColumn(toggle, 1);
         top.Children.Add(toggle);
 
-        var openBtn = CreateOpenMonitorButton();
-        Grid.SetColumn(openBtn, 2);
-        top.Children.Add(openBtn);
+        var orderPanel = CreateOrderButtons(index, total);
+        Grid.SetColumn(orderPanel, 2);
+        top.Children.Add(orderPanel);
         stack.Children.Add(top);
 
         var metricStack = new StackPanel { Spacing = 6 };
@@ -754,7 +777,7 @@ public partial class WidgetView : UserControl
         return border;
     }
 
-    private Control BuildMonitorRow()
+    private Control BuildMonitorRow(TaskbarGroupConfig cfg, int index, int total)
     {
         var border = new Border
         {
@@ -773,7 +796,7 @@ public partial class WidgetView : UserControl
 
         row.Children.Add(CreateMonitorBadge());
 
-        var toggle = CreateMonitorToggle();
+        var toggle = CreateMonitorToggle(cfg);
         toggle.Margin = new Thickness(12, 0, 12, 0);
         Grid.SetColumn(toggle, 1);
         row.Children.Add(toggle);
@@ -790,9 +813,9 @@ public partial class WidgetView : UserControl
         Grid.SetColumn(botCombo, 3);
         row.Children.Add(botCombo);
 
-        var openBtn = CreateOpenMonitorButton();
-        Grid.SetColumn(openBtn, 4);
-        row.Children.Add(openBtn);
+        var orderPanel = CreateOrderButtons(index, total);
+        Grid.SetColumn(orderPanel, 4);
+        row.Children.Add(orderPanel);
 
         border.Child = row;
         return border;
@@ -808,7 +831,7 @@ public partial class WidgetView : UserControl
         BorderThickness = new Thickness(1),
         Child = new TextBlock
         {
-            Text = "\uE950",
+            Text = "\uEC4A",
             FontFamily = IconFont,
             FontSize = 17,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -816,37 +839,121 @@ public partial class WidgetView : UserControl
         },
     };
 
-    private CheckBox CreateMonitorToggle()
+    private CheckBox CreateMonitorToggle(TaskbarGroupConfig cfg)
     {
         var chk = new CheckBox
         {
             Content = "系统监控",
-            IsChecked = App.Settings.Current.MonitorEnabled,
+            IsChecked = App.Settings.Current.MonitorCollectionEnabled && App.Settings.Current.MonitorEnabled,
             FontWeight = FontWeight.SemiBold,
             MinWidth = 0,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        if (!App.Settings.Current.MonitorCollectionEnabled)
+            ToolTip.SetTip(chk, "勾选将自动开启系统监控采集并在任务栏 / 菜单栏显示");
+        _monitorCheckBox = chk;
         chk.IsCheckedChanged += (_, _) =>
         {
-            if (_binding) return;
-            if ((chk.IsChecked == true) != App.Settings.Current.MonitorEnabled)
-                App.ToggleMonitor();
+            if (_binding || _promptingMonitorUncheck) return;
+            bool wantChecked = chk.IsChecked == true;
+            bool currentActive = App.Settings.Current.MonitorCollectionEnabled && App.Settings.Current.MonitorEnabled;
+            if (wantChecked == currentActive) return;
+
+            if (wantChecked)
+            {
+                App.SetMonitorStates(collectionEnabled: true, showInBar: true);
+                cfg.Visible = true;
+                MacOpenMonitorBtn.IsEnabled = true;
+                UpdateMacPreview();
+            }
+            else
+            {
+                _ = HandleMonitorUncheckAsync(chk, cfg);
+            }
         };
         return chk;
     }
 
-    private static Button CreateOpenMonitorButton()
+    private async Task HandleMonitorUncheckAsync(CheckBox chk, TaskbarGroupConfig cfg)
     {
-        var btn = new Button
+        _promptingMonitorUncheck = true;
+        try
         {
-            Content = "系统监控 →",
-            Height = 28,
-            FontSize = 12,
-            Padding = new Thickness(9, 0),
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
-        btn.Click += (_, _) => MainWindow.Instance?.OpenMonitorPage();
-        return btn;
+            string pref = App.Settings.Current.MonitorUncheckAction ?? "ask";
+            if (string.Equals(pref, "disable_all", StringComparison.OrdinalIgnoreCase))
+            {
+                App.SetMonitorStates(collectionEnabled: false, showInBar: false);
+            }
+            else if (string.Equals(pref, "hide_only", StringComparison.OrdinalIgnoreCase))
+            {
+                App.SetMonitorStates(collectionEnabled: App.Settings.Current.MonitorCollectionEnabled, showInBar: false);
+            }
+            else
+            {
+                var rememberBox = new CheckBox
+                {
+                    Content = "记住我的选择（可在「设置」中重置）",
+                    MinWidth = 0,
+                };
+                var content = new StackPanel
+                {
+                    Spacing = 12,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = "请选择取消显示系统监控分组后的处理方式：\n• 直接关闭系统监控：停止后台指标采集以节省开销（可随时重新开启）。\n• 仅取消显示：仅从菜单栏 / 任务栏隐藏该分组，仍在「系统监控」页面与悬浮条保留实时采集。",
+                            TextWrapping = TextWrapping.Wrap,
+                        },
+                        rememberBox,
+                    },
+                };
+                var dialog = new ContentDialog
+                {
+                    Title = "取消显示系统监控",
+                    Content = content,
+                    PrimaryButtonText = "直接关闭系统监控",
+                    SecondaryButtonText = "仅取消显示",
+                    CloseButtonText = "取消",
+                    DefaultButton = ContentDialogButton.Secondary,
+                };
+                var result = await dialog.ShowAsync();
+                bool remember = rememberBox.IsChecked == true;
+                if (result == ContentDialogResult.Primary)
+                {
+                    if (remember) App.Settings.Current.MonitorUncheckAction = "disable_all";
+                    App.SetMonitorStates(collectionEnabled: false, showInBar: false);
+                }
+                else if (result == ContentDialogResult.Secondary)
+                {
+                    if (remember) App.Settings.Current.MonitorUncheckAction = "hide_only";
+                    App.SetMonitorStates(collectionEnabled: App.Settings.Current.MonitorCollectionEnabled, showInBar: false);
+                }
+                else
+                {
+                    bool prev = _binding;
+                    _binding = true;
+                    try { chk.IsChecked = true; }
+                    finally { _binding = prev; }
+                    return;
+                }
+            }
+
+            cfg.Visible = App.Settings.Current.MonitorEnabled;
+            MacOpenMonitorBtn.IsEnabled = App.Settings.Current.MonitorCollectionEnabled;
+            UpdateMacPreview();
+        }
+        catch
+        {
+            App.SetMonitorStates(collectionEnabled: App.Settings.Current.MonitorCollectionEnabled, showInBar: false);
+            cfg.Visible = App.Settings.Current.MonitorEnabled;
+            MacOpenMonitorBtn.IsEnabled = App.Settings.Current.MonitorCollectionEnabled;
+            UpdateMacPreview();
+        }
+        finally
+        {
+            _promptingMonitorUncheck = false;
+        }
     }
 
     private ComboBox CreateMetricCombo(string selectedId, bool allowNone, bool isTop)
@@ -876,8 +983,7 @@ public partial class WidgetView : UserControl
                 App.Settings.Current.MonitorTopMetric = id;
             else
                 App.Settings.Current.MonitorBottomMetric = id;
-            App.Settings.Save();
-            App.RefreshWidget();
+            SaveAndRefresh();
         };
         return box;
     }
@@ -941,6 +1047,7 @@ public partial class WidgetView : UserControl
         "builtin:keyboard" => "键盘组",
         "builtin:headset" => "耳机组",
         "builtin:controller" => "手柄组",
+        "builtin:monitor" => "系统监控",
         _ => App.Settings.Current.CustomGroups.FirstOrDefault(c => c.Id == cfg.GroupId)?.DisplayName ?? "自定义组",
     };
 
@@ -989,17 +1096,83 @@ public partial class WidgetView : UserControl
     private void UpdateMacPreview()
     {
         if (OperatingSystem.IsWindows()) return;
+        int seq = ++_previewSeq;
+        var s = App.Settings.Current;
+        bool showMetrics = s.MonitorCollectionEnabled && s.MonitorEnabled;
+        RenderMacPreviewCore(s, showMetrics ? DesktopMetricsEngine.LastSnapshot : null);
+        if (!showMetrics) return;
+
+        var scope = SystemMetricsEngine.FromMetricIds(s.MonitorTopMetric, s.MonitorBottomMetric);
+        if (scope == MetricScope.None) return;
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var snap = DesktopMetricsEngine.Sample(scope);
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (seq != _previewSeq || !IsLoaded) return;
+                    var latest = App.Settings.Current;
+                    if (!latest.MonitorCollectionEnabled || !latest.MonitorEnabled) return;
+                    RenderMacPreviewCore(latest, snap);
+                });
+            }
+            catch { }
+        });
+    }
+
+    private void RenderMacPreviewCore(AppSettings s, SystemMetricsSnapshot? snap)
+    {
         try
         {
-            var snap = App.Settings.Current.MacStatusBarShowMetrics ? DesktopMetricsEngine.Sample() : null;
-            MacPreviewText.Text = MacStatusBarFormatter.BuildTitle(App.LastDevices ?? [], App.Settings.Current, snap);
+            var layout = MacStatusBarFormatter.BuildLayout(App.LastDevices ?? [], s, snap);
+            if (MacStatusBarFormatter.HasStackedMonitor(layout))
+            {
+                bool isDark = ActualThemeVariant == Avalonia.Styling.ThemeVariant.Dark;
+                var ink = isDark
+                    ? new SkiaSharp.SKColor(246, 246, 246, 255)
+                    : new SkiaSharp.SKColor(20, 20, 20, 255);
+                if (MacStatusBarService.RenderStatusBarTemplatePng(layout, ink) is { } rendered)
+                {
+                    using var ms = new MemoryStream(rendered.PngBytes);
+                    var nextBmp = new Avalonia.Media.Imaging.Bitmap(ms);
+                    ReplaceMacPreviewBitmap(nextBmp);
+                    MacPreviewImage.Width = rendered.WidthPt;
+                    MacPreviewImage.Height = rendered.HeightPt;
+                    MacPreviewImage.IsVisible = true;
+                    MacPreviewText.IsVisible = false;
+                    return;
+                }
+            }
+
+            MacPreviewImage.IsVisible = false;
+            ReplaceMacPreviewBitmap(null);
+            MacPreviewText.IsVisible = true;
+            MacPreviewText.Text = MacStatusBarFormatter.BuildTitle(App.LastDevices ?? [], s, snap);
         }
         catch { }
     }
 
-    private static void SaveAndRefresh()
+    private void ReplaceMacPreviewBitmap(Avalonia.Media.Imaging.Bitmap? nextBmp)
+    {
+        MacPreviewImage.Source = nextBmp;
+        var old = _macPreviewBitmap;
+        _macPreviewBitmap = nextBmp;
+        if (old != null && !ReferenceEquals(old, nextBmp))
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                try { old.Dispose(); }
+                catch { }
+            }, DispatcherPriority.Background);
+        }
+    }
+
+    private void SaveAndRefresh()
     {
         App.Settings.Save();
         App.RefreshWidget();
+        UpdateMacPreview();
     }
 }

@@ -117,7 +117,8 @@ public sealed partial class FloatingMonitorWindow : Window
     private void Refresh()
     {
         if (_instance != null && !ReferenceEquals(_instance, this)) return;
-        var s = DesktopMetricsEngine.Sample();
+        var s = DesktopMetricsEngine.Sample(
+            MetricScope.Cpu | MetricScope.Memory | MetricScope.Gpu | MetricScope.Network | MetricScope.DiskActive);
         CpuText.Text = $"CPU {s.CpuPercent:F0}%";
         RamText.Text = $"RAM {s.RamPercent:F0}%";
         GpuText.Text = s.GpuPercent is { } gpu ? $"GPU {gpu:F0}%" : "GPU --";

@@ -7,6 +7,8 @@ public static class DesktopMetricsEngine
 
     public static IReadOnlyList<string> DefaultFlyoutMetricIds => SystemMetricsEngine.DefaultFlyoutMetricIds;
 
+    public static SystemMetricsSnapshot LastSnapshot => SystemMetricsEngine.LastSnapshot;
+
     public static SystemMetricsSnapshot Sample(MetricScope scope = MetricScope.All)
         => SystemMetricsEngine.Sample(scope);
 

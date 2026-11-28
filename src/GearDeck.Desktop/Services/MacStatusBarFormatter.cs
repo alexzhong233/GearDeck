@@ -3,15 +3,65 @@ using GearDeck.Core.Services;
 
 namespace GearDeck.Desktop.Services;
 
+public sealed record MacStatusBarDeviceItem(
+    string Symbol,
+    string ValueText,
+    DeviceKind Kind,
+    string? CustomGlyph);
+
+public sealed record MacStatusBarSlot(
+    MacStatusBarDeviceItem? Device,
+    string? MonitorTopText,
+    string? MonitorBottomText)
+{
+    public bool IsMonitor => MonitorTopText != null || MonitorBottomText != null;
+}
+
+public sealed record MacStatusBarLayout(
+    IReadOnlyList<MacStatusBarDeviceItem> Devices,
+    string? MonitorTopText,
+    string? MonitorBottomText,
+    string FallbackText,
+    IReadOnlyList<MacStatusBarSlot> Slots)
+{
+    public MacStatusBarLayout(
+        IReadOnlyList<MacStatusBarDeviceItem> devices,
+        string? monitorTopText,
+        string? monitorBottomText,
+        string fallbackText)
+        : this(devices, monitorTopText, monitorBottomText, fallbackText, BuildDefaultSlots(devices, monitorTopText, monitorBottomText))
+    {
+    }
+
+    private static IReadOnlyList<MacStatusBarSlot> BuildDefaultSlots(
+        IReadOnlyList<MacStatusBarDeviceItem> devices,
+        string? monitorTopText,
+        string? monitorBottomText)
+    {
+        var list = new List<MacStatusBarSlot>(devices.Count + 1);
+        foreach (var d in devices)
+            list.Add(new MacStatusBarSlot(d, null, null));
+        if (monitorTopText != null || monitorBottomText != null)
+            list.Add(new MacStatusBarSlot(null, monitorTopText, monitorBottomText));
+        return list;
+    }
+}
+
 /// <summary>
-/// macOS 顶部菜单栏状态文本格式化器：
-/// - 默认平铺模式（MacStatusBarTiled=true）：按启用分组平铺展示图标符号与实时电量/状态；
+/// macOS 顶部菜单栏状态文本与双行布局格式化器：
+/// - 默认平铺模式（MacStatusBarTiled=true）：按启用分组顺序（含系统监控分组）平铺展示；
 /// - 精简模式（MacStatusBarTiled=false）：展示单条摘要；
 /// - 绝不伪造未观测过的电量百分比，历史回退仅限 LastKnownBatteries。
 /// </summary>
 public static class MacStatusBarFormatter
 {
-    public static string BuildTitle(
+    public static bool HasStackedMonitor(MacStatusBarLayout layout)
+        => layout.Slots.Any(s =>
+            s.IsMonitor &&
+            !string.IsNullOrWhiteSpace(s.MonitorTopText) &&
+            !string.IsNullOrWhiteSpace(s.MonitorBottomText));
+
+    public static MacStatusBarLayout BuildLayout(
         IReadOnlyList<PeripheralDevice> devices,
         AppSettings settings,
         SystemMetricsSnapshot? metrics = null,
@@ -20,43 +70,132 @@ public static class MacStatusBarFormatter
         devices ??= [];
         settings ??= AppSettings.Default;
 
+        var (topMetric, bottomMetric) = FormatMetricLines(settings, metrics);
+        bool hasMonitor = topMetric != null || bottomMetric != null;
         var groups = GetEffectiveGroups(settings);
+
         if (!settings.MacStatusBarTiled)
         {
-            string summary = BuildCompactSummary(devices, settings, metrics);
-            return permissionDenied && !devices.Any(d => d.BatteryPercent.HasValue)
-                ? "GD · 需授权"
-                : summary;
+            string summary = BuildCompactMainText(devices, settings);
+            if (permissionDenied && !devices.Any(d => d.BatteryPercent.HasValue))
+                return new MacStatusBarLayout([], topMetric, bottomMetric, "GD · 需授权",
+                    hasMonitor ? [new MacStatusBarSlot(null, topMetric, bottomMetric)] : []);
+
+            var compactDev = new MacStatusBarDeviceItem("", summary, DeviceKind.Mouse, null);
+            var compactSlots = new List<MacStatusBarSlot> { new(compactDev, null, null) };
+            if (hasMonitor)
+                compactSlots.Add(new MacStatusBarSlot(null, topMetric, bottomMetric));
+
+            return new MacStatusBarLayout(
+                [compactDev],
+                topMetric,
+                bottomMetric,
+                summary,
+                compactSlots);
         }
 
-        var segments = new List<string>();
+        var items = new List<MacStatusBarDeviceItem>();
+        var slots = new List<MacStatusBarSlot>();
+        bool monitorInserted = false;
         foreach (var cfg in groups)
         {
+            if (string.Equals(cfg.GroupId, "builtin:monitor", StringComparison.OrdinalIgnoreCase))
+            {
+                if (hasMonitor && !monitorInserted)
+                {
+                    slots.Add(new MacStatusBarSlot(null, topMetric, bottomMetric));
+                    monitorInserted = true;
+                }
+                continue;
+            }
             if (!cfg.Visible) continue;
             var primary = PickPrimaryMember(cfg, devices, settings);
             if (primary == null) continue;
 
-            string badge = FormatDeviceSegment(primary, settings, permissionDenied);
-            if (!string.IsNullOrWhiteSpace(badge))
-                segments.Add(badge);
+            var devItem = BuildDeviceItem(primary, cfg, settings, permissionDenied);
+            items.Add(devItem);
+            slots.Add(new MacStatusBarSlot(devItem, null, null));
         }
 
-        if (segments.Count == 0 && devices.Count > 0)
+        if (items.Count == 0
+            && (settings.TaskbarGroups == null || settings.TaskbarGroups.Count == 0)
+            && devices.Count > 0)
         {
-            var first = devices[0];
-            segments.Add(FormatDeviceSegment(first, settings, permissionDenied));
+            var devItem = BuildDeviceItem(devices[0], null, settings, permissionDenied);
+            items.Add(devItem);
+            slots.Add(new MacStatusBarSlot(devItem, null, null));
         }
 
-        if (settings.MacStatusBarShowMetrics && metrics != null)
+        if (hasMonitor && !monitorInserted)
+            slots.Add(new MacStatusBarSlot(null, topMetric, bottomMetric));
+
+        return new MacStatusBarLayout(items, topMetric, bottomMetric, "GearDeck", slots);
+    }
+
+    public static string BuildTitle(
+        IReadOnlyList<PeripheralDevice> devices,
+        AppSettings settings,
+        SystemMetricsSnapshot? metrics = null,
+        bool permissionDenied = false)
+    {
+        var layout = BuildLayout(devices, settings, metrics, permissionDenied);
+        if (!settings.MacStatusBarTiled)
         {
-            string top = DesktopMetricsEngine.FormatTaskbar(
-                string.IsNullOrWhiteSpace(settings.MonitorTopMetric) ? "CPU" : settings.MonitorTopMetric,
-                metrics);
-            if (!string.IsNullOrWhiteSpace(top))
-                segments.Add(top);
+            string main = layout.Devices.Count > 0 ? layout.Devices[0].ValueText : layout.FallbackText;
+            string? mText = JoinMetricLines(layout.MonitorTopText, layout.MonitorBottomText);
+            return !string.IsNullOrWhiteSpace(mText) ? $"{main} · {mText}" : main;
         }
 
-        return segments.Count > 0 ? string.Join("  ", segments) : "GearDeck";
+        var segments = new List<string>();
+        foreach (var slot in layout.Slots)
+        {
+            if (slot.IsMonitor)
+            {
+                if (JoinMetricLines(slot.MonitorTopText, slot.MonitorBottomText) is { } metricsText)
+                    segments.Add(metricsText);
+            }
+            else if (slot.Device is { } d)
+            {
+                string seg = string.IsNullOrEmpty(d.Symbol) ? d.ValueText : $"{d.Symbol} {d.ValueText}";
+                if (!string.IsNullOrWhiteSpace(seg))
+                    segments.Add(seg);
+            }
+        }
+
+        return segments.Count > 0 ? string.Join("  ", segments) : layout.FallbackText;
+    }
+
+    public static string? FormatMetricsSegment(AppSettings settings, SystemMetricsSnapshot? metrics)
+    {
+        var (top, bottom) = FormatMetricLines(settings, metrics);
+        return JoinMetricLines(top, bottom);
+    }
+
+    private static (string? Top, string? Bottom) FormatMetricLines(AppSettings settings, SystemMetricsSnapshot? metrics)
+    {
+        if (metrics == null || !settings.MonitorCollectionEnabled || !settings.MonitorEnabled)
+            return (null, null);
+
+        string topId = string.IsNullOrWhiteSpace(settings.MonitorTopMetric) ? "CPU" : settings.MonitorTopMetric;
+        string top = DesktopMetricsEngine.FormatTaskbar(topId, metrics);
+
+        string bottomId = string.IsNullOrWhiteSpace(settings.MonitorBottomMetric) ? "NONE" : settings.MonitorBottomMetric;
+        string bottom = string.Equals(bottomId, "NONE", StringComparison.OrdinalIgnoreCase)
+            ? ""
+            : DesktopMetricsEngine.FormatTaskbar(bottomId, metrics);
+
+        string? topOrNull = string.IsNullOrWhiteSpace(top) ? null : top;
+        string? bottomOrNull = string.IsNullOrWhiteSpace(bottom) ? null : bottom;
+        return (topOrNull, bottomOrNull);
+    }
+
+    private static string? JoinMetricLines(string? top, string? bottom)
+    {
+        if (!string.IsNullOrWhiteSpace(top) && !string.IsNullOrWhiteSpace(bottom))
+            return $"{top} · {bottom}";
+        if (!string.IsNullOrWhiteSpace(top))
+            return top;
+        return !string.IsNullOrWhiteSpace(bottom) ? bottom : null;
     }
 
     public static List<PeripheralDevice> GetGroupMembers(
@@ -89,10 +228,9 @@ public static class MacStatusBarFormatter
         return $"{icon} {d.Name}{transport}  ·  {status}";
     }
 
-    private static string BuildCompactSummary(
+    private static string BuildCompactMainText(
         IReadOnlyList<PeripheralDevice> devices,
-        AppSettings settings,
-        SystemMetricsSnapshot? metrics)
+        AppSettings settings)
     {
         var pcts = new List<int>();
         foreach (var d in devices)
@@ -103,16 +241,7 @@ public static class MacStatusBarFormatter
                 pcts.Add(hp);
         }
 
-        string main = pcts.Count > 0 ? $"GD {pcts.Min()}%" : (devices.Count > 0 ? $"GD ({devices.Count})" : "GearDeck");
-        if (settings.MacStatusBarShowMetrics && metrics != null)
-        {
-            string top = DesktopMetricsEngine.FormatTaskbar(
-                string.IsNullOrWhiteSpace(settings.MonitorTopMetric) ? "CPU" : settings.MonitorTopMetric,
-                metrics);
-            if (!string.IsNullOrWhiteSpace(top))
-                return $"{main} · {top}";
-        }
-        return main;
+        return pcts.Count > 0 ? $"GD {pcts.Min()}%" : (devices.Count > 0 ? $"GD ({devices.Count})" : "GearDeck");
     }
 
     private static PeripheralDevice? PickPrimaryMember(
@@ -137,27 +266,74 @@ public static class MacStatusBarFormatter
             .First();
     }
 
-    private static string FormatDeviceSegment(PeripheralDevice d, AppSettings settings, bool permissionDenied)
+    private static MacStatusBarDeviceItem BuildDeviceItem(
+        PeripheralDevice d,
+        TaskbarGroupConfig? cfg,
+        AppSettings settings,
+        bool permissionDenied)
     {
-        string icon = KindSymbol(d.Kind);
-        if (d.FormatDualEarSummary(compact: true) is { } dual)
-            return $"{icon} {dual}";
+        string symbol = ResolveGroupSymbol(cfg, d.Kind);
+        string? customGlyph = string.IsNullOrWhiteSpace(cfg?.CustomGlyph) ? null : cfg.CustomGlyph;
+        string valueText;
 
-        settings.LastKnownBatteries.TryGetValue(d.Id, out var cached);
-        var chip = BatteryHistoryHelper.BuildChipText(d, string.Empty, true, cached);
-        if (chip.EffectivePercent is { } pct)
+        if (d.FormatDualEarSummary(compact: true) is { } dual)
         {
-            string bolt = d.State == BatteryState.Charging && !d.IsSleeping ? "⚡" : "";
-            return $"{icon} {pct}%{bolt}";
+            valueText = dual;
+        }
+        else
+        {
+            settings.LastKnownBatteries.TryGetValue(d.Id, out var cached);
+            var chip = BatteryHistoryHelper.BuildChipText(d, string.Empty, true, cached);
+            if (chip.EffectivePercent is { } pct)
+            {
+                string bolt = d.State == BatteryState.Charging && !d.IsSleeping ? "⚡" : "";
+                valueText = $"{pct}%{bolt}";
+            }
+            else if (d.State == BatteryState.Charging)
+            {
+                valueText = "⚡";
+            }
+            else if (permissionDenied && !string.IsNullOrWhiteSpace(d.Note) && d.Note.Contains("输入监控"))
+            {
+                valueText = "需授权";
+            }
+            else
+            {
+                valueText = "—";
+            }
         }
 
-        if (d.State == BatteryState.Charging)
-            return $"{icon} ⚡";
+        return new MacStatusBarDeviceItem(symbol, valueText, d.Kind, customGlyph);
+    }
 
-        if (permissionDenied && !string.IsNullOrWhiteSpace(d.Note) && d.Note.Contains("输入监控"))
-            return $"{icon} 需授权";
-
-        return $"{icon} —";
+    private static string ResolveGroupSymbol(TaskbarGroupConfig? cfg, DeviceKind kind)
+    {
+        if (!string.IsNullOrWhiteSpace(cfg?.CustomGlyph))
+        {
+            string? mapped = cfg.CustomGlyph switch
+            {
+                "\uE962" => "🖱",
+                "\uE765" => "⌨",
+                "\uE95B" => "🎧",
+                "\uEC4F" => "🎙",
+                "\uE7FC" => "🎮",
+                "\uE7C8" => "⌖",
+                "\uE945" => "⚡",
+                "\uE701" => "📶",
+                "\uE702" => "ᛒ",
+                "\uE9F5" => "⚙",
+                "\uE83F" => "🔋",
+                "\uE734" => "★",
+                "\uE720" => "🎤",
+                "\uE8D6" => "🔊",
+                "\uE975" => "🖥",
+                "\uEC4A" => "◔",
+                _ => null,
+            };
+            if (mapped != null)
+                return mapped;
+        }
+        return KindSymbol(kind);
     }
 
     private static string KindSymbol(DeviceKind kind) => kind switch

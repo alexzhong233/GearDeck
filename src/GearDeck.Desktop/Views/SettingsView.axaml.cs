@@ -57,6 +57,7 @@ public partial class SettingsView : UserControl
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
+        RefreshMonitorUncheckActionUi();
         if (App.Updater == null) return;
         App.Updater.StateChanged -= OnUpdateStateChanged;
         App.Updater.StateChanged += OnUpdateStateChanged;
@@ -122,6 +123,25 @@ public partial class SettingsView : UserControl
         OpenReleasesBtn.Click += OnOpenReleasesClick;
         SyncCloudImagesBtn.Click += OnSyncCloudImagesClick;
         SaveBtn.Click += OnSaveClick;
+        ResetMonitorUncheckBtn.Click += (_, _) =>
+        {
+            App.Settings.Current.MonitorUncheckAction = "ask";
+            App.Settings.Save();
+            RefreshMonitorUncheckActionUi();
+            ShowAutoSavedHint();
+        };
+    }
+
+    private void RefreshMonitorUncheckActionUi()
+    {
+        string mode = (App.Settings.Current.MonitorUncheckAction ?? "ask").Trim().ToLowerInvariant();
+        MonitorUncheckActionHintText.Text = mode switch
+        {
+            "disable_all" => "当前已记住：直接关闭系统监控（停止采样）",
+            "hide_only" => "当前已记住：仅在任务栏 / 菜单栏隐藏，保留本页采集",
+            _ => "当前：每次取消勾选时弹窗询问",
+        };
+        ResetMonitorUncheckBtn.IsEnabled = mode != "ask";
     }
 
     private void LoadSettings()
@@ -143,6 +163,7 @@ public partial class SettingsView : UserControl
 
         UpdateStatusText.Text = $"当前版本 v{AppUpdateService.CurrentVersion}";
         StartupHintText.Text = StartupStateHint(App.Settings.Current.LaunchOnStartup, "", withDetail: false);
+        RefreshMonitorUncheckActionUi();
         if (string.IsNullOrWhiteSpace(ImageSyncHintText.Text))
             ImageSyncHintText.Text = "未同步时默认使用内置设备图库规则";
         SavedHintText.Text = "";

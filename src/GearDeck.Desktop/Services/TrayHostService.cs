@@ -132,6 +132,12 @@ public sealed class TrayHostService : IDisposable
         _macStatusBar?.Refresh();
     }
 
+    public void SetMacDockVisible(bool visible)
+    {
+        if (_disposed) return;
+        _macStatusBar?.SetDockIconVisible(visible);
+    }
+
     public void UpdateTooltip(string tip)
     {
         if (_disposed) return;

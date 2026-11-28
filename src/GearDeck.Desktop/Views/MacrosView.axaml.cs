@@ -68,7 +68,6 @@ public partial class MacrosView : UserControl
 
         NewMacroBtn.Click += OnNewMacroClick;
         ImportBtn.Click += OnImportClick;
-        ExportBtn.Click += OnExportClick;
         MacroLibraryHost.SizeChanged += (_, _) => UpdateLibraryColumns();
 
         BackToListBtn.Click += (_, _) => ExitEditorWithoutSaving();
@@ -374,7 +373,8 @@ public partial class MacrosView : UserControl
             });
 
             var actions = new Grid();
-            actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1.2, GridUnitType.Star)));
+            actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1.1, GridUnitType.Star)));
+            actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
             actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
             actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
             actions.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
@@ -388,16 +388,22 @@ public partial class MacrosView : UserControl
             var dupBtn = ActionButton("复制", accent: false, marginRight: 6);
             dupBtn.Click += (_, _) => DuplicateMacro(macro);
 
+            var exportBtn = ActionButton("导出", accent: false, marginRight: 6);
+            ToolTip.SetTip(exportBtn, "导出此宏为 JSON 文件");
+            exportBtn.Click += (_, _) => _ = ExportSingleMacroAsync(macro, exportBtn);
+
             var delBtn = ActionButton("删除", accent: false, marginRight: 0);
             delBtn.Click += (_, _) => DeleteMacro(macro);
 
             Grid.SetColumn(editBtn, 0);
             Grid.SetColumn(playBtn, 1);
             Grid.SetColumn(dupBtn, 2);
-            Grid.SetColumn(delBtn, 3);
+            Grid.SetColumn(exportBtn, 3);
+            Grid.SetColumn(delBtn, 4);
             actions.Children.Add(editBtn);
             actions.Children.Add(playBtn);
             actions.Children.Add(dupBtn);
+            actions.Children.Add(exportBtn);
             actions.Children.Add(delBtn);
             content.Children.Add(actions);
 
@@ -1089,8 +1095,8 @@ public partial class MacrosView : UserControl
             await using var stream = await file.OpenReadAsync();
             using var reader = new StreamReader(stream);
             string json = await reader.ReadToEndAsync();
-            var imported = JsonSerializer.Deserialize<List<OnboardMacroDefinition>>(json);
-            if (imported == null || imported.Count == 0)
+            var imported = ParseImportedMacrosJson(json);
+            if (imported.Count == 0)
             {
                 ShowStatus("文件中没有可导入的宏。", InfoBarSeverity.Warning);
                 return;
@@ -1128,9 +1134,38 @@ public partial class MacrosView : UserControl
         }
     }
 
-    private async void OnExportClick(object? sender, RoutedEventArgs e)
+    public static List<OnboardMacroDefinition> ParseImportedMacrosJson(string json)
     {
-        if (_busyExport || sender is not Button button) return;
+        if (string.IsNullOrWhiteSpace(json))
+            return [];
+
+        var opts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            return JsonSerializer.Deserialize<List<OnboardMacroDefinition>>(json, opts) ?? [];
+
+        if (doc.RootElement.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                if (string.Equals(prop.Name, "Macros", StringComparison.OrdinalIgnoreCase) &&
+                    prop.Value.ValueKind == JsonValueKind.Array)
+                {
+                    return JsonSerializer.Deserialize<List<OnboardMacroDefinition>>(prop.Value.GetRawText(), opts) ?? [];
+                }
+            }
+
+            var single = JsonSerializer.Deserialize<OnboardMacroDefinition>(json, opts);
+            if (single != null && (!string.IsNullOrWhiteSpace(single.Name) || single.Steps.Count > 0))
+                return [single];
+        }
+
+        return [];
+    }
+
+    private async Task ExportSingleMacroAsync(OnboardMacroDefinition macro, Button button)
+    {
+        if (_busyExport) return;
         _busyExport = true;
         button.IsEnabled = false;
         try
@@ -1141,27 +1176,37 @@ public partial class MacrosView : UserControl
                 ShowStatus("文件选择器不可用。", InfoBarSeverity.Warning);
                 return;
             }
+
+            string invalid = new(Path.GetInvalidFileNameChars());
+            string rawName = string.IsNullOrWhiteSpace(macro.Name) ? "macro" : macro.Name.Trim();
+            string safeName = string.Concat(rawName.Select(ch => invalid.Contains(ch) ? '_' : ch));
+            if (string.IsNullOrWhiteSpace(safeName))
+                safeName = "macro";
+
             var file = await provider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                Title = "导出宏 JSON",
+                Title = $"导出宏 · {macro.Name}",
                 DefaultExtension = "json",
-                SuggestedFileName = "geardeck-macros.json",
+                SuggestedFileName = $"{safeName}.json",
                 FileTypeChoices = [new FilePickerFileType("JSON") { Patterns = ["*.json"] }],
             });
             if (file == null) return;
 
-            var payload = new
+            var exported = new OnboardMacroDefinition
             {
-                Version = 1,
-                ExportedAt = DateTimeOffset.UtcNow,
-                Macros = App.Settings.Current.Macros,
-                Bindings = App.Settings.Current.LocalButtonMacroBindings,
+                Id = macro.Id,
+                Name = macro.Name,
+                LoopMode = macro.LoopMode,
+                RepeatCount = macro.RepeatCount,
+                Steps = macro.Steps.Select(s => new MacroStep(s.KeyCode, s.IsPress, s.DelayMs)).ToList(),
             };
-            string json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true });
+            string json = JsonSerializer.Serialize(exported, new JsonSerializerOptions { WriteIndented = true });
             await using var stream = await file.OpenWriteAsync();
+            if (stream.CanSeek)
+                stream.SetLength(0);
             await using var writer = new StreamWriter(stream);
             await writer.WriteAsync(json);
-            ShowStatus("宏库与侧键绑定已导出。", InfoBarSeverity.Success);
+            ShowStatus($"已导出宏「{macro.Name}」。", InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {

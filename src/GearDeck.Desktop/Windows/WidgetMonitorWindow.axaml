@@ -20,11 +20,13 @@
     <Border x:Name="RootBorder" BorderThickness="1" CornerRadius="14" Padding="12">
         <Grid RowDefinitions="Auto,*">
             <Grid x:Name="HeaderGrid" Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
-                <TextBlock x:Name="IconText" Grid.Column="0" Text="&#xE950;" FontSize="14"
+                <TextBlock x:Name="IconText" Grid.Column="0" Text="&#xEC4A;"
+                           FontFamily="{StaticResource AppIconFontFamily}" FontSize="14"
                            VerticalAlignment="Center" />
                 <TextBlock x:Name="TitleText" Grid.Column="1" Text="系统实时监控" FontSize="13" FontWeight="SemiBold"
                            Margin="8,0,0,0" VerticalAlignment="Center" />
-                <Button x:Name="SettingsBtn" Grid.Column="2" Content="&#xE713;" Width="26" Height="26"
+                <Button x:Name="SettingsBtn" Grid.Column="2" Content="&#xE713;"
+                        FontFamily="{StaticResource AppIconFontFamily}" Width="26" Height="26"
                         Margin="6,0,0,0" Padding="0" Background="Transparent" BorderThickness="0"
                         HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                         ToolTip.Tip="系统监控设置" />

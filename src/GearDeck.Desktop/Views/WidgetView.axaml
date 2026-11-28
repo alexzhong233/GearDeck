@@ -40,14 +40,16 @@
                             <ToggleSwitch x:Name="MacTiledSwitch" MinWidth="0" Margin="0,0,22,4"
                                           OnContent="平铺显示外设分组电量"
                                           OffContent="仅显示单条摘要" />
-                            <ToggleSwitch x:Name="MacMetricsSwitch" MinWidth="0" Margin="0,0,0,4"
-                                          OnContent="附加系统监控指标"
-                                          OffContent="仅显示外设电量" />
                         </WrapPanel>
                         <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}"
                                 CornerRadius="8" Padding="12,8">
-                            <StackPanel Spacing="4">
+                            <StackPanel Spacing="6">
                                 <TextBlock Classes="meta" Text="当前菜单栏实时预览" />
+                                <Image x:Name="MacPreviewImage"
+                                       Height="22"
+                                       HorizontalAlignment="Left"
+                                       Stretch="Uniform"
+                                       IsVisible="False" />
                                 <TextBlock x:Name="MacPreviewText"
                                            FontFamily="Consolas,Menlo,Monaco,monospace"
                                            FontSize="13" FontWeight="SemiBold" />
@@ -55,7 +57,6 @@
                         </Border>
                         <WrapPanel>
                             <Button x:Name="MacOpenMonitorBtn" Content="打开桌面悬浮监控条" Height="30" Padding="12,0" Margin="0,0,8,4" />
-                            <Button x:Name="MacGoMonitorPageBtn" Content="前往「系统监控」→" Height="30" Padding="12,0" Margin="0,0,8,4" />
                         </WrapPanel>
                     </StackPanel>
                 </Border>

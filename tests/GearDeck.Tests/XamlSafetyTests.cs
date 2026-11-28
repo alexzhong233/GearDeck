@@ -91,13 +91,14 @@ public class XamlSafetyTests
     }
 
     [Fact]
-    public void SystemMetricsEngine_Exposes12MetricsAndFormatsCleanly()
+    public void SystemMetricsEngine_Exposes13MetricsAndFormatsCleanly()
     {
-        Assert.Equal(12, SystemMetricsEngine.AllMetrics.Count);
+        Assert.Equal(13, SystemMetricsEngine.AllMetrics.Count);
         var snap = new SystemMetricsSnapshot
         {
             CpuPercent = 24.4,
             CpuFreqGhz = 4.75,
+            CpuTempC = 61,
             RamPercent = 52.0,
             MemUsedGb = 16.6,
             MemTotalGb = 32.0,

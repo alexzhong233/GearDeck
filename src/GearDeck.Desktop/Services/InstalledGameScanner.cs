@@ -43,9 +43,12 @@ public static class InstalledGameScanner
         return await Task.Run(() => ScanInternal(catalog));
     }
 
-    /// <summary>从 Windows .exe 提取高分辨率图标并缓存为透明 PNG；非 Windows 平台返回 null。</summary>
+    /// <summary>从 Windows .exe 或 macOS .app/.icns 提取高分辨率图标并缓存为透明 PNG。</summary>
     public static string? ExtractExeIcon(string? exePath)
     {
+        if (OperatingSystem.IsMacOS())
+            return ExtractMacAppIcon(exePath);
+
         if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
             return null;
 
@@ -397,8 +400,7 @@ public static class InstalledGameScanner
                 string primary = Path.GetFileName(exes[0]);
                 if (!seen.Add($"{primary}|{app}")) continue;
 
-                string? icon = SafeEnumerateFiles(Path.Combine(app, "Contents", "Resources"), "*.icns", SearchOption.TopDirectoryOnly)
-                    .FirstOrDefault();
+                string? icon = ExtractMacAppIcon(app);
                 var candidates = exes.Take(4).Select(Path.GetFileName).OfType<string>().Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 results.Add(new ScannedGameEntry(name, "macOS", app, primary, candidates, icon, exes[0]));
             }
@@ -624,6 +626,157 @@ public static class InstalledGameScanner
     {
         if (string.IsNullOrWhiteSpace(Path.GetExtension(path))) return true;
         return path.EndsWith(".app", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ExtractMacAppIcon(string? pathOrBundle)
+    {
+        if (!OperatingSystem.IsMacOS() || string.IsNullOrWhiteSpace(pathOrBundle))
+            return null;
+
+        try
+        {
+            string? appBundle = FindContainingAppBundle(pathOrBundle);
+            if (appBundle == null)
+                return null;
+
+            string? icnsPath = ResolveMacBundleIcnsPath(appBundle);
+            if (string.IsNullOrWhiteSpace(icnsPath) || !File.Exists(icnsPath))
+                return null;
+
+            Directory.CreateDirectory(IconCacheDir);
+            long mtime = File.GetLastWriteTimeUtc(icnsPath).Ticks;
+            string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{icnsPath}|{mtime}")))[..16];
+            string outPath = Path.Combine(IconCacheDir, $"mac_{hash}.png");
+            if (File.Exists(outPath) && new FileInfo(outPath).Length > 100)
+                return outPath;
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "/usr/bin/sips",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("-s");
+            psi.ArgumentList.Add("format");
+            psi.ArgumentList.Add("png");
+            psi.ArgumentList.Add("-z");
+            psi.ArgumentList.Add("128");
+            psi.ArgumentList.Add("128");
+            psi.ArgumentList.Add(icnsPath);
+            psi.ArgumentList.Add("--out");
+            psi.ArgumentList.Add(outPath);
+
+            using var proc = Process.Start(psi);
+            if (proc == null || !proc.WaitForExit(3000) || proc.ExitCode != 0)
+                return null;
+
+            return File.Exists(outPath) && new FileInfo(outPath).Length > 100 ? outPath : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? FindContainingAppBundle(string path)
+    {
+        string trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (trimmed.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && Directory.Exists(trimmed))
+            return trimmed;
+
+        string? cur = Directory.Exists(trimmed) ? trimmed : Path.GetDirectoryName(trimmed);
+        for (int depth = 0; depth < 4 && !string.IsNullOrWhiteSpace(cur); depth++)
+        {
+            if (cur.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && Directory.Exists(cur))
+                return cur;
+            cur = Path.GetDirectoryName(cur);
+        }
+        return null;
+    }
+
+    private static string? ResolveMacBundleIcnsPath(string appBundle)
+    {
+        string resourcesDir = Path.Combine(appBundle, "Contents", "Resources");
+        if (!Directory.Exists(resourcesDir))
+            return null;
+
+        string plistPath = Path.Combine(appBundle, "Contents", "Info.plist");
+        string? declared = ReadMacPlistString(plistPath, "CFBundleIconFile");
+        if (!string.IsNullOrWhiteSpace(declared))
+        {
+            string candidate = Path.Combine(resourcesDir, declared);
+            if (File.Exists(candidate)) return candidate;
+            if (!declared.EndsWith(".icns", StringComparison.OrdinalIgnoreCase))
+            {
+                string withExt = candidate + ".icns";
+                if (File.Exists(withExt)) return withExt;
+            }
+        }
+
+        return SafeEnumerateFiles(resourcesDir, "*.icns", SearchOption.TopDirectoryOnly).FirstOrDefault();
+    }
+
+    private static string? ReadMacPlistString(string plistPath, string key)
+    {
+        if (!File.Exists(plistPath))
+            return null;
+
+        try
+        {
+            byte[] head = new byte[6];
+            using (var fs = File.OpenRead(plistPath))
+            {
+                int n = fs.Read(head, 0, head.Length);
+                bool isBinary = n == 6 && Encoding.ASCII.GetString(head) == "bplist";
+                if (!isBinary)
+                {
+                    var doc = System.Xml.Linq.XDocument.Load(plistPath);
+                    var dict = doc.Root?.Element("dict");
+                    if (dict != null)
+                    {
+                        var elems = dict.Elements().ToList();
+                        for (int i = 0; i + 1 < elems.Count; i++)
+                        {
+                            if (elems[i].Name.LocalName == "key" &&
+                                string.Equals(elems[i].Value.Trim(), key, StringComparison.Ordinal) &&
+                                elems[i + 1].Name.LocalName == "string")
+                            {
+                                return elems[i + 1].Value.Trim();
+                            }
+                        }
+                    }
+                    return null;
+                }
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "/usr/bin/plutil",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("-extract");
+            psi.ArgumentList.Add(key);
+            psi.ArgumentList.Add("raw");
+            psi.ArgumentList.Add("-o");
+            psi.ArgumentList.Add("-");
+            psi.ArgumentList.Add(plistPath);
+
+            using var proc = Process.Start(psi);
+            if (proc == null) return null;
+            string output = proc.StandardOutput.ReadToEnd().Trim();
+            if (!proc.WaitForExit(1500) || proc.ExitCode != 0)
+                return null;
+            return string.IsNullOrWhiteSpace(output) ? null : output;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void TryAddSteamRoot(HashSet<string> roots, Win32RegistryRoot root, string subKey, string valName)

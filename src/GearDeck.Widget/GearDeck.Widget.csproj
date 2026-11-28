@@ -17,6 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\Shared\SystemMetricsEngine.cs" Link="SystemMetricsEngine.cs" />
+    <Compile Include="..\Shared\HwInfoSharedMemoryReader.cs" Link="HwInfoSharedMemoryReader.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="SkiaSharp" Version="2.88.9" />

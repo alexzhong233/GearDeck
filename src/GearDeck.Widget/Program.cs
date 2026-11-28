@@ -405,6 +405,8 @@ internal sealed class WidgetState
     public int FontSize { get; set; } = 13;
     public int BlockWidth { get; set; } = 92;
     public bool Monitor { get; set; }
+    public int MonitorIndex { get; set; } = -1;
+    public bool HwInfoBridge { get; set; } = true;
     public string MonitorTop { get; set; } = "CPU";
     public string MonitorBottom { get; set; } = "RAM";
     public List<WidgetChip> Groups { get; set; } = [];
@@ -651,8 +653,35 @@ internal static class TaskbarRenderer
 
         int iconPx = Math.Max(14, (int)Math.Round(Math.Clamp(state.FontSize, 9, 20) * scale * 1.25));
         int x = edgePad;
-        foreach (var grp in state.Groups)
+        int insertIdx = state.Monitor
+            ? (state.MonitorIndex >= 0 && state.MonitorIndex <= state.Groups.Count
+                ? state.MonitorIndex
+                : state.Groups.Count)
+            : -1;
+
+        void AppendMonitorBlock()
         {
+            string top = SystemMetricsEngine.FormatTaskbar(state.MonitorTop, metrics);
+            string bottom = SystemMetricsEngine.FormatTaskbar(state.MonitorBottom, metrics);
+            string refTop = SystemMetricsEngine.FormatTaskbar(state.MonitorTop, RefSnapshot);
+            string refBot = SystemMetricsEngine.FormatTaskbar(state.MonitorBottom, RefSnapshot);
+            float maxW = Math.Max(
+                Math.Max(smallPaint.MeasureText(top), smallPaint.MeasureText(refTop)),
+                Math.Max(smallPaint.MeasureText(bottom), smallPaint.MeasureText(refBot)));
+            int mw = Math.Max((int)Math.Round(78 * scale), (int)Math.Ceiling(maxW) + innerPadX * 2);
+            blocks.Add(new Block(BlockKind.Monitor, "__monitor__", "\uE950", "", "", "", false, false,
+                new IntRect(x, 0, mw, blockH), state.MonitorTop, state.MonitorBottom));
+            x += mw + blockGap;
+        }
+
+        for (int i = 0; i <= state.Groups.Count; i++)
+        {
+            if (i == insertIdx)
+                AppendMonitorBlock();
+            if (i == state.Groups.Count)
+                break;
+
+            var grp = state.Groups[i];
             float iconW = TryGetCustomIcon(grp.IconPath) != null
                 ? iconPx
                 : iconPaint.MeasureText(grp.Glyph ?? "");
@@ -667,24 +696,8 @@ internal static class TaskbarRenderer
             x += w + blockGap;
         }
 
-        if (state.Monitor)
-        {
-            string top = SystemMetricsEngine.FormatTaskbar(state.MonitorTop, metrics);
-            string bottom = SystemMetricsEngine.FormatTaskbar(state.MonitorBottom, metrics);
-            string refTop = SystemMetricsEngine.FormatTaskbar(state.MonitorTop, RefSnapshot);
-            string refBot = SystemMetricsEngine.FormatTaskbar(state.MonitorBottom, RefSnapshot);
-            float maxW = Math.Max(
-                Math.Max(smallPaint.MeasureText(top), smallPaint.MeasureText(refTop)),
-                Math.Max(smallPaint.MeasureText(bottom), smallPaint.MeasureText(refBot)));
-            int mw = Math.Max((int)Math.Round(78 * scale), (int)Math.Ceiling(maxW) + innerPadX * 2);
-            blocks.Add(new Block(BlockKind.Monitor, "__monitor__", "\uE950", "", "", "", false, false,
-                new IntRect(x, 0, mw, blockH), state.MonitorTop, state.MonitorBottom));
-            x += mw;
-        }
-        else if (blocks.Count > 0)
-        {
+        if (blocks.Count > 0)
             x -= blockGap;
-        }
 
         int width = Math.Max((int)Math.Round(80 * scale), x + edgePad);
         return new WidgetLayout
@@ -1327,6 +1340,7 @@ internal sealed class TaskbarWindow : IDisposable
     {
         if (ReadStateIfChanged())
         {
+            SystemMetricsEngine.HwInfoBridgeEnabled = _state.HwInfoBridge;
             _dirtyRender = true;
             UpdateMainTimerCadence();
         }

@@ -23,24 +23,55 @@
                     BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1" CornerRadius="10" Padding="18">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="任务栏双指标" FontSize="16" FontWeight="SemiBold" />
-                    <ToggleSwitch x:Name="MonitorSwitch" OnContent="在任务栏贴片中显示系统监控" OffContent="仅显示外设电量" />
+                    <TextBlock Text="系统监控开关与指标配置" FontSize="16" FontWeight="SemiBold" />
+                    <WrapPanel>
+                        <ToggleSwitch x:Name="CollectionSwitch"
+                                      Content="系统监控采集"
+                                      OnContent="已开启" OffContent="已关闭（零开销）"
+                                      MinWidth="0" Margin="0,0,24,4" />
+                        <ToggleSwitch x:Name="MonitorSwitch"
+                                      Content="任务栏 / 菜单栏分组"
+                                      OnContent="显示" OffContent="隐藏（仅本页查看）"
+                                      MinWidth="0" Margin="0,0,24,4" />
+                        <ToggleSwitch x:Name="HwInfoSwitch"
+                                      Content="HWiNFO 桥接"
+                                      OnContent="开启" OffContent="关闭"
+                                      MinWidth="0" Margin="0,0,0,4" IsVisible="False" />
+                    </WrapPanel>
                     <WrapPanel>
                         <ComboBox x:Name="TopMetricBox" MinWidth="210" Margin="0,0,8,8" />
                         <ComboBox x:Name="BottomMetricBox" MinWidth="210" Margin="0,0,8,8" />
                     </WrapPanel>
                     <TextBlock x:Name="StatusText" Classes="meta" />
+                    <TextBlock x:Name="HwInfoStatusText" Classes="meta" IsVisible="False" />
                     <WrapPanel>
                         <Button x:Name="FloatingToggleBtn" Content="显示桌面悬浮监控条" Margin="0,0,8,8" />
-                        <Button x:Name="GoWidgetBtn" Content="前往「任务栏贴片」→" Margin="0,0,8,8" />
+                        <Button x:Name="GoWidgetBtn" Content="前往「任务栏贴片」调整分组顺序 →" Margin="0,0,8,8" />
                     </WrapPanel>
                 </StackPanel>
             </Border>
 
-            <StackPanel Spacing="4">
-                <TextBlock Text="实时指标（12 项）" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Classes="meta" Text="下方读数每秒刷新；无读数的指标会显示「无读数」或不适用说明。" />
-            </StackPanel>
+            <Border x:Name="MonitorDisabledNotice" IsVisible="False"
+                    Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="10" Padding="18">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="系统监控采集已关闭" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Classes="meta"
+                               Text="已停止所有硬件传感器、网络与 CPU/GPU 定时采样以零开销运行；打开上方「系统监控采集」开关即可在本页查看实时数据。" />
+                </StackPanel>
+            </Border>
+
+            <Grid x:Name="MetricsHeaderPanel" ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Spacing="4" Margin="0,0,12,0" VerticalAlignment="Center">
+                    <TextBlock Text="实时指标" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Classes="meta" Text="勾选需要采集与在悬浮窗显示的指标；取消勾选将暂停该项底层采样以节省性能。" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button x:Name="SelectAllMetricsBtn" Content="全选" />
+                    <Button x:Name="ResetMetricsBtn" Content="恢复默认" />
+                </StackPanel>
+            </Grid>
             <WrapPanel x:Name="MetricsHost" />
         </StackPanel>
     </ScrollViewer>

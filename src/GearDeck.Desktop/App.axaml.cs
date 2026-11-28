@@ -105,6 +105,7 @@ public partial class App : Application
 
         _startedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         Settings = new SettingsService();
+        SystemMetricsEngine.HwInfoBridgeEnabled = Settings.Current.HwInfoBridgeEnabled;
         Diag.VerboseEnabled = Settings.Current.DebugModeEnabled;
         AtkModelCatalog.SeedPersistentReceiverModels(Settings.Current.KnownReceiverModels);
         ReceiverModelRegistry.Seed(Settings.Current.KnownReceiverModels, Settings.Current.DeviceCustomNames);
@@ -553,12 +554,65 @@ public partial class App : Application
         RefreshWidget();
     }
 
+    public static event Action<bool>? MonitorEnabledChanged;
+
     public static void ToggleMonitor()
     {
-        Settings.Current.MonitorEnabled = !Settings.Current.MonitorEnabled;
+        bool enabled = !Settings.Current.MonitorEnabled;
+        SetMonitorStates(
+            collectionEnabled: enabled ? true : Settings.Current.MonitorCollectionEnabled,
+            showInBar: enabled);
+    }
+
+    public static void SetMonitorCollectionEnabled(bool enabled)
+    {
+        if (Settings.Current.MonitorCollectionEnabled == enabled)
+            return;
+
+        SetMonitorStates(
+            collectionEnabled: enabled,
+            showInBar: Settings.Current.MonitorEnabled);
+    }
+
+    public static void SetHwInfoBridgeEnabled(bool enabled)
+    {
+        if (Settings.Current.HwInfoBridgeEnabled == enabled)
+            return;
+
+        Settings.Current.HwInfoBridgeEnabled = enabled;
+        SystemMetricsEngine.HwInfoBridgeEnabled = enabled;
         Settings.Save();
-        if (OperatingSystem.IsWindows() && Settings.Current.WidgetVisible)
-            WidgetProcess.Refresh();
+        RefreshWidget();
+    }
+
+    public static void SetMonitorStates(bool collectionEnabled, bool showInBar)
+    {
+        Settings.Current.MonitorCollectionEnabled = collectionEnabled;
+        Settings.Current.MonitorEnabled = showInBar;
+        Settings.Current.MacStatusBarShowMetrics = showInBar;
+
+        var monitorGroup = Settings.Current.TaskbarGroups.FirstOrDefault(g =>
+            string.Equals(g.GroupId, "builtin:monitor", StringComparison.OrdinalIgnoreCase));
+        if (monitorGroup != null)
+            monitorGroup.Visible = showInBar;
+        else
+            Settings.Current.TaskbarGroups.Add(new TaskbarGroupConfig { GroupId = "builtin:monitor", Visible = showInBar });
+
+        Settings.Save();
+        CloseMonitorWindowsIfIdle();
+        RefreshWidget();
+        UiPost(() => MonitorEnabledChanged?.Invoke(collectionEnabled && showInBar));
+    }
+
+    private static void CloseMonitorWindowsIfIdle()
+    {
+        if (Settings.Current.MonitorCollectionEnabled)
+            return;
+        UiPost(() =>
+        {
+            try { Windows.FloatingMonitorWindow.CloseIfOpen(); } catch { }
+            try { Windows.WidgetMonitorWindow.CloseIfOpen(); } catch { }
+        });
     }
 
     public static void ShowMainWindow() => (Application.Current as App)?.ShowMainWindowCore();
@@ -579,7 +633,7 @@ public partial class App : Application
                 Settings?.Current.CloseToTray == true))
         {
             e.Cancel = true;
-            UiPost(HideMainWindowToTray);
+            UiPost(() => HideMainWindowToTray(hideMacDock: true));
             return;
         }
 
@@ -587,19 +641,24 @@ public partial class App : Application
             ExitCore(invokeDesktopShutdown: false);
     }
 
-    private void HideMainWindowToTray()
+    private void HideMainWindowToTray(bool hideMacDock = false)
     {
-        if (IsExiting || _mainWindow is null) return;
-        try
+        if (IsExiting) return;
+        if (_mainWindow is not null)
         {
-            _mainWindow.Close();
+            try { _mainWindow.Close(); }
+            catch { }
         }
-        catch { }
+        if (hideMacDock && OperatingSystem.IsMacOS())
+            UiPost(() => Tray?.SetMacDockVisible(false));
     }
 
     private void ShowMainWindowCore()
     {
         if (IsExiting) return;
+
+        if (OperatingSystem.IsMacOS())
+            Tray?.SetMacDockVisible(true);
 
         if (_mainWindow is null)
         {

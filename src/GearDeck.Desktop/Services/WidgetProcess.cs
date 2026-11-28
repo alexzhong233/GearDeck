@@ -125,8 +125,17 @@ public static class WidgetProcess
                 App.Settings.EnsureDefaults();
 
                 var groups = new List<WidgetChipOut>();
-                foreach (var cfg in settings.TaskbarGroups.Where(g => g.Visible))
+                int monitorIndex = -1;
+                bool showMonitor = settings.MonitorCollectionEnabled && settings.MonitorEnabled;
+                foreach (var cfg in settings.TaskbarGroups)
                 {
+                    if (string.Equals(cfg.GroupId, "builtin:monitor", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (showMonitor)
+                            monitorIndex = groups.Count;
+                        continue;
+                    }
+                    if (!cfg.Visible) continue;
                     var members = TaskbarGroupHelper.GetMembers(cfg.GroupId, devices, connectedOnly: true);
                     var def = BatteryHistoryHelper.SelectGroupDisplayDevice(members, cfg.DefaultDeviceId);
                     string label = cfg.GroupId switch
@@ -205,7 +214,9 @@ public static class WidgetProcess
                     Offset = settings.WidgetOffsetX,
                     FloatX = settings.WidgetFloatX,
                     FloatY = settings.WidgetFloatY,
-                    Monitor = settings.MonitorEnabled,
+                    Monitor = showMonitor,
+                    MonitorIndex = monitorIndex,
+                    HwInfoBridge = settings.HwInfoBridgeEnabled,
                     MonitorTop = settings.MonitorTopMetric,
                     MonitorBottom = settings.MonitorBottomMetric,
                     Height = settings.WidgetHeight,
@@ -252,6 +263,8 @@ public static class WidgetProcess
         public int FloatX { get; set; } = -1;
         public int FloatY { get; set; } = -1;
         public bool Monitor { get; set; }
+        public int MonitorIndex { get; set; } = -1;
+        public bool HwInfoBridge { get; set; } = true;
         public string MonitorTop { get; set; } = "CPU";
         public string MonitorBottom { get; set; } = "RAM";
         public int Height { get; set; } = 40;

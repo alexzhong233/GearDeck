@@ -96,6 +96,16 @@
                                               MinWidth="0" Margin="0,0,0,4" />
                             </WrapPanel>
                             <TextBlock x:Name="StartupHintText" Classes="meta" />
+                            <Border Height="1" Background="{DynamicResource CardStrokeColorDefaultBrush}" Margin="0,4" />
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,12,0" VerticalAlignment="Center">
+                                    <TextBlock Text="取消勾选系统监控分组行为" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="MonitorUncheckActionHintText" Classes="meta" />
+                                </StackPanel>
+                                <Button x:Name="ResetMonitorUncheckBtn" Grid.Column="1"
+                                        Content="重置为每次询问"
+                                        VerticalAlignment="Center" />
+                            </Grid>
                         </StackPanel>
                     </Border>
 

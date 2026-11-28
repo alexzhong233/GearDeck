@@ -110,7 +110,14 @@ public sealed class AppSettings
 
     public List<DeviceGroup> CustomGroups { get; set; } = [];
 
+    public bool MonitorCollectionEnabled { get; set; } = true;
+
     public bool MonitorEnabled { get; set; }
+
+    public bool HwInfoBridgeEnabled { get; set; } = true;
+
+    /// <summary>取消勾选任务栏/菜单栏「系统监控」分组时的行为：ask=每次询问 / disable_all=直接关闭系统监控 / hide_only=仅取消显示。</summary>
+    public string MonitorUncheckAction { get; set; } = "ask";
 
     public List<string> MonitorFlyoutMetrics { get; set; } = [];
 
@@ -238,7 +245,7 @@ public sealed class SettingsService
     // 与 Widget 的 SystemMetricsEngine.DefaultFlyoutMetricIds 保持一致；Desktop 不引用 Widget 项目。
     private static readonly string[] DefaultFlyoutMetricIds =
     [
-        "CPU", "CPU_FREQ", "RAM", "GPU", "GPU_TEMP", "VRAM", "NET_DOWN", "NET_UP", "DISK", "DISK_SPACE", "UPTIME"
+        "CPU", "CPU_FREQ", "CPU_TEMP", "RAM", "GPU", "GPU_TEMP", "VRAM", "NET_DOWN", "NET_UP", "DISK", "DISK_SPACE", "UPTIME"
     ];
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -343,6 +350,20 @@ public sealed class SettingsService
         {
             if (Current.TaskbarGroups.All(t => t.GroupId != g.Id))
                 Current.TaskbarGroups.Add(new TaskbarGroupConfig { GroupId = g.Id, Visible = true });
+        }
+        var monitorGroup = Current.TaskbarGroups.FirstOrDefault(g =>
+            string.Equals(g.GroupId, "builtin:monitor", StringComparison.OrdinalIgnoreCase));
+        if (monitorGroup == null)
+        {
+            Current.TaskbarGroups.Add(new TaskbarGroupConfig
+            {
+                GroupId = "builtin:monitor",
+                Visible = Current.MonitorEnabled,
+            });
+        }
+        else
+        {
+            monitorGroup.Visible = Current.MonitorEnabled;
         }
         if (!Current.PositionMigratedV2)
         {

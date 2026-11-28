@@ -314,10 +314,10 @@ jobs:
             - 如需读取键盘/鼠标 HID 与监听前台应用，请在「系统设置 → 隐私与安全性」授予 **输入监控（Input Monitoring）** 与 **辅助功能（Accessibility）** 权限。
 
           ### 本版亮点
-          - **Sony INZONE Buds (WF-G700N) & 多品牌协议大升级**：新增/修复 Sony INZONE Buds & H5 & H9 II 降噪/环境音/侧音/ChatMix/语音提示/自动关机控制及佩戴防休眠误判；扩展 ROG 键鼠耳机、HyperX（含 Alpha 2 & Flight）、SteelSeries Nova 7、Corsair Bragi V2 与 QMK/VIA 键盘硬件调控
-          - **预渲染设备图库与镜像加速**：桌面端自动优先从 `assets` 分支拉取 256px 预渲染 PNG（支持 GitHub 加速镜像与 jsDelivr/原图兜底）
-          - **游戏库与 UI 交互优化**：恢复 Windows 扫描游戏 `.exe` 透明 PNG 图标自动提取与旧规则回填；重构单游戏弹窗卡片布局、设置双栏排版、设备协议与 Logitech 板载模式分层展示
-          - **零 SSD 磨损静默运行**：非调试模式下全面关闭日常 `diag.log` 落盘与高频 HID 枚举日志（仅崩溃写入 `crash.log`）
+          - **macOS 原生菜单栏与系统监控大幅升级**：支持菜单栏 Retina 双行指标与 1:1 预览图（随浅/深色主题适配）、Mach `host_statistics64` 原生内存采样、Apple Silicon `IOReport`/`IOHID` 频率与 CPU/GPU 温度无 `sudo` 直采、统一原生标题栏（`⌘Q` 隐藏 Dock、`×` 保留 Dock）与 `.icns` 游戏图标自动提取
+          - **Windows HWiNFO Shared Memory 桥接与多显卡 / CPU 兼容性升级**：零 Ring-0 按需只读接入 `HWiNFO_SENS_SM2`（无感补充 AMD/Intel CPU 与显卡温度/有效核心频率）；引入 DXGI 硬件适配器枚举与 PDH 按 LUID 分组统计，彻底隔离集显与独显负载及显存
+          - **监控灵活性与按需采样升级**：新增 `CPU_TEMP` 第 13 项指标，支持监控页按项勾选并裁剪底层传感器按需采样；「系统监控」分组支持在「任务栏贴片 / 菜单栏状态」页前后自由调整位置，支持总开关与显示分组独立控制及置灰偏好保留
+          - **LEOBOG Hi98C Pro 与交互细节修复**：恢复 Mac → Win 一键键位映射与锁定编辑修复按钮，修复「菜单栏状态」切页崩溃、灵敏度换算页按钮对齐与游戏库「回报率 Hz」输入框对齐，新增 MLOONG MX301 PRO 与 Hi98C Pro 默认图库规则
           EOF
           ls -la dist/*
 

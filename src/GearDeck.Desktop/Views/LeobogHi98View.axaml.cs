@@ -238,6 +238,8 @@ public partial class LeobogHi98View : UserControl
         StageMacBtn.Click += (_, _) => StageMacLayout(announce: true);
         CopyToWritableBtn.Click += (_, _) => StageMacLayout(announce: true);
         EnableMacEditableBtn.Click += async (_, _) => await EnableMacEditableAsync();
+        QuickStageMacToWinBtn.Click += (_, _) => StageMacLayout(announce: true);
+        QuickEnableMacEditableBtn.Click += async (_, _) => await EnableMacEditableAsync();
 
         PresetModifiersBtn.Click += (_, _) => ApplyMacModifierPreset(swap: false);
         PresetSwapModifiersBtn.Click += (_, _) => ApplyMacModifierPreset(swap: true);
@@ -337,6 +339,8 @@ public partial class LeobogHi98View : UserControl
         StageMacBtn.IsEnabled = ready;
         CopyToWritableBtn.IsEnabled = ready;
         EnableMacEditableBtn.IsEnabled = ready && writable;
+        QuickStageMacToWinBtn.IsEnabled = ready;
+        QuickEnableMacEditableBtn.IsEnabled = ready && writable;
         PresetModifiersBtn.IsEnabled = ready && writable && layerWritable;
         PresetSwapModifiersBtn.IsEnabled = ready && writable && layerWritable;
         PresetStdFunctionBtn.IsEnabled = ready && writable && layerWritable;
@@ -619,6 +623,7 @@ public partial class LeobogHi98View : UserControl
         MacBanner.IsVisible = macMode;
         ReadOnlyBanner.IsVisible = !_activeLayer.IsWritable;
         EnableMacEditableBtn.IsEnabled = !_busy && _transport.CanWriteEEPROM();
+        QuickEnableMacEditableBtn.IsEnabled = !_busy && _transport.CanWriteEEPROM();
         LayerHintText.Text = _activeLayer switch
         {
             _ when !_activeLayer.IsWritable => "当前为固件只读参考层，可选择「复制到可编程层去改键」。",
@@ -632,11 +637,21 @@ public partial class LeobogHi98View : UserControl
     {
         var basePending = PendingFor(Hi98KeyLayer.Base);
         var fn1Pending = PendingFor(Hi98KeyLayer.Fn1);
-        foreach (var spec in Hi98CLayout.Keys)
+        var baseKeyIds = new[] { "lwin", "lalt" }.Concat(Enumerable.Range(1, 12).Select(i => $"f{i}"));
+        foreach (string keyId in baseKeyIds)
         {
+            var spec = Hi98CLayout.KeyById.GetValueOrDefault(keyId);
+            if (spec == null) continue;
             basePending[SlotFor(spec)] = Hi98CLayout.DefaultRecordFor(spec, Hi98KeyLayer.MacPresetBase);
-            fn1Pending[SlotFor(spec)] = Hi98CLayout.DefaultRecordFor(spec, Hi98KeyLayer.MacPresetFn1);
         }
+        for (int i = 1; i <= 12; i++)
+        {
+            var spec = Hi98CLayout.KeyById.GetValueOrDefault($"f{i}");
+            if (spec != null)
+                fn1Pending[SlotFor(spec)] = Hi98KeyBindingRecord.Key((byte)(0x3A + i - 1));
+        }
+        if (Hi98CLayout.KeyById.GetValueOrDefault("lwin") is { } lwinSpec)
+            fn1Pending[SlotFor(lwinSpec)] = Hi98KeyBindingRecord.Empty;
 
         _activeLayer = Hi98KeyLayer.Base;
         _currentBindings.Clear();
@@ -646,9 +661,9 @@ public partial class LeobogHi98View : UserControl
         RefreshInspector();
         UpdatePendingIndicators();
         UpdateActionAvailability();
-        AppendLog("已暂存 Mac 出厂键位到可编程默认层与 Fn1 层。");
+        AppendLog("已暂存 Mac 出厂键位（⌥Opt / ⌘Cmd 与 F1-F12 多媒体）到可编程默认层与 Fn1 层，并保留其他自定义改键。");
         if (announce)
-            ShowStatus("已暂存完整 Mac 键位到默认层与 Fn1 层；点击「写入改键」在有线模式写入生效。",
+            ShowStatus("已将 Mac 键位映射到可编程默认层与 Fn1 层（保留其余改键）；点击「写入改键」在有线模式写入生效。",
                 InfoBarSeverity.Informational);
     }
 
@@ -688,8 +703,9 @@ public partial class LeobogHi98View : UserControl
                     if (cfg != null)
                     {
                         cfg.OsMode = Hi98OsMode.Windows;
+                        cfg.WinKeyLocked = false;
                         var cfgResult = LeobogProvider.WriteLedConfigWired(_deviceId, cfg,
-                            "切换至 Fn+W 可改键模式", Backup);
+                            "切换至 Fn+W 可改键模式并解锁 Win/⌘", Backup);
                         messages.Add(cfgResult.Message);
                         ok &= cfgResult.Success;
                     }

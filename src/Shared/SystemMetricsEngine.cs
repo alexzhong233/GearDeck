@@ -24,15 +24,19 @@ public enum MetricScope
     DiskActive = 1 << 7,
     DiskSpace = 1 << 8,
     Uptime = 1 << 9,
-    All = Cpu | CpuFreq | Memory | Gpu | GpuTemp | Vram | Network | DiskActive | DiskSpace | Uptime,
+    CpuTemp = 1 << 10,
+    All = Cpu | CpuFreq | CpuTemp | Memory | Gpu | GpuTemp | Vram | Network | DiskActive | DiskSpace | Uptime,
 }
 
 public sealed record MetricDefinition(string Id, string ShortLabel, string FullName, string Glyph, bool HasPercentageBar);
+
+public sealed record GpuAdapterInfo(string Name, string LuidKey, uint VendorId, double DedicatedVramGb, double SharedMemGb, bool IsDiscrete);
 
 public sealed class SystemMetricsSnapshot
 {
     public double CpuPercent { get; init; }
     public double? CpuFreqGhz { get; init; }
+    public int? CpuTempC { get; init; }
     public double RamPercent { get; init; }
     public double MemUsedGb { get; init; }
     public double MemTotalGb { get; init; }
@@ -40,6 +44,8 @@ public sealed class SystemMetricsSnapshot
     public int? GpuTempC { get; init; }
     public double? VramUsedGb { get; init; }
     public double? VramTotalGb { get; init; }
+    public string? ActiveGpuName { get; init; }
+    public bool HwInfoConnected { get; init; }
     public double NetDownBytesPerSec { get; init; }
     public double NetUpBytesPerSec { get; init; }
     public double DiskActivePercent { get; init; }
@@ -60,10 +66,12 @@ public static class SystemMetricsEngine
 #if GEARDECK_DESKTOP
         new("CPU", "CPU 占用", "CPU 使用率", "\uE9F5", true),
         new("CPU_FREQ", "CPU 频率", "CPU 实时频率", "\uE945", false),
+        new("CPU_TEMP", "CPU 温度", "CPU 核心温度", "\uE9CA", false),
         new("RAM", "内存占用", "内存使用率", "\uE7F1", true),
 #else
         new("CPU", "CPU 占用", "CPU 使用率", "\uE950", true),
         new("CPU_FREQ", "CPU 频率", "CPU 实时频率", "\uE945", false),
+        new("CPU_TEMP", "CPU 温度", "CPU 核心温度", "\uE9CA", false),
         new("RAM", "内存占用", "内存使用率", "\uE964", true),
 #endif
         new("MEM_USED", "已用内存", "已用物理内存", "\uE7F8", true),
@@ -79,8 +87,14 @@ public static class SystemMetricsEngine
 
     public static IReadOnlyList<string> DefaultFlyoutMetricIds { get; } =
     [
-        "CPU", "CPU_FREQ", "RAM", "GPU", "GPU_TEMP", "VRAM", "NET_DOWN", "NET_UP", "DISK", "DISK_SPACE", "UPTIME"
+        "CPU", "CPU_FREQ", "CPU_TEMP", "RAM", "GPU", "GPU_TEMP", "VRAM", "NET_DOWN", "NET_UP", "DISK", "DISK_SPACE", "UPTIME"
     ];
+
+    public static bool HwInfoBridgeEnabled
+    {
+        get => HwInfoSharedMemoryReader.Enabled;
+        set => HwInfoSharedMemoryReader.Enabled = value;
+    }
 
     private const double Gb = 1073741824.0;
 
@@ -92,9 +106,24 @@ public static class SystemMetricsEngine
     private static ulong _lastIdle, _lastKernel, _lastUser;
     private static ulong _lastMacCpuUser, _lastMacCpuSys, _lastMacCpuIdle, _lastMacCpuNice;
     private static bool _hasMacCpuBaseline;
+    private static long _macTotalMemBytes;
+    private static int _macPageSize;
     private static long _lastMacGpuSampleMs;
     private static double? _cachedMacGpuPct;
     private static double? _cachedMacVramUsedGb;
+    private static long _lastMacGpuTempSampleMs;
+    private static int? _cachedMacCpuTempC;
+    private static int? _cachedMacGpuTempC;
+    private static long _lastMacCpuFreqSampleMs;
+    private static double? _cachedMacCpuFreqGhz;
+    private static bool _macDvfsProbed;
+    private static double[] _macPCoreFreqsGhz = [];
+    private static double[] _macECoreFreqsGhz = [];
+    private static bool _macIoReportInitAttempted;
+    private static IntPtr _macIoReportSub;
+    private static IntPtr _macIoReportSubCh;
+    private static IntPtr _prevMacIoReportSample;
+    private static IntPtr _cfStrIoReportChannels;
     private static ulong _lastNetRx, _lastNetTx;
     private static long _lastNetTick;
     private static double _baseCpuGhz;
@@ -107,13 +136,16 @@ public static class SystemMetricsEngine
     private static NvmlGetTemp? _nvmlGetTemp;
     private static NvmlGetMem? _nvmlGetMem;
 
-    // PDH (按需添加所需计数器)
+    // PDH & DXGI (按需添加所需计数器，并按显卡 LUID 隔离集显/独显)
+    private static bool _dxgiProbed;
+    private static List<GpuAdapterInfo> _dxgiAdapters = [];
     private static bool _pdhQueryOpened;
     private static IntPtr _pdhQuery;
     private static IntPtr _pdhCpuPerf;
     private static IntPtr _pdhDiskTime;
     private static IntPtr _pdhGpu3d;
     private static IntPtr _pdhGpuVram;
+    private static IntPtr _pdhGpuSharedVram;
     private static MetricScope _pdhAddedFlags;
     private static bool _pdhPrimed;
 
@@ -128,6 +160,7 @@ public static class SystemMetricsEngine
                 "NONE" => MetricScope.None,
                 "CPU" => MetricScope.Cpu,
                 "CPU_FREQ" => MetricScope.CpuFreq,
+                "CPU_TEMP" => MetricScope.CpuTemp,
                 "RAM" or "MEM" or "MEM_USED" => MetricScope.Memory,
                 "GPU" => MetricScope.Gpu,
                 "GPU_TEMP" => MetricScope.GpuTemp,
@@ -140,6 +173,11 @@ public static class SystemMetricsEngine
             };
         }
         return scope;
+    }
+
+    public static SystemMetricsSnapshot LastSnapshot
+    {
+        get { lock (Gate) return _lastSnapshot; }
     }
 
     public static SystemMetricsSnapshot Sample(MetricScope scope = MetricScope.All)
@@ -173,14 +211,22 @@ public static class SystemMetricsEngine
                 : (_lastSnapshot.SystemDriveLabel, _lastSnapshot.DiskSpaceUsedPercent, _lastSnapshot.DiskFreeGb);
 
             bool needCpuFreq = scope.HasFlag(MetricScope.CpuFreq);
+            bool needCpuTemp = scope.HasFlag(MetricScope.CpuTemp);
             bool needDiskActive = scope.HasFlag(MetricScope.DiskActive);
             bool needGpuAny = (scope & (MetricScope.Gpu | MetricScope.GpuTemp | MetricScope.Vram)) != 0;
             bool needPdh = isWindows && (needCpuFreq || needDiskActive || scope.HasFlag(MetricScope.Gpu) || scope.HasFlag(MetricScope.Vram));
+            bool needHwInfo = isWindows && HwInfoBridgeEnabled &&
+                              (needCpuFreq || needCpuTemp || needGpuAny);
+
+            HwInfoSnapshot hwInfo = needHwInfo
+                ? HwInfoSharedMemoryReader.TryRead(now)
+                : HwInfoSnapshot.Empty;
 
             double? cpuPerfPct = null;
             double diskActivePct = _lastSnapshot.DiskActivePercent;
-            double? pdhGpuPct = null;
-            double? pdhVramUsedGb = null;
+            Dictionary<string, double> gpu3dByLuid = [];
+            Dictionary<string, double> dedicatedVramByLuid = [];
+            Dictionary<string, double> sharedVramByLuid = [];
 
             if (isWindows)
             {
@@ -198,15 +244,21 @@ public static class SystemMetricsEngine
                             if (needDiskActive)
                                 diskActivePct = Math.Clamp(ReadPdhDouble(_pdhDiskTime) ?? 0, 0, 100);
                             if (scope.HasFlag(MetricScope.Gpu))
-                                pdhGpuPct = SumPdhWildcard(_pdhGpu3d);
-                            if (scope.HasFlag(MetricScope.Vram) && SumPdhWildcard(_pdhGpuVram) is { } vBytes && vBytes > 0)
-                                pdhVramUsedGb = vBytes / Gb;
+                                gpu3dByLuid = SumPdhByLuid(_pdhGpu3d);
+                            if (scope.HasFlag(MetricScope.Vram))
+                            {
+                                dedicatedVramByLuid = SumPdhByLuid(_pdhGpuVram);
+                                sharedVramByLuid = SumPdhByLuid(_pdhGpuSharedVram);
+                            }
                         }
                         _pdhPrimed = true;
                     }
                 }
                 if (needGpuAny)
+                {
+                    EnsureDxgiAdapters();
                     EnsureNvml();
+                }
             }
 
             double? cpuFreqGhz = _lastSnapshot.CpuFreqGhz;
@@ -214,58 +266,105 @@ public static class SystemMetricsEngine
             {
                 if (isWindows)
                 {
-                    if (_baseCpuGhz > 0)
+                    if (hwInfo.Connected && hwInfo.CpuFreqGhz is { } hwFreq)
+                    {
+                        cpuFreqGhz = hwFreq;
+                    }
+                    else if (_baseCpuGhz > 0)
                     {
                         cpuFreqGhz = cpuPerfPct is { } p && p > 0
                             ? Math.Round(_baseCpuGhz * p / 100.0, 2)
                             : _baseCpuGhz;
                     }
                 }
-                else if (OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture != Architecture.Arm64)
+                else if (OperatingSystem.IsMacOS())
                 {
-                    string hz = RunCommand("/usr/sbin/sysctl", ["-n", "hw.cpufrequency"]);
-                    if (ParseDouble(hz) is { } frequency && frequency > 0)
-                        cpuFreqGhz = Math.Round(frequency / 1000000000.0, 2);
+                    cpuFreqGhz = RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+                        ? SampleMacArm64CpuFreqThrottled(now)
+                        : SampleMacIntelCpuFreqThrottled(now);
                 }
             }
 
+            int? cpuTempC = _lastSnapshot.CpuTempC;
             double? gpuPct = _lastSnapshot.GpuPercent;
             int? gpuTempC = _lastSnapshot.GpuTempC;
             double? vramUsedGb = _lastSnapshot.VramUsedGb;
             double? vramTotalGb = _lastSnapshot.VramTotalGb;
+            string? activeGpuName = _lastSnapshot.ActiveGpuName;
+
+            if (OperatingSystem.IsMacOS() && (needCpuTemp || scope.HasFlag(MetricScope.GpuTemp)))
+            {
+                var (macCpuT, macGpuT) = SampleMacTempsThrottled(now);
+                if (needCpuTemp)
+                    cpuTempC = macCpuT;
+                if (scope.HasFlag(MetricScope.GpuTemp))
+                    gpuTempC = macGpuT;
+            }
+            else if (isWindows && needCpuTemp)
+            {
+                cpuTempC = hwInfo.Connected ? hwInfo.CpuTempC : null;
+            }
 
             if (needGpuAny)
             {
                 gpuPct = null;
-                gpuTempC = null;
-                vramUsedGb = pdhVramUsedGb;
+                if (!OperatingSystem.IsMacOS())
+                    gpuTempC = null;
+                vramUsedGb = null;
                 vramTotalGb = null;
 
-                if (isWindows && _nvmlOk && _nvmlDevice != IntPtr.Zero)
+                if (isWindows)
                 {
-                    if (scope.HasFlag(MetricScope.Gpu) && _nvmlGetUtil != null && _nvmlGetUtil(_nvmlDevice, out var util) == 0)
-                        gpuPct = util.Gpu;
-                    if (scope.HasFlag(MetricScope.GpuTemp) && _nvmlGetTemp != null && _nvmlGetTemp(_nvmlDevice, 0, out uint temp) == 0 && temp < 150)
-                        gpuTempC = (int)temp;
-                    if (scope.HasFlag(MetricScope.Vram) && _nvmlGetMem != null && _nvmlGetMem(_nvmlDevice, out var mem) == 0 && mem.Total > 0)
+                    var (dxgiGpuPct, dxgiVramUsed, dxgiVramTotal, dxgiGpuName) =
+                        SelectPrimaryGpuByLuid(gpu3dByLuid, dedicatedVramByLuid, sharedVramByLuid, _dxgiAdapters);
+                    gpuPct = dxgiGpuPct;
+                    vramUsedGb = dxgiVramUsed;
+                    vramTotalGb = dxgiVramTotal;
+                    if (!string.IsNullOrWhiteSpace(dxgiGpuName))
+                        activeGpuName = dxgiGpuName;
+
+                    if (_nvmlOk && _nvmlDevice != IntPtr.Zero)
                     {
-                        vramUsedGb = mem.Used / Gb;
-                        vramTotalGb = mem.Total / Gb;
+                        if (scope.HasFlag(MetricScope.Gpu) && _nvmlGetUtil != null && _nvmlGetUtil(_nvmlDevice, out var util) == 0)
+                            gpuPct = util.Gpu;
+                        if (scope.HasFlag(MetricScope.GpuTemp) && _nvmlGetTemp != null && _nvmlGetTemp(_nvmlDevice, 0, out uint temp) == 0 && temp < 150)
+                            gpuTempC = (int)temp;
+                        if (scope.HasFlag(MetricScope.Vram) && _nvmlGetMem != null && _nvmlGetMem(_nvmlDevice, out var mem) == 0 && mem.Total > 0)
+                        {
+                            vramUsedGb = mem.Used / Gb;
+                            vramTotalGb = mem.Total / Gb;
+                        }
+                    }
+
+                    if (hwInfo.Connected)
+                    {
+                        if (scope.HasFlag(MetricScope.Gpu) && hwInfo.GpuPercent is { } hwGpuPct)
+                            gpuPct = hwGpuPct;
+                        if (scope.HasFlag(MetricScope.GpuTemp) && hwInfo.GpuTempC is { } hwGpuTemp)
+                            gpuTempC = hwGpuTemp;
+                        if (scope.HasFlag(MetricScope.Vram) && hwInfo.VramUsedGb is { } hwVramUsed)
+                            vramUsedGb = hwVramUsed;
+                        if (scope.HasFlag(MetricScope.Vram) && hwInfo.VramTotalGb is { } hwVramTotal && hwVramTotal > 0)
+                            vramTotalGb = hwVramTotal;
+                        if (!string.IsNullOrWhiteSpace(hwInfo.GpuName))
+                            activeGpuName = hwInfo.GpuName;
                     }
                 }
                 else if (OperatingSystem.IsMacOS())
                 {
-                    (gpuPct, vramUsedGb) = SampleMacGpuThrottled(now);
+                    if (scope.HasFlag(MetricScope.Gpu) || scope.HasFlag(MetricScope.Vram))
+                        (gpuPct, vramUsedGb) = SampleMacGpuThrottled(now);
                 }
 
-                if (gpuPct == null && pdhGpuPct is { } pg)
-                    gpuPct = Math.Clamp(pg, 0, 100);
+                if (gpuPct is { } gp)
+                    gpuPct = Math.Clamp(gp, 0, 100);
             }
 
             _lastSnapshot = new SystemMetricsSnapshot
             {
                 CpuPercent = cpu,
                 CpuFreqGhz = cpuFreqGhz,
+                CpuTempC = cpuTempC,
                 RamPercent = ramPct,
                 MemUsedGb = memUsedGb,
                 MemTotalGb = memTotalGb,
@@ -273,6 +372,8 @@ public static class SystemMetricsEngine
                 GpuTempC = gpuTempC,
                 VramUsedGb = vramUsedGb,
                 VramTotalGb = vramTotalGb,
+                ActiveGpuName = activeGpuName,
+                HwInfoConnected = hwInfo.Connected,
                 NetDownBytesPerSec = netDown,
                 NetUpBytesPerSec = netUp,
                 DiskActivePercent = diskActivePct,
@@ -291,6 +392,7 @@ public static class SystemMetricsEngine
         {
             "NONE" => "",
             "CPU_FREQ" => s.CpuFreqGhz is { } f ? $"{f:F2}GHz" : "--GHz",
+            "CPU_TEMP" => s.CpuTempC is { } ct ? $"CPU {ct}°C" : "CPU --°C",
             "RAM" or "MEM" => $"RAM {s.RamPercent:F0}%",
             "MEM_USED" => $"{s.MemUsedGb:F1}G",
             "GPU" => s.GpuPercent is { } g ? $"GPU {g:F0}%" : "GPU --",
@@ -311,10 +413,11 @@ public static class SystemMetricsEngine
         {
             "CPU" => $"{s.CpuPercent:F1}%",
             "CPU_FREQ" => s.CpuFreqGhz is { } f ? $"{f:F2} GHz" : "--",
+            "CPU_TEMP" => s.CpuTempC is { } ct ? $"{ct} °C" : (OperatingSystem.IsWindows() ? "需开启 HWiNFO" : "未支持"),
             "RAM" or "MEM" => $"{s.RamPercent:F0}% ({s.MemUsedGb:F1} / {s.MemTotalGb:F1} GB)",
             "MEM_USED" => $"{s.MemUsedGb:F1} / {s.MemTotalGb:F1} GB",
             "GPU" => s.GpuPercent is { } g ? $"{g:F0}%" : "无读数",
-            "GPU_TEMP" => s.GpuTempC is { } t ? $"{t} °C" : "未支持",
+            "GPU_TEMP" => s.GpuTempC is { } t ? $"{t} °C" : (OperatingSystem.IsWindows() ? "需 NVML/HWiNFO" : "未支持"),
             "VRAM" => s.VramUsedGb is { } vu
                 ? (s.VramTotalGb is { } vt && vt > 0 ? $"{vu:F1} / {vt:F1} GB" : $"{vu:F1} GB")
                 : "无读数",
@@ -456,6 +559,297 @@ public static class SystemMetricsEngine
         return (_cachedMacGpuPct, _cachedMacVramUsedGb);
     }
 
+    private static double? SampleMacIntelCpuFreqThrottled(long nowMs)
+    {
+        if (_lastMacCpuFreqSampleMs != 0 && nowMs - _lastMacCpuFreqSampleMs < 2000)
+            return _cachedMacCpuFreqGhz;
+        _lastMacCpuFreqSampleMs = nowMs;
+
+        string hz = RunCommand("/usr/sbin/sysctl", ["-n", "hw.cpufrequency"]);
+        if (ParseDouble(hz) is { } frequency && frequency > 0)
+            _cachedMacCpuFreqGhz = Math.Round(frequency / 1000000000.0, 2);
+        return _cachedMacCpuFreqGhz;
+    }
+
+    private static double? SampleMacArm64CpuFreqThrottled(long nowMs)
+    {
+        if (_lastMacCpuFreqSampleMs != 0 && nowMs - _lastMacCpuFreqSampleMs < 2000)
+            return _cachedMacCpuFreqGhz;
+        _lastMacCpuFreqSampleMs = nowMs;
+
+        try
+        {
+            EnsureMacDvfsTables();
+            if (_macPCoreFreqsGhz.Length == 0 && _macECoreFreqsGhz.Length == 0)
+                return _cachedMacCpuFreqGhz;
+
+            if (!_macIoReportInitAttempted)
+            {
+                _macIoReportInitAttempted = true;
+                IntPtr group = CreateCfStr("CPU Stats");
+                IntPtr subGroup = CreateCfStr("CPU Core Performance States");
+                _cfStrIoReportChannels = CreateCfStr("IOReportChannels");
+                try
+                {
+                    IntPtr channels = IOReportCopyChannelsInGroup(group, subGroup, 0, 0, 0);
+                    if (channels != IntPtr.Zero)
+                    {
+                        try
+                        {
+                            _macIoReportSub = IOReportCreateSubscription(IntPtr.Zero, channels, out _macIoReportSubCh, 0, IntPtr.Zero);
+                        }
+                        finally
+                        {
+                            CFRelease(channels);
+                        }
+                    }
+                }
+                finally
+                {
+                    if (group != IntPtr.Zero) CFRelease(group);
+                    if (subGroup != IntPtr.Zero) CFRelease(subGroup);
+                }
+            }
+
+            if (_macIoReportSub == IntPtr.Zero || _macIoReportSubCh == IntPtr.Zero || _cfStrIoReportChannels == IntPtr.Zero)
+                return _cachedMacCpuFreqGhz;
+
+            if (_prevMacIoReportSample == IntPtr.Zero)
+            {
+                _prevMacIoReportSample = IOReportCreateSamples(_macIoReportSub, _macIoReportSubCh, IntPtr.Zero);
+                if (_prevMacIoReportSample == IntPtr.Zero)
+                    return _cachedMacCpuFreqGhz;
+                Thread.Sleep(60);
+            }
+
+            IntPtr currentSample = IOReportCreateSamples(_macIoReportSub, _macIoReportSubCh, IntPtr.Zero);
+            if (currentSample == IntPtr.Zero)
+                return _cachedMacCpuFreqGhz;
+
+            IntPtr delta = IntPtr.Zero;
+            try
+            {
+                delta = IOReportCreateSamplesDelta(_prevMacIoReportSample, currentSample, IntPtr.Zero);
+                CFRelease(_prevMacIoReportSample);
+                _prevMacIoReportSample = currentSample;
+                currentSample = IntPtr.Zero;
+
+                if (delta == IntPtr.Zero)
+                    return _cachedMacCpuFreqGhz;
+
+                IntPtr arr = CFDictionaryGetValue(delta, _cfStrIoReportChannels);
+                if (arr == IntPtr.Zero)
+                    return _cachedMacCpuFreqGhz;
+
+                long chCount = CFArrayGetCount(arr);
+                double pWeightedSum = 0, pResidencySum = 0;
+                double allWeightedSum = 0, allResidencySum = 0;
+
+                for (long i = 0; i < chCount; i++)
+                {
+                    IntPtr item = CFArrayGetValueAtIndex(arr, i);
+                    string cname = ReadCfStr(IOReportChannelGetChannelName(item));
+                    bool isP = cname.StartsWith("PCPU", StringComparison.Ordinal);
+                    bool isE = cname.StartsWith("ECPU", StringComparison.Ordinal);
+                    if (!isP && !isE) continue;
+
+                    double[] table = isP ? _macPCoreFreqsGhz : _macECoreFreqsGhz;
+                    if (table.Length == 0) continue;
+
+                    int stateCount = IOReportStateGetCount(item);
+                    var activeResidencies = new List<long>(stateCount);
+                    for (int s = 0; s < stateCount; s++)
+                    {
+                        string sname = ReadCfStr(IOReportStateGetNameForIndex(item, s));
+                        if (sname is "IDLE" or "DOWN" or "OFF") continue;
+                        activeResidencies.Add(Math.Max(0L, IOReportStateGetResidency(item, s)));
+                    }
+
+                    if (activeResidencies.Count == 0) continue;
+                    int offset = Math.Max(0, table.Length - activeResidencies.Count);
+                    double coreWeighted = 0, coreRes = 0;
+                    for (int idx = 0; idx < activeResidencies.Count; idx++)
+                    {
+                        long r = activeResidencies[idx];
+                        if (r <= 0) continue;
+                        double ghz = table[Math.Min(table.Length - 1, offset + idx)];
+                        coreWeighted += ghz * r;
+                        coreRes += r;
+                    }
+                    if (coreRes <= 0) continue;
+
+                    allWeightedSum += coreWeighted;
+                    allResidencySum += coreRes;
+                    if (isP)
+                    {
+                        pWeightedSum += coreWeighted;
+                        pResidencySum += coreRes;
+                    }
+                }
+
+                if (pResidencySum > 0)
+                    _cachedMacCpuFreqGhz = Math.Round(pWeightedSum / pResidencySum, 2);
+                else if (allResidencySum > 0)
+                    _cachedMacCpuFreqGhz = Math.Round(allWeightedSum / allResidencySum, 2);
+            }
+            finally
+            {
+                if (delta != IntPtr.Zero) CFRelease(delta);
+                if (currentSample != IntPtr.Zero) CFRelease(currentSample);
+            }
+        }
+        catch { }
+
+        return _cachedMacCpuFreqGhz;
+    }
+
+    private static void EnsureMacDvfsTables()
+    {
+        if (_macDvfsProbed) return;
+        _macDvfsProbed = true;
+
+        string outText = RunCommand("/usr/sbin/ioreg", ["-r", "-d", "1", "-w", "0", "-c", "AppleARMIODevice"]);
+        if (string.IsNullOrWhiteSpace(outText)) return;
+
+        _macPCoreFreqsGhz = ParseDvfsFreqsGhz(outText, "voltage-states5-sram");
+        _macECoreFreqsGhz = ParseDvfsFreqsGhz(outText, "voltage-states1-sram");
+    }
+
+    private static double[] ParseDvfsFreqsGhz(string ioregText, string keyName)
+    {
+        var match = Regex.Match(ioregText, $@"""{Regex.Escape(keyName)}""\s*=\s*<([0-9a-fA-F]+)>");
+        if (!match.Success) return [];
+
+        string hex = match.Groups[1].Value;
+        int pairs = hex.Length / 16;
+        if (pairs <= 0) return [];
+
+        var freqs = new double[pairs];
+        for (int i = 0; i < pairs; i++)
+        {
+            uint hz = uint.Parse(hex.Substring(i * 8 * 2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture)
+                    | (uint.Parse(hex.Substring(i * 8 * 2 + 2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture) << 8)
+                    | (uint.Parse(hex.Substring(i * 8 * 2 + 4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture) << 16)
+                    | (uint.Parse(hex.Substring(i * 8 * 2 + 6, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture) << 24);
+            freqs[i] = hz / 1_000_000_000.0;
+        }
+        return freqs;
+    }
+
+    private static (int? CpuTempC, int? GpuTempC) SampleMacTempsThrottled(long nowMs)
+    {
+        if (_lastMacGpuTempSampleMs != 0 && nowMs - _lastMacGpuTempSampleMs < 2000)
+            return (_cachedMacCpuTempC, _cachedMacGpuTempC);
+        _lastMacGpuTempSampleMs = nowMs;
+
+        IntPtr client = IntPtr.Zero;
+        IntPtr kPage = IntPtr.Zero, kUsage = IntPtr.Zero;
+        IntPtr vPage = IntPtr.Zero, vUsage = IntPtr.Zero;
+        IntPtr matching = IntPtr.Zero, services = IntPtr.Zero, prodKey = IntPtr.Zero;
+        try
+        {
+            client = IOHIDEventSystemClientCreate(IntPtr.Zero);
+            if (client == IntPtr.Zero) return (_cachedMacCpuTempC, _cachedMacGpuTempC);
+
+            kPage = CreateCfStr("PrimaryUsagePage");
+            kUsage = CreateCfStr("PrimaryUsage");
+            int pageVal = 0xFF00;
+            int usageVal = 5;
+            vPage = CFNumberCreate(IntPtr.Zero, 3 /* kCFNumberSInt32Type */, ref pageVal);
+            vUsage = CFNumberCreate(IntPtr.Zero, 3 /* kCFNumberSInt32Type */, ref usageVal);
+
+            IntPtr[] keys = [kPage, kUsage];
+            IntPtr[] vals = [vPage, vUsage];
+            matching = CFDictionaryCreate(IntPtr.Zero, keys, vals, 2, IntPtr.Zero, IntPtr.Zero);
+            IOHIDEventSystemClientSetMatching(client, matching);
+
+            services = IOHIDEventSystemClientCopyServices(client);
+            if (services == IntPtr.Zero) return (_cachedMacCpuTempC, _cachedMacGpuTempC);
+
+            prodKey = CreateCfStr("Product");
+            long count = CFArrayGetCount(services);
+            double cpuSum = 0; int cpuCount = 0;
+            double gpuSum = 0; int gpuCount = 0;
+            double socSum = 0; int socCount = 0;
+
+            for (long i = 0; i < count; i++)
+            {
+                IntPtr svc = CFArrayGetValueAtIndex(services, i);
+                if (svc == IntPtr.Zero) continue;
+
+                IntPtr propName = IOHIDServiceClientCopyProperty(svc, prodKey);
+                string name;
+                try { name = ReadCfStr(propName); }
+                finally { if (propName != IntPtr.Zero) CFRelease(propName); }
+
+                if (string.IsNullOrEmpty(name)) continue;
+
+                IntPtr ev = IOHIDServiceClientCopyEvent(svc, 15 /* kIOHIDEventTypeTemperature */, 0, 0);
+                if (ev == IntPtr.Zero) continue;
+                double temp;
+                try { temp = IOHIDEventGetFloatValue(ev, 15u << 16); }
+                finally { CFRelease(ev); }
+
+                if (double.IsNaN(temp) || temp <= 5.0 || temp >= 130.0) continue;
+
+                string lower = name.ToLowerInvariant();
+                if (lower.Contains("gpu", StringComparison.Ordinal) || Regex.IsMatch(lower, @"\btp\d+g\b"))
+                {
+                    gpuSum += temp;
+                    gpuCount++;
+                }
+                else if (lower.Contains("pacc", StringComparison.Ordinal)
+                      || lower.Contains("eacc", StringComparison.Ordinal)
+                      || lower.Contains("cpu", StringComparison.Ordinal)
+                      || Regex.IsMatch(lower, @"\btp\d+c\b"))
+                {
+                    cpuSum += temp;
+                    cpuCount++;
+                }
+                else if (lower.Contains("tdie", StringComparison.Ordinal) || lower.Contains("soc", StringComparison.Ordinal))
+                {
+                    socSum += temp;
+                    socCount++;
+                }
+            }
+
+            if (cpuCount > 0)
+                _cachedMacCpuTempC = (int)Math.Round(cpuSum / cpuCount);
+            else if (socCount > 0)
+                _cachedMacCpuTempC = (int)Math.Round(socSum / socCount);
+
+            if (gpuCount > 0)
+                _cachedMacGpuTempC = (int)Math.Round(gpuSum / gpuCount);
+            else if (socCount > 0)
+                _cachedMacGpuTempC = (int)Math.Round(socSum / socCount);
+        }
+        catch { }
+        finally
+        {
+            if (prodKey != IntPtr.Zero) CFRelease(prodKey);
+            if (services != IntPtr.Zero) CFRelease(services);
+            if (matching != IntPtr.Zero) CFRelease(matching);
+            if (vPage != IntPtr.Zero) CFRelease(vPage);
+            if (vUsage != IntPtr.Zero) CFRelease(vUsage);
+            if (kPage != IntPtr.Zero) CFRelease(kPage);
+            if (kUsage != IntPtr.Zero) CFRelease(kUsage);
+            if (client != IntPtr.Zero) CFRelease(client);
+        }
+        return (_cachedMacCpuTempC, _cachedMacGpuTempC);
+    }
+
+    private static IntPtr CreateCfStr(string s)
+        => CFStringCreateWithCString(IntPtr.Zero, s ?? string.Empty, 0x08000100 /* kCFStringEncodingUTF8 */);
+
+    private static string ReadCfStr(IntPtr cfStr)
+    {
+        if (cfStr == IntPtr.Zero) return "";
+        byte[] buf = new byte[256];
+        return CFStringGetCString(cfStr, buf, buf.Length, 0x08000100)
+            ? System.Text.Encoding.UTF8.GetString(buf, 0, Array.IndexOf(buf, (byte)0) is int idx and >= 0 ? idx : buf.Length)
+            : "";
+    }
+
     private static (double RamPct, double UsedGb, double TotalGb) SampleMemory()
     {
         var mem = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
@@ -467,6 +861,70 @@ public static class SystemMetricsEngine
     }
 
     private static (double RamPct, double UsedGb, double TotalGb) SampleMacMemory()
+    {
+        if (TrySampleMacMemoryNative(out double usedGb, out double totalGb))
+        {
+            double pct = totalGb > 0 ? Math.Clamp(usedGb * 100.0 / totalGb, 0, 100) : 0;
+            return (pct, usedGb, totalGb);
+        }
+        return SampleMacMemoryViaVmStat();
+    }
+
+    private static bool TrySampleMacMemoryNative(out double usedGb, out double totalGb)
+    {
+        usedGb = 0;
+        totalGb = 0;
+        try
+        {
+            if (_macTotalMemBytes <= 0)
+            {
+                nint len8 = sizeof(long);
+                if (sysctlbyname("hw.memsize", out long totalBytes, ref len8, IntPtr.Zero, 0) == 0 && totalBytes > 0)
+                    _macTotalMemBytes = totalBytes;
+            }
+            if (_macPageSize <= 0)
+            {
+                nint len4 = sizeof(int);
+                if (sysctlbyname("hw.pagesize", out int ps, ref len4, IntPtr.Zero, 0) == 0 && ps > 0)
+                    _macPageSize = ps;
+            }
+            if (_macTotalMemBytes <= 0)
+                return false;
+
+            int pageSize = _macPageSize > 0 ? _macPageSize : Environment.SystemPageSize;
+            uint[] vm = new uint[104]; // sizeof(vm_statistics64) == 416 bytes
+            int count = vm.Length;
+            const int HOST_VM_INFO64 = 4;
+            if (host_statistics64(mach_host_self(), HOST_VM_INFO64, vm, ref count) != 0 || count < 36)
+                return false;
+
+            // 与 macOS 活动监视器一致：App(internal - purgeable) + Wired(wire) + Compressed(compressor)
+            long wire = vm[3];
+            long purgeable = vm[22];
+            long compressor = vm[32];
+            long internalPages = vm[35];
+
+            long appPages = Math.Max(0L, internalPages - purgeable);
+            long usedPages = appPages + wire + compressor;
+            if (usedPages <= 0)
+            {
+                long free = vm[0];
+                long inactive = vm[2];
+                long totalPages = _macTotalMemBytes / Math.Max(1, pageSize);
+                usedPages = Math.Max(0L, totalPages - free - inactive);
+            }
+
+            totalGb = _macTotalMemBytes / Gb;
+            usedGb = usedPages * (double)pageSize / Gb;
+            return totalGb > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static (double RamPct, double UsedGb, double TotalGb) SampleMacMemoryViaVmStat()
     {
         try
         {
@@ -702,6 +1160,7 @@ public static class SystemMetricsEngine
             {
                 _pdhAddedFlags |= MetricScope.Vram;
                 PdhAddEnglishCounterW(_pdhQuery, @"\GPU Adapter Memory(*)\Dedicated Usage", IntPtr.Zero, out _pdhGpuVram);
+                PdhAddEnglishCounterW(_pdhQuery, @"\GPU Adapter Memory(*)\Shared Usage", IntPtr.Zero, out _pdhGpuSharedVram);
                 addedAny = true;
             }
 
@@ -729,34 +1188,37 @@ public static class SystemMetricsEngine
         return null;
     }
 
-    private static double? SumPdhWildcard(IntPtr counter)
+    private static readonly Regex LuidRegex = new(@"luid_0x[0-9a-fA-F]+_0x[0-9a-fA-F]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static Dictionary<string, double> SumPdhByLuid(IntPtr counter)
     {
-        if (counter == IntPtr.Zero) return null;
+        var map = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        if (counter == IntPtr.Zero) return map;
         try
         {
             uint bufSize = 0, itemCount = 0;
             uint st = PdhGetFormattedCounterArrayW(counter, 0x00000200, ref bufSize, ref itemCount, IntPtr.Zero);
-            if (st != 0x800007D2 || bufSize == 0 || itemCount == 0 || itemCount > 512)
-                return null;
+            if (st != 0x800007D2 || bufSize == 0 || itemCount == 0 || itemCount > 1024)
+                return map;
 
             IntPtr mem = Marshal.AllocHGlobal((int)bufSize);
             try
             {
                 if (PdhGetFormattedCounterArrayW(counter, 0x00000200, ref bufSize, ref itemCount, mem) != 0)
-                    return null;
+                    return map;
                 int stride = Marshal.SizeOf<PdhFmtCounterValueItem>();
-                double sum = 0;
-                int validCount = 0;
                 for (int i = 0; i < itemCount; i++)
                 {
                     var item = Marshal.PtrToStructure<PdhFmtCounterValueItem>(mem + i * stride);
-                    if (item.Value.CStatus <= 1 && item.Value.DoubleValue >= 0)
-                    {
-                        sum += item.Value.DoubleValue;
-                        validCount++;
-                    }
+                    if (item.Value.CStatus > 1 || item.Value.DoubleValue < 0)
+                        continue;
+
+                    string inst = Marshal.PtrToStringUni(item.Name) ?? "";
+                    var m = LuidRegex.Match(inst);
+                    string key = m.Success ? m.Value.ToLowerInvariant() : "__default__";
+                    map[key] = map.TryGetValue(key, out double cur) ? cur + item.Value.DoubleValue : item.Value.DoubleValue;
                 }
-                return validCount > 0 ? sum : null;
+                return map;
             }
             finally
             {
@@ -765,8 +1227,167 @@ public static class SystemMetricsEngine
         }
         catch
         {
-            return null;
+            return map;
         }
+    }
+
+    /// <summary>按 LUID 隔离选择主显卡：默认优先独显；混合本独显空闲而集显高负载时切换为活跃显卡。</summary>
+    public static (double? GpuPct, double? VramUsedGb, double? VramTotalGb, string? GpuName) SelectPrimaryGpuByLuid(
+        IReadOnlyDictionary<string, double> gpu3dByLuid,
+        IReadOnlyDictionary<string, double> dedicatedVramByLuid,
+        IReadOnlyDictionary<string, double> sharedVramByLuid,
+        IReadOnlyList<GpuAdapterInfo> adapters)
+    {
+        if (adapters.Count == 0)
+        {
+            string? fallbackKey = dedicatedVramByLuid
+                .OrderByDescending(kv => kv.Value)
+                .Select(kv => kv.Key)
+                .FirstOrDefault()
+                ?? gpu3dByLuid.OrderByDescending(kv => kv.Value).Select(kv => kv.Key).FirstOrDefault();
+
+            if (fallbackKey == null)
+                return (null, null, null, null);
+
+            double? fGpu = gpu3dByLuid.TryGetValue(fallbackKey, out double g) ? Math.Clamp(g, 0, 100) : null;
+            double? fVram = dedicatedVramByLuid.TryGetValue(fallbackKey, out double dv) && dv > 0 ? dv / Gb : null;
+            return (fGpu, fVram, null, null);
+        }
+
+        GpuAdapterInfo selected = adapters[0];
+        if (adapters.Count > 1)
+        {
+            double selectedGpu = gpu3dByLuid.TryGetValue(selected.LuidKey, out double g0) ? g0 : 0;
+            if (selectedGpu < 1.0)
+            {
+                var busyAlt = adapters
+                    .Skip(1)
+                    .Select(a => (Adapter: a, Load: gpu3dByLuid.TryGetValue(a.LuidKey, out double g) ? g : 0))
+                    .Where(x => x.Load >= 5.0)
+                    .OrderByDescending(x => x.Load)
+                    .FirstOrDefault();
+                if (busyAlt.Adapter != null)
+                    selected = busyAlt.Adapter;
+            }
+        }
+
+        double? gpuPct = gpu3dByLuid.TryGetValue(selected.LuidKey, out double load)
+            ? Math.Clamp(load, 0, 100)
+            : (gpu3dByLuid.Count > 0 ? 0.0 : null);
+
+        double? vramUsed = null;
+        double? vramTotal = null;
+        bool hasDed = dedicatedVramByLuid.TryGetValue(selected.LuidKey, out double dedBytes);
+        bool hasShared = sharedVramByLuid.TryGetValue(selected.LuidKey, out double shBytes);
+
+        if (selected.IsDiscrete || selected.DedicatedVramGb >= 0.5)
+        {
+            if (hasDed) vramUsed = Math.Max(0, dedBytes / Gb);
+            if (selected.DedicatedVramGb > 0.05) vramTotal = selected.DedicatedVramGb;
+        }
+        else
+        {
+            double dedGb = hasDed ? dedBytes / Gb : 0;
+            if (dedGb >= 0.05 && selected.DedicatedVramGb >= 0.1)
+            {
+                vramUsed = dedGb;
+                vramTotal = selected.DedicatedVramGb;
+            }
+            else if (hasShared)
+            {
+                vramUsed = Math.Max(0, shBytes / Gb);
+                if (selected.SharedMemGb > 0.1) vramTotal = selected.SharedMemGb;
+            }
+        }
+
+        return (gpuPct, vramUsed, vramTotal, selected.Name);
+    }
+
+    private static void EnsureDxgiAdapters()
+    {
+        if (_dxgiProbed) return;
+        _dxgiProbed = true;
+        if (!OperatingSystem.IsWindows()) return;
+
+        IntPtr factory = IntPtr.Zero;
+        try
+        {
+            Guid iidFactory1 = new("770aae78-f26f-4dba-a829-253c83d1b387");
+            if (CreateDXGIFactory1(ref iidFactory1, out factory) != 0 || factory == IntPtr.Zero)
+                return;
+
+            var found = new List<GpuAdapterInfo>();
+            var enumAdapters1 = GetComMethod<DxgiEnumAdapters1>(factory, 12);
+
+            for (uint i = 0; i < 16; i++)
+            {
+                if (enumAdapters1(factory, i, out IntPtr adapter) != 0 || adapter == IntPtr.Zero)
+                    break;
+                try
+                {
+                    var getDesc1 = GetComMethod<DxgiGetDesc1>(adapter, 10);
+                    if (getDesc1(adapter, out var desc) != 0)
+                        continue;
+                    if ((desc.Flags & 2u /* DXGI_ADAPTER_FLAG_SOFTWARE */) != 0 || desc.VendorId == 0x1414)
+                        continue;
+
+                    string name = (desc.Description ?? "").Trim();
+                    double dedGb = desc.DedicatedVideoMemory / Gb;
+                    double sharedGb = desc.SharedSystemMemory / Gb;
+                    bool isDiscrete = ClassifyDiscreteGpu(name, desc.VendorId, dedGb);
+                    string luid = $"luid_0x{unchecked((uint)desc.AdapterLuidHighPart):x8}_0x{desc.AdapterLuidLowPart:x8}";
+                    found.Add(new GpuAdapterInfo(name, luid, desc.VendorId, dedGb, sharedGb, isDiscrete));
+                }
+                finally
+                {
+                    Marshal.Release(adapter);
+                }
+            }
+
+            _dxgiAdapters = found
+                .OrderByDescending(a => a.IsDiscrete)
+                .ThenByDescending(a => a.DedicatedVramGb)
+                .ToList();
+        }
+        catch
+        {
+            _dxgiAdapters = [];
+        }
+        finally
+        {
+            if (factory != IntPtr.Zero)
+                Marshal.Release(factory);
+        }
+    }
+
+    private static bool ClassifyDiscreteGpu(string name, uint vendorId, double dedicatedVramGb)
+    {
+        bool looksIntegrated = name.Contains("UHD Graphics", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("HD Graphics", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Iris", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Radeon(TM) Graphics", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Vega", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Integrated", StringComparison.OrdinalIgnoreCase);
+        bool looksDiscrete = name.Contains("RTX", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("GTX", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("GeForce", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Quadro", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("RX ", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Arc A", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Arc B", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Radeon Pro", StringComparison.OrdinalIgnoreCase);
+
+        if (looksDiscrete) return true;
+        if (looksIntegrated) return false;
+        if (vendorId == 0x10DE) return true;
+        return dedicatedVramGb >= 1.5;
+    }
+
+    private static TDelegate GetComMethod<TDelegate>(IntPtr comPtr, int slot) where TDelegate : Delegate
+    {
+        IntPtr vtable = Marshal.ReadIntPtr(comPtr);
+        IntPtr fn = Marshal.ReadIntPtr(vtable, slot * IntPtr.Size);
+        return Marshal.GetDelegateForFunctionPointer<TDelegate>(fn);
     }
 
     private static void EnsureNvml()
@@ -914,6 +1535,26 @@ public static class SystemMetricsEngine
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)] public byte[] bDescr;
     }
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate int DxgiEnumAdapters1(IntPtr factory, uint adapter, out IntPtr ppAdapter);
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)] private delegate int DxgiGetDesc1(IntPtr adapter, out DxgiAdapterDesc1 desc);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DxgiAdapterDesc1
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Description;
+        public uint VendorId;
+        public uint DeviceId;
+        public uint SubSysId;
+        public uint Revision;
+        public nuint DedicatedVideoMemory;
+        public nuint DedicatedSystemMemory;
+        public nuint SharedSystemMemory;
+        public uint AdapterLuidLowPart;
+        public int AdapterLuidHighPart;
+        public uint Flags;
+    }
+
+    [DllImport("dxgi.dll")] private static extern int CreateDXGIFactory1(ref Guid riid, out IntPtr ppFactory);
     [DllImport("kernel32.dll")] private static extern bool GetSystemTimes(out ulong idle, out ulong kernel, out ulong user);
     [DllImport("kernel32.dll")] private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX status);
     [DllImport("iphlpapi.dll")] private static extern int GetIfTable2(out IntPtr table);
@@ -929,4 +1570,36 @@ public static class SystemMetricsEngine
     [DllImport("pdh.dll", CharSet = CharSet.Unicode)] private static extern uint PdhGetFormattedCounterArrayW(IntPtr counter, uint format, ref uint bufferSize, ref uint itemCount, IntPtr itemBuffer);
     [DllImport("/usr/lib/libSystem.B.dylib")] private static extern uint mach_host_self();
     [DllImport("/usr/lib/libSystem.B.dylib")] private static extern int host_statistics(uint hostPriv, int flavor, [Out] uint[] hostInfoOut, ref int hostInfoOutCnt);
+    [DllImport("/usr/lib/libSystem.B.dylib")] private static extern int host_statistics64(uint hostPriv, int flavor, [Out] uint[] hostInfoOut, ref int hostInfoOutCnt);
+    [DllImport("/usr/lib/libSystem.B.dylib")] private static extern int sysctlbyname([MarshalAs(UnmanagedType.LPUTF8Str)] string name, out long oldp, ref nint oldlenp, IntPtr newp, nint newlen);
+    [DllImport("/usr/lib/libSystem.B.dylib")] private static extern int sysctlbyname([MarshalAs(UnmanagedType.LPUTF8Str)] string name, out int oldp, ref nint oldlenp, IntPtr newp, nint newlen);
+
+    private const string CfLib = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+    private const string IoKitLib = "/System/Library/Frameworks/IOKit.framework/IOKit";
+    private const string IoReportLib = "/usr/lib/libIOReport.dylib";
+
+    [DllImport(CfLib)] private static extern IntPtr CFStringCreateWithCString(IntPtr alloc, [MarshalAs(UnmanagedType.LPUTF8Str)] string cStr, uint encoding);
+    [DllImport(CfLib)] [return: MarshalAs(UnmanagedType.I1)] private static extern bool CFStringGetCString(IntPtr theString, [Out] byte[] buffer, long bufferSize, uint encoding);
+    [DllImport(CfLib)] private static extern IntPtr CFNumberCreate(IntPtr allocator, int theType, ref int valuePtr);
+    [DllImport(CfLib)] private static extern IntPtr CFDictionaryCreate(IntPtr allocator, IntPtr[] keys, IntPtr[] values, long numValues, IntPtr keyCallBacks, IntPtr valueCallBacks);
+    [DllImport(CfLib)] private static extern IntPtr CFDictionaryGetValue(IntPtr theDict, IntPtr key);
+    [DllImport(CfLib)] private static extern long CFArrayGetCount(IntPtr theArray);
+    [DllImport(CfLib)] private static extern IntPtr CFArrayGetValueAtIndex(IntPtr theArray, long idx);
+    [DllImport(CfLib)] private static extern void CFRelease(IntPtr cf);
+
+    [DllImport(IoKitLib)] private static extern IntPtr IOHIDEventSystemClientCreate(IntPtr allocator);
+    [DllImport(IoKitLib)] private static extern int IOHIDEventSystemClientSetMatching(IntPtr client, IntPtr match);
+    [DllImport(IoKitLib)] private static extern IntPtr IOHIDEventSystemClientCopyServices(IntPtr client);
+    [DllImport(IoKitLib)] private static extern IntPtr IOHIDServiceClientCopyProperty(IntPtr service, IntPtr property);
+    [DllImport(IoKitLib)] private static extern IntPtr IOHIDServiceClientCopyEvent(IntPtr service, long type, int options, long timeout);
+    [DllImport(IoKitLib)] private static extern double IOHIDEventGetFloatValue(IntPtr @event, uint field);
+
+    [DllImport(IoReportLib)] private static extern IntPtr IOReportCopyChannelsInGroup(IntPtr group, IntPtr subGroup, ulong a, ulong b, ulong c);
+    [DllImport(IoReportLib)] private static extern IntPtr IOReportCreateSubscription(IntPtr allocator, IntPtr desiredChannels, out IntPtr subbedChannels, ulong channelId, IntPtr options);
+    [DllImport(IoReportLib)] private static extern IntPtr IOReportCreateSamples(IntPtr sub, IntPtr subbedChannels, IntPtr options);
+    [DllImport(IoReportLib)] private static extern IntPtr IOReportCreateSamplesDelta(IntPtr a, IntPtr b, IntPtr options);
+    [DllImport(IoReportLib)] private static extern IntPtr IOReportChannelGetChannelName(IntPtr channel);
+    [DllImport(IoReportLib)] private static extern int IOReportStateGetCount(IntPtr channel);
+    [DllImport(IoReportLib)] private static extern IntPtr IOReportStateGetNameForIndex(IntPtr channel, int index);
+    [DllImport(IoReportLib)] private static extern long IOReportStateGetResidency(IntPtr channel, int index);
 }

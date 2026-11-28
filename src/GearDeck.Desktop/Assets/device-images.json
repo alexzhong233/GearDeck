@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "rules": [
     {
       "id": "logi_pro_x3_superstrike_name",
@@ -733,6 +733,38 @@
       "kind": "Mouse",
       "preset": "lamzu_maya_symm",
       "openMouseSlug": "lamzu-maya-x.png"
+    },
+    {
+      "id": "mloong_mx301_pro_pid",
+      "name": "MLOONG MX301 PRO",
+      "vidPid": "a8a5:2255",
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "cloudUrl": "https://hub.mloongplanet.com/old/mx-301.webp"
+    },
+    {
+      "id": "mloong_mx301_pro_name",
+      "name": "MLOONG MX301 PRO",
+      "nameRegex": "\\bmx\\s*301\\b",
+      "kind": "Mouse",
+      "preset": "fallback_mouse",
+      "cloudUrl": "https://hub.mloongplanet.com/old/mx-301.webp"
+    },
+    {
+      "id": "leobog_hi98c_pro_pid",
+      "name": "LEOBOG Hi98C Pro",
+      "vidPid": "3554:fa09",
+      "kind": "Keyboard",
+      "preset": "fallback_keyboard",
+      "cloudUrl": "https://cdn.shopify.com/s/files/1/0607/1563/0808/files/Leobog-Hi98-hi98c-pro-Wireless-aluminum-trimode-Mechanical-Keyboard-assembled-blue-buy_7c0463f4-af7f-4b5c-8609-63b1f22c1252.png?v=1761868124"
+    },
+    {
+      "id": "leobog_hi98_name",
+      "name": "LEOBOG Hi98 / Hi98C Pro",
+      "nameRegex": "\\bhi\\s*98c?\\b",
+      "kind": "Keyboard",
+      "preset": "fallback_keyboard",
+      "cloudUrl": "https://cdn.shopify.com/s/files/1/0607/1563/0808/files/Leobog-Hi98-hi98c-pro-Wireless-aluminum-trimode-Mechanical-Keyboard-assembled-blue-buy_7c0463f4-af7f-4b5c-8609-63b1f22c1252.png?v=1761868124"
     },
     {
       "id": "fallback_mouse",

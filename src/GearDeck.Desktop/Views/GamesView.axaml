@@ -208,11 +208,20 @@
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="快速参数预设（按设备配置 DPI / 回报率 / LOD）" FontSize="14" FontWeight="SemiBold" />
                                     <WrapPanel>
-                                        <ui:NumberBox x:Name="QuickDpiBox" Header="DPI" Width="120" Maximum="45000" Minimum="100" Margin="0,0,8,8" />
-                                        <ui:NumberBox x:Name="QuickPollingBox" Header="回报率 Hz" Width="120" Maximum="8000" Minimum="0" Margin="0,0,8,8" />
-                                        <ui:NumberBox x:Name="QuickLodBox" Header="LOD" Width="105" Maximum="100" Minimum="0" Margin="0,0,8,8" />
+                                        <StackPanel Spacing="4" VerticalAlignment="Bottom" Margin="0,0,8,8">
+                                            <TextBlock Text="DPI" FontSize="12" Height="18" VerticalAlignment="Center" />
+                                            <ui:NumberBox x:Name="QuickDpiBox" Width="120" Height="32" Maximum="45000" Minimum="100" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="4" VerticalAlignment="Bottom" Margin="0,0,8,8">
+                                            <TextBlock Text="回报率 Hz" FontSize="12" Height="18" VerticalAlignment="Center" />
+                                            <ui:NumberBox x:Name="QuickPollingBox" Width="120" Height="32" Maximum="8000" Minimum="0" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="4" VerticalAlignment="Bottom" Margin="0,0,8,8">
+                                            <TextBlock Text="LOD" FontSize="12" Height="18" VerticalAlignment="Center" />
+                                            <ui:NumberBox x:Name="QuickLodBox" Width="105" Height="32" Maximum="100" Minimum="0" />
+                                        </StackPanel>
                                         <Button x:Name="QuickPresetBtn" Content="生成参数预设" Classes="tool"
-                                                VerticalAlignment="Bottom" Margin="0,0,0,8" Click="OnQuickPreset" />
+                                                Height="32" VerticalAlignment="Bottom" Margin="0,0,0,8" Click="OnQuickPreset" />
                                     </WrapPanel>
                                 </StackPanel>
                                 <Panel x:Name="PresetsHost" />

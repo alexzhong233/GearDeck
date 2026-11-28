@@ -119,13 +119,19 @@
                                     <Button x:Name="CopyToWritableBtn" Classes="pill" Content="复制到可编程层去改键" />
                                 </StackPanel>
                             </Border>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Text="Mac 快捷预设：" VerticalAlignment="Center" Classes="subtle" />
-                                <Button x:Name="PresetModifiersBtn" Classes="pill" Content="标准 ⌥/⌘ 修饰键" />
-                                <Button x:Name="PresetSwapModifiersBtn" Classes="pill" Content="互换 ⌥/⌘ 修饰键" />
-                                <Button x:Name="PresetStdFunctionBtn" Classes="pill" Content="F1-F12 直出功能键" />
-                                <Button x:Name="PresetMediaFnBtn" Classes="pill" Content="恢复 F1-F12 多媒体键" />
-                            </StackPanel>
+                            <WrapPanel VerticalAlignment="Center">
+                                <TextBlock Text="Mac 快捷预设：" VerticalAlignment="Center" Classes="subtle" Margin="0,0,6,4" />
+                                <Button x:Name="QuickStageMacToWinBtn" Classes="pill" Margin="0,0,6,4"
+                                        Content="完整 Mac 键位 → Win 可编程层"
+                                        ToolTip.Tip="将 Mac 出厂键位（⌥Opt / ⌘Cmd 与 F1-F12 多媒体）写入可编程默认层与 Fn1 层，保留其他自定义改键" />
+                                <Button x:Name="QuickEnableMacEditableBtn" Classes="pill accent" Margin="0,0,6,4"
+                                        Content="一键启用 Mac 可改键模式"
+                                        ToolTip.Tip="写入完整 Mac 键位到可编程层，并将键盘切换为 Fn+W 可改键模式（自动解锁 Win/⌘）" />
+                                <Button x:Name="PresetModifiersBtn" Classes="pill" Margin="0,0,6,4" Content="标准 ⌥/⌘ 修饰键" />
+                                <Button x:Name="PresetSwapModifiersBtn" Classes="pill" Margin="0,0,6,4" Content="互换 ⌥/⌘ 修饰键" />
+                                <Button x:Name="PresetStdFunctionBtn" Classes="pill" Margin="0,0,6,4" Content="F1-F12 直出功能键" />
+                                <Button x:Name="PresetMediaFnBtn" Classes="pill" Margin="0,0,0,4" Content="恢复 F1-F12 多媒体键" />
+                            </WrapPanel>
                         </StackPanel>
                     </Border>
 

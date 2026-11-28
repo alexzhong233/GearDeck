@@ -14,7 +14,7 @@
     TransparencyLevelHint="Mica,AcrylicBlur,Blur"
     Background="Transparent">
 
-    <Grid RowDefinitions="48,*">
+    <Grid x:Name="RootLayoutGrid" RowDefinitions="48,*">
         <!-- WinUI Gallery 风格 48px 扩展标题栏 -->
         <Grid x:Name="AppTitleBar" Grid.Row="0" Height="48" ColumnDefinitions="Auto,*,Auto">
             <StackPanel x:Name="TitleBarLeftPanel" Grid.Column="0" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"
